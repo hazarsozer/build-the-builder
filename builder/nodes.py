@@ -147,15 +147,26 @@ def _fill(t):
 
 
 def close_node(name, outcome, reason, farewell):
-    """Set outcome/reason (read by the close_call lifecycle tool) and the farewell, then go to goodbye."""
+    """Set outcome/reason (read by the close_call lifecycle tool) and the farewell, then go to goodbye.
+
+    The three are written in one statement, so a snippet that fails part way never leaves a new outcome next to
+    an old reason. A snippet that fails before it writes nothing: close_call then sends no outcome (as on a hang-up)
+    and goodbye speaks the plain farewell setup wrote (see farewell_default_code).
+    A close without a reason writes "" (the close_call pre-hook drops an empty reason)."""
     code = "import re\n"
-    code += "vars['outcome'] = %r\n" % outcome
-    if reason:
-        code += "vars['reason'] = %r\n" % reason
+    code += "OUTCOME = %r\n" % outcome
+    code += "REASON = %r\n" % (reason or "")
     code += "T = %r\n" % farewell
     code += FILL_CODE
-    code += "try:\n    vars['farewell'] = _fill(T)\nexcept Exception:\n    vars['farewell'] = T\n"
+    code += "try:\n    F = _fill(T)\nexcept Exception:\n    F = T\n"
+    code += "vars.update(dict(outcome=OUTCOME, reason=REASON, farewell=F))\n"
     return code_node(name, code, "goodbye")
+
+
+def farewell_default_code(farewell):
+    """Snippet for the first code node: a plain goodbye, so a close node whose snippet fails never makes goodbye speak
+    a raw placeholder. No outcome is pre-written: a call that ends before any close sends none (no false close)."""
+    return "vars['farewell'] = %r\n" % farewell
 
 
 def goodbye_node():

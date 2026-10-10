@@ -23,8 +23,8 @@ from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
 from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
-from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node, cond_any, eq, go,
-                           goodbye_node, gt, is_true, py_json, transfer_node)
+from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
+                           cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
 # "any" means the customer's own stages; a third party is only covered when a spec names it.
@@ -359,7 +359,7 @@ try:
     vars['calendar_text'] = calendar_text(f['deadline'])
     vars['weekday_text'] = weekday_text()
     vars['debt_statement_text'] = f['debt_statement']
-    vars['account_state'] = 'ok'
+    vars['account_state'] = ACCOUNT_OK
 except Exception as e:
     vars['account_state'] = 'error'
     vars['account_error'] = str(e)[:200]
@@ -866,7 +866,7 @@ except Exception:
 CLOSE_PRE = r'''
 try:
     b = config.get('body')
-    if isinstance(b, dict) and b.get('outcome') in REASONLESS:
+    if isinstance(b, dict) and (b.get('outcome') in REASONLESS or not b.get('reason')):
         b.pop('reason', None)
 except Exception:
     pass
@@ -1094,9 +1094,8 @@ class _Compiler:
             elif ev.get("outcome"):
                 self.nodes[self.close_key(ev["id"])] = close_node(
                     self.close_key(ev["id"]), ev["outcome"], ev.get("reason") or "", self.farewell(ev, "close"))
-        fe = self.events.get(self.fail_ev) or {}
         self.nodes["close_account_error"] = close_node(
-            "close_account_error", fe.get("outcome") or "no_promise", fe.get("reason") or "",
+            "close_account_error", *self.fail_close(),
             "I am sorry, because of a technical problem I cannot see the account details right now. "
             "Thank you for your time. Goodbye.")
 
@@ -1436,11 +1435,21 @@ HOW TO GET A PROMISE
         return t.rstrip()
 
     # ---- nodes
-    def setup_node(self):
+    def fail_close(self):
+        """(outcome, reason) of the service-failure close (also used when the account cannot be read)."""
+        fe = self.events.get(self.fail_ev) or {}
+        return fe.get("outcome") or "no_promise", fe.get("reason") or ""
+
+    def setup_nodes(self):
+        """setup computes the call's date facts and writes a plain default farewell (no outcome). A snippet that did
+        not run (sets no setup_state) is run once more by setup_retry; the call goes on after that either way."""
         cb = self.s["third_party"]["callback"]
-        code = (self.prelude() + _const("CB", cb) +
+        code = (farewell_default_code("I am sorry, there was a technical problem. " + self.thanks(named=False)) +
+                self.prelude() + _const("CB", cb) +
                 "CB_FALLBACK = %r\n" % ("A callback may be booked only " + self.cb_summary() + ".") + SETUP_CODE)
-        return code_node("setup", code, "opening")
+        ran = cond_any(eq("setup_state", "ok"), eq("setup_state", "error"))
+        self.nodes["setup"] = code_node("setup", code, "setup_retry", [go("opening", "Setup ran", ran)])
+        self.nodes["setup_retry"] = code_node("setup_retry", code, "opening")
 
     def opening_node(self):
         op = self.s["opening"]
@@ -1570,12 +1579,15 @@ HOW TO GET A PROMISE
             "transitions": [always("prepare_account")],
         }
         neg = self.s["negotiation"]
-        code = (self.prelude() + _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
+        code = (self.prelude() + "ACCOUNT_OK = %r\n" % ("facts" if self.multi else "ok") +
+                _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
                 _const("NEG", {k: neg.get(k) for k in ("debt_statement", "debt_statement_per_product", "weekday_words", "non_business_day", "first_ask", "first_ask_all") if neg.get(k) is not None}) +
                 _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_CODE +
                 (self.multi.account_code() if self.multi else ""))
-        self.nodes["prepare_account"] = code_node("prepare_account", code, "negotiate",
-                                                  [go("close_account_error", "No account data", cond_any(eq("account_state", "error")))])
+        # negotiate only on facts the snippet confirmed (account_state is its last write); anything else, including a
+        # snippet that did not run, closes as an account error rather than speaking empty amounts and dates
+        self.nodes["prepare_account"] = code_node("prepare_account", code, "close_account_error",
+                                                  [go("negotiate", "Account facts ready", cond_any(eq("account_state", "ok")))])
 
     def negotiate_node(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
@@ -1761,7 +1773,7 @@ HOW TO RUN THE CALL
 
     def build(self):
         n = self.nodes
-        n["setup"] = self.setup_node()
+        self.setup_nodes()
         n["opening"] = self.opening_node()
         n["third_party"] = self.third_party_node()
         n["identity"] = self.identity_node()

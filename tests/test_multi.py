@@ -98,7 +98,7 @@ def test_spec_b_negotiate_has_set_product_not_create_promise():
 def test_spec_a_node_set_unchanged():
     w = C(A, OA)
     assert set(w["nodes"]) == {
-        "setup", "opening", "third_party", "identity", "load_account", "prepare_account", "negotiate",
+        "setup", "setup_retry", "opening", "third_party", "identity", "load_account", "prepare_account", "negotiate",
         "retry_promise", "goodbye", "transfer_restructuring", "transfer_general", "transfer_support",
         "close_promise_recorded", "close_paid", "close_dispute", "close_restructuring", "close_human",
         "close_hardship", "close_hardship_transfer", "close_refused", "close_not_talk", "close_service_error",
@@ -201,7 +201,8 @@ class Sim:
                     self.notes_order = list(notes)
             node = self.route(n)
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
-        return sorted(promises), sorted(notes), node, self.v["outcome"], self.v.get("reason")
+        # close_call drops an empty reason (CLOSE_PRE), so "" and unset both mean no reason
+        return sorted(promises), sorted(notes), node, self.v["outcome"], self.v.get("reason") or None
 
     def route(self, n):
         for t in n["transitions"]:
