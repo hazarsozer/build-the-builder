@@ -76,6 +76,13 @@ def get_iteration(sim_id, it_id):
         else: out["runs"] += r["runs"]
         off += 100
         if len(r["runs"]) < 100: return out
+def cancel_simulation(sim_id):
+    """Cancel a simulation (builder addition). Returns {success, cancelledJobs, cancelledIterations}; the simulation then reads completed."""
+    return api("POST", f"/api/v2/simulations/{sim_id}/cancel", {})
+def list_simulations():
+    """The workspace's simulations, each with `id` and `status` (builder addition)."""
+    r = api("GET", "/api/v2/simulations", workspaceId=workspace_id())
+    return (r.get("simulations") or r.get("items") or []) if isinstance(r, dict) else r
 def get_call(call_id):
     """One simulated call: `messages` holds the transcript, tool calls included. Run ids and call ids come from get_iteration()['runs']."""
     return api("GET", f"/api/v2/call/{call_id}")["call"]

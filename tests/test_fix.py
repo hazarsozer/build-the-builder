@@ -227,6 +227,26 @@ def test_every_session_confined_by_default(tmp_path):
     assert hooks and "PreToolUse" in hooks
 
 
+def test_confine_hook_non_string_paths_and_errors_fail_closed(tmp_path, monkeypatch):
+    work = tmp_path / "w"
+    work.mkdir()
+    hook = sdk.confine_hook(work)
+    run_ = lambda inp: asyncio.run(hook(inp, "t", None))
+    deny = lambda r: (r.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"
+    assert deny(run_({"tool_name": "Read", "tool_input": {"file_path": ["../x"]}}))       # re-review repro
+    assert deny(run_({"tool_name": "Glob", "tool_input": {"pattern": ["*"]}}))
+    assert deny(run_({"tool_name": "Glob", "tool_input": {"pattern": "*", "path": {"p": "/"}}}))
+    assert deny(run_({"tool_name": "Read", "tool_input": {"notebook_path": 7}}))
+    assert deny(run_({"tool_name": "Read", "tool_input": "nope"}))
+    assert deny(run_(None))
+    assert not deny(run_({"tool_name": "Read", "tool_input": {"file_path": "a.md"}}))
+
+    def boom(*a):
+        raise RuntimeError("x")
+    monkeypatch.setattr(sdk, "_inside", boom)
+    assert deny(run_({"tool_name": "Read", "tool_input": {"file_path": "a.md"}}))       # fails closed
+
+
 def test_glob_braces_and_symlinked_prefix_denied(tmp_path):
     """probe_hook.py: brace expansion and a symlinked directory prefix escaped the Glob check."""
     work = tmp_path / "w"

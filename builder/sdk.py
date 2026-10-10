@@ -170,18 +170,31 @@ def confine_hook(work):
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": why}}
 
-    async def hook(input_data, tool_use_id, context):
-        ti = (input_data or {}).get("tool_input") or {}
+    def check(input_data):
+        if not isinstance(input_data, dict):
+            return deny("malformed hook input")
+        ti = input_data.get("tool_input") or {}
+        if not isinstance(ti, dict):
+            return deny("malformed tool input")
+        for key in ("file_path", "path", "notebook_path", "pattern"):
+            if key in ti and ti[key] is not None and not isinstance(ti[key], str):
+                return deny("%s must be a string" % key)
         for key in ("file_path", "path", "notebook_path"):
             v = ti.get(key)
             if v and not _inside(root, v):
                 return deny("%s is outside the work dir; only files in the current directory may be used" % key)
         pat = ti.get("pattern")
-        if (input_data or {}).get("tool_name") == "Glob" and pat:
-            why = _glob_escape(root, Path(os.path.expanduser(str(ti.get("path") or root))), str(pat))
+        if input_data.get("tool_name") == "Glob" and pat:
+            why = _glob_escape(root, Path(os.path.expanduser(ti.get("path") or str(root))), pat)
             if why:
                 return deny("Glob pattern %s; patterns must stay inside the current directory" % why)
         return {}
+
+    async def hook(input_data, tool_use_id, context):
+        try:
+            return check(input_data)
+        except Exception as exc:  # fail closed
+            return deny("path check failed (%s); denied" % type(exc).__name__)
     return hook
 
 

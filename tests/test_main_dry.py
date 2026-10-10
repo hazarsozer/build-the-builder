@@ -81,6 +81,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "serve", lambda port, oa: Srv())
     monkeypatch.setattr(tunnel, "start", tstart)
     monkeypatch.setattr(tunnel, "stop", tstop)
+    f.cancelled, f.sim_list = [], []
+    monkeypatch.setattr(M, "SIMS_FILE", tmp_path / ".freya-sims.json")
+    monkeypatch.setattr(freya, "cancel_simulation", lambda sid: f.cancelled.append(sid) or
+                        {"success": True, "cancelledJobs": 3, "cancelledIterations": 1})
+    monkeypatch.setattr(freya, "list_simulations", lambda: f.sim_list)
     f.out = tmp_path / "submission"
     f.traces = tmp_path / "traces"
     return f
@@ -280,7 +285,61 @@ def test_budget_stop_marks_orphan_simulation(env, monkeypatch):
     assert run_main(env, "--budget-min", "0.05") == 0
     rows = trace_rows(env)
     assert [r["id"] for r in rows if r["kind"] == "orphan_simulation"] == ["sim-orphan"]
+    assert env.cancelled == ["sim-orphan"]
+    [oc] = [r for r in rows if r["kind"] == "orphan_cancelled"]
+    assert oc["id"] == "sim-orphan" and oc["success"] is True and oc["cancelled_jobs"] == 3
+    assert M.own_sims() == {"sim-orphan"}
     assert (env.out / "brief-a.workflow.json").exists()
+
+
+def test_late_created_orphan_is_cancelled(env, monkeypatch):
+    monkeypatch.setattr(M, "FINAL_RESERVE_S", 0.5)
+    done = []
+
+    def late(agent_id, cases, bank, on_created=None, **k):
+        time.sleep(3.5)                     # past the 2.5 s test window: abandoned first, created after
+        on_created("sim-late")
+        done.append(1)
+    monkeypatch.setattr(selftest, "run", late)
+    assert run_main(env, "--budget-min", "0.05") == 0
+    t0 = time.monotonic()
+    while not done and time.monotonic() - t0 < 5:
+        time.sleep(0.1)
+    assert env.cancelled == ["sim-late"]
+
+
+def test_busy_workspace_cancels_only_our_running_simulations(env, monkeypatch):
+    M.record_sim("sim-ours-running", "old-slot")
+    M.record_sim("sim-ours-done", "old-slot")
+    env.sim_list = [{"id": "sim-ours-running", "status": "running"}, {"id": "sim-foreign", "status": "running"},
+                    {"id": "sim-ours-done", "status": "completed"}, {"id": "sim-foreign-2", "status": "pending"}]
+
+    def busy_then_ok(agent_id, cases, bank, on_busy=None, on_created=None, **k):
+        on_busy(0)
+        on_created("sim-new")
+        return selftest_result(cases)
+    monkeypatch.setattr(selftest, "run", busy_then_ok)
+    assert run_main(env) == 0
+    assert env.cancelled == ["sim-ours-running"]
+    rows = trace_rows(env)
+    assert [r["id"] for r in rows if r["kind"] == "orphan_cancelled"] == ["sim-ours-running"]
+    assert sorted(r["id"] for r in rows if r["kind"] == "foreign_simulation_running") == ["sim-foreign", "sim-foreign-2"]
+    assert M.own_sims() == {"sim-ours-running", "sim-ours-done", "sim-new"}
+
+
+def test_freya_cancel_and_list_call_the_api(monkeypatch):
+    calls = []
+
+    def api(method, path, body=None, **params):
+        calls.append((method, path, params))
+        return {"success": True, "cancelledJobs": 2, "cancelledIterations": 1} if method == "POST" else \
+            {"simulations": [{"id": "s1", "status": "running"}]}
+    monkeypatch.setattr(freya, "api", api)
+    monkeypatch.setattr(freya, "workspace_id", lambda: "ws1")
+    assert freya.cancel_simulation("s9")["cancelledJobs"] == 2
+    assert freya.list_simulations() == [{"id": "s1", "status": "running"}]
+    assert calls[0][:2] == ("POST", "/api/v2/simulations/s9/cancel")
+    assert calls[1] == ("GET", "/api/v2/simulations", {"workspaceId": "ws1"})
 
 
 def test_busy_workspace_skips_selftest(env, monkeypatch):

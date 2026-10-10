@@ -50,6 +50,8 @@ from builder.trace import Trace  # noqa: E402
 from builder.validate import validate  # noqa: E402
 
 STATE_FILE = ROOT / ".freya-agents.json"
+SIMS_FILE = ROOT / ".freya-sims.json"     # simulations this builder started (only these are ever cancelled)
+FINISHED = ("completed", "failed", "paused", "cancelled", "canceled")
 EXTRACT_MAX_S = 360          # extraction budget (design §4: <= 6 min)
 FINAL_RESERVE_S = 150        # kept back for the final compile, save and export
 ROUND2_MIN_S = 12 * 60       # fix round + round 2 only with more than this left (after the reserve)
@@ -160,6 +162,31 @@ def git_commit():
         return sha + ("-dirty" if dirty else "") if sha else "unknown"
     except Exception:
         return "unknown"
+
+
+_sims_lock = threading.Lock()
+
+
+def own_sims():
+    try:
+        return {x["id"] for x in json.loads(Path(SIMS_FILE).read_text()) if isinstance(x, dict) and x.get("id")}
+    except (OSError, ValueError, TypeError, KeyError):
+        return set()
+
+
+def record_sim(sid, slot):
+    """Append a simulation id this builder started to SIMS_FILE (gitignored), so a later run may cancel it."""
+    with _sims_lock:
+        try:
+            rows = json.loads(Path(SIMS_FILE).read_text())
+            rows = rows if isinstance(rows, list) else []
+        except (OSError, ValueError):
+            rows = []
+        rows.append({"id": sid, "slot": slot, "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")})
+        try:
+            Path(SIMS_FILE).write_text(json.dumps(rows[-200:], indent=1))
+        except OSError:
+            pass
 
 
 def _expected_key(c):
@@ -356,6 +383,31 @@ class Build:
         return bounded(lambda: freya.save_workflow(slot, wf, state_file=str(STATE_FILE)),
                        min(FREYA_CALL_S, max(5.0, self.left())))
 
+    def _cancel(self, sid, why, **f):
+        """Cancel one simulation this builder started; traced as orphan_cancelled (or phase_failed)."""
+        try:
+            r = bounded(lambda: freya.cancel_simulation(sid), 30) or {}
+            self.ev("orphan_cancelled", id=sid, why=why, success=r.get("success"),
+                    cancelled_jobs=r.get("cancelledJobs"), cancelled_iterations=r.get("cancelledIterations"), **f)
+        except Exception as e:
+            self.failed("cancel %s" % sid, e)
+
+    def _cancel_own_running(self):
+        """Busy workspace: cancel running simulations whose id is in SIMS_FILE (ours); trace the others, never cancel them."""
+        try:
+            sims = bounded(freya.list_simulations, 30) or []
+        except Exception as e:
+            self.failed("list simulations", e)
+            return
+        ours = own_sims()
+        for s in sims:
+            if not isinstance(s, dict) or str(s.get("status")) in FINISHED:
+                continue
+            if s.get("id") in ours:
+                self._cancel(s["id"], "ours, still running at start-up")
+            else:
+                self.ev("foreign_simulation_running", id=s.get("id"), status=s.get("status"), action="not cancelled")
+
     def _round(self, k, spec, cs, url):
         wf = self._compile_lint(spec, url + "/v1", "selftest%d" % k)
         saved = self._save(self.slot + "-selftest", wf)
@@ -370,14 +422,17 @@ class Build:
             with lock:
                 sim["id"] = sid
                 late = sim["abandoned"]
+            record_sim(sid, self.slot)
             self.ev("simulation_started", round=k, simulation_id=sid, agent_id=saved["agent_id"], cases=len(cs))
             if late:
                 self.ev("orphan_simulation", id=sid, round=k, late=True)
+                self._cancel(sid, "orphan", round=k)
 
         def on_busy(waited):
             if waited == 0:
                 self.ev("workspace_busy", round=k)
                 self.log("workspace busy: another simulation is running")
+                self._cancel_own_running()
             if waited >= BUSY_MAX_S:
                 raise WorkspaceBusy("workspace busy for %d s" % waited)
         try:
@@ -389,6 +444,7 @@ class Build:
                 sid = sim["id"]
             if sid:
                 self.ev("orphan_simulation", id=sid, round=k)
+                self._cancel(sid, "orphan", round=k)
             raise
         rows = res.get("rows") or []
         failing = [r["id"] for r in rows if not r.get("pass")]
