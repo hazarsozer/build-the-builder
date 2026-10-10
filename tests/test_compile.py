@@ -369,8 +369,14 @@ def test_g2_human_transfer_requires_asked_flag():
         hold = w["nodes"]["human_hold_" + k]
         assert hold["on_enter"]["text"] == "Can I help you with that first?"
         ht = {t["target_node"]: json.dumps(t["condition"]) for t in hold["transitions"]}
-        assert '"insists"' in ht["transfer_general"] and '"other"' in ht[k]
-        assert hold["max_turn_transition"] == k
+        back = "human_back_" + k
+        assert '"insists"' in ht["transfer_general"] and '"other"' in ht[back]
+        assert hold["max_turn_transition"] == back
+        var = n["extraction_schema"][0]["name"]
+        v = {var: "human_first_request"}
+        exec(_code(w["nodes"][back]), {"vars": v})
+        assert v[var] in ("pending", "continue") and v["human_reply"] == "pending"
+        assert w["nodes"][back]["transitions"][-1]["target_node"] == k
 
 
 def test_g2_say_rules_listed_as_not_events():

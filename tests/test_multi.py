@@ -105,7 +105,8 @@ def test_spec_a_node_set_unchanged():
         "close_failed", "close_declined", "close_callback", "close_no_callback", "close_wrong_number",
         "close_deceased", "close_unclear", "close_account_error",
         "human_ask_opening", "human_hold_opening", "human_ask_identity", "human_hold_identity",
-        "human_ask_negotiate", "human_hold_negotiate"}
+        "human_ask_negotiate", "human_hold_negotiate",
+        "human_back_opening", "human_back_identity", "human_back_negotiate"}
     assert [t["function"]["name"] for t in w["nodes"]["negotiate"]["tools"]] == ["create_promise"]
 
 
@@ -504,3 +505,41 @@ def test_validate_spec_b_against_freya_dry_run():  # live; skipped without FREYA
         pytest.skip()
     import freya
     freya.validate_workflow("dryrun-b", wf())
+
+
+# ---------------------------------------------------------------- fix round 2
+
+def test_l1_mentioned_amount_rule_in_both_templates():
+    for w in (wf(), C(A, OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert "the <amount> I mentioned" in t and "in the same sentence as the date" in t
+        assert 'never "The rest stays overdue." again' in t
+
+
+def test_l3_readback_hears_transfers_and_support():
+    w = wf()
+    rb = w["nodes"]["readback"]
+    enum = rb["extraction_schema"][0]["enum_values"]
+    for v in ("restructuring", "human_first_request", "human_insists", "hardship"):
+        assert v in enum, v
+    by = {}
+    for t in rb["transitions"]:
+        by.setdefault(t["target_node"], []).append(json.dumps(t["condition"]))
+    assert any('"restructuring"' in c for c in by["transfer_restructuring"])
+    assert any('"human_first_request"' in c for c in by["human_ask_readback"])
+    assert any('"hardship"' in c for c in by["readback_reset"])
+    hold = w["nodes"]["human_hold_readback"]
+    assert [t["target_node"] for t in hold["transitions"]] == ["transfer_general", "human_back_readback"]
+    v = {"rb_answer": "human_first_request"}
+    exec(_code(w["nodes"]["human_back_readback"]), {"vars": v})
+    assert v["rb_answer"] == "pending"
+
+
+def test_l4_mp_msg_sentinel():
+    s = Sim("PUB-13")
+    assert s.v["mp_msg"] == "none yet"
+    s.v["mp_msg"] = ""
+    s.run("human_back_negotiate")
+    assert s.v["mp_msg"] == "none yet" and s.v["neg_event"] == "continue"
+    s.run("readback_reset")
+    assert "did not confirm" in s.v["mp_msg"]

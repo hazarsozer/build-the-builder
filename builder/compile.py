@@ -34,7 +34,14 @@ STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity
                "negotiate": {"create_promise"}, "any": set()}
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
-EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event"}
+EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
+               "readback": "rb_answer"}
+# Value a stage's extraction variable is reset to when the conversation comes back to it.
+EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": "continue", "negotiate": "continue",
+                   "readback": "pending"}
+# L1 (PUB-06): an amount said once is pointed back to, never offered again.
+MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?"): "That is the <amount> I mentioned; could you '
+             'pay it by <date>?", never a new offer, never %s again. Never restate a figure already offered.')
 # Runtime names usable in spec sentences -> the workflow variable that holds them.
 ALIAS = {"past_due": "past_due_text", "days_late": "days_late_text", "floor": "floor_text",
          "deadline": "deadline_text", "product": "product_words"}
@@ -736,6 +743,11 @@ class _Compiler:
         if code_name in self.nodes:
             return code_name
         self.nodes[code_name] = code_node(code_name, "vars[%r] = 'yes'\nvars[%r] = 'pending'\n" % (eid + "_asked", eid + "_reply"), hold)
+        back = "%s_back_%s" % (eid, stage)
+        reset = "vars[%r] = %r\nvars[%r] = 'pending'\n" % (EXTRACT_VAR[stage], EXTRACT_DEFAULT[stage], eid + "_reply")
+        if self.multi and stage == "negotiate":
+            reset += "if not vars.get('mp_msg'):\n    vars['mp_msg'] = 'none yet'\n"
+        self.nodes[back] = code_node(back, reset, stage)
         say = tpl(ev.get("say") or "Can I help you with that first?")
         who = "the customer" if stage == "negotiate" else "the person"
         self.nodes[hold] = {
@@ -747,9 +759,9 @@ class _Compiler:
                 "description": ("The LATEST message, a reply to %s. insists: %s still %s (says yes, repeats it, or refuses help). "
                                 "other: anything else (accepts help, answers a question, asks something). pending: no reply yet."
                                 % (q(say), who, ev["trigger"]))}],
-            "max_node_turns": 2, "max_turn_transition": stage,
+            "max_node_turns": 2, "max_turn_transition": back,
             "transitions": [go(transfer, "Insists: " + eid, cond_any(eq(eid + "_reply", "insists"))),
-                            go(stage, "Back to the conversation", cond_any(eq(eid + "_reply", "other")))]}
+                            go(back, "Back to the conversation", cond_any(eq(eid + "_reply", "other")))]}
         return code_name
 
     def seen_vars(self, stage):
@@ -765,7 +777,7 @@ class _Compiler:
         for ev in self.stage_events(stage):
             ins = (ev.get("instruction") or "").strip()
             if ev["action"] == "insist_once_then_transfer":
-                lines.append("If %s: the question whether you can help first is asked automatically; if they then accept help, continue." % (
+                lines.append("If %s: the ask-once question is spoken automatically." % (
                     subj("the customer" if stage == "negotiate" else "the person", ev["trigger"])))
             elif ev["action"] == "offer_transfer_else_close":
                 extra = (" This comes before persuasion: make no persuasion attempt."
@@ -932,7 +944,7 @@ class _Compiler:
                "reject": "A weekend day or holiday: say it is not a business day and ask for a business day."}[neg.get("non_business_day", "next_business_day")]
         aft = {"offer_deadline": "A date after the deadline: say the latest date you can accept is the deadline ({{deadline_text}}) and offer it.",
                "reject": "A date after the deadline: say it cannot be accepted and ask for a date on or before the deadline ({{deadline_text}})."}[neg.get("after_deadline", "offer_deadline")]
-        vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes", "the week after next"): ask once for the exact day. If they still give no day, propose the deadline.',
+        vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
                  "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
         below = {"offer_floor_once": "Amount from the floor up to the full amount: accept it. Below the floor: say it cannot be accepted and offer the floor once.",
@@ -941,14 +953,16 @@ class _Compiler:
         fo = neg.get("floor_offer") or {}
         times = fo.get("times", 1)
         if times:
-            too_much = "The customer says the full amount is too much: offer the floor {{floor_text}} %s" % ("once" if times == 1 else "up to %s times" % NUM.get(times, str(times)))
-            too_much += (", and add: %s" % q(tpl(fo["sentence_suffix"]))) if fo.get("sentence_suffix") else "."
+            too_much = ("The customer says the full amount is too much: offer the floor {{floor_text}} %s, in the same sentence as the date of your current attempt"
+                        % ("once" if times == 1 else "up to %s times" % NUM.get(times, str(times))))
+            too_much += (", and add %s once" % q(tpl(fo["sentence_suffix"]))) if fo.get("sentence_suffix") else ""
+            too_much += "."
         else:
             too_much = "The customer says the full amount is too much: do not offer a lower amount; treat it as a refusal."
         if neg.get("never_ask_how_much"):
             too_much += " Never ask how much they can pay; you propose every amount."
         refuse = ("A flat refusal or a non-answer (including \"no\" to paying today with no date and no amount, refusing the floor, refusing the deadline) "
-                  "uses one persuasion attempt of the plan. Make the next attempt in the plan. Never repeat an offer the customer already refused.")
+                  "uses one persuasion attempt of the plan. Make the next one. Never repeat an offer the customer already refused.")
         if self.has("refused"):
             refuse += " When all attempts in the plan are used and the customer still refuses, call transition_to_close_refused."
         first_ask = tpl(neg["first_ask"])
@@ -975,17 +989,16 @@ HOW TO GET A PROMISE
    - %s
 2. %s
 3. %s
-   After an amount was offered or agreed, later proposals name only the new date ("that payment"). Never restate a figure already offered.
+   %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, nbd, aft, vague, below, too_much, refuse, q(tpl(conf["question"])))
+            first_ask, nbd, aft, vague, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
         other = self.event_guidance("negotiate")
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
-        other.append("A question you cannot answer from these facts: say you do not have that information.")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
         t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
         return t.rstrip()
@@ -1166,6 +1179,10 @@ HOW TO GET A PROMISE
             "transitions": tr,
         }
 
+    def mentioned(self):
+        suffix = (self.s["negotiation"].get("floor_offer") or {}).get("sentence_suffix")
+        return MENTIONED % (q(tpl(suffix)) if suffix else "the same offer")
+
     def negotiate_multi_task(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
         nbd = {"next_business_day": "A weekend day or holiday: offer the NEXT business day after it.",
@@ -1177,8 +1194,9 @@ HOW TO GET A PROMISE
         fo = neg.get("floor_offer") or {}
         times = fo.get("times", 1)
         if times:
-            too_much = "The customer says the full amount of a product is too much: offer that product's floor %s" % ("once" if times == 1 else "up to %s times" % NUM.get(times, str(times)))
-            too_much += (", and add: %s" % q(tpl(fo["sentence_suffix"]))) if fo.get("sentence_suffix") else "."
+            too_much = ("The customer says the full amount of a product is too much: offer that product's floor %s, in the same sentence as the date of its current attempt"
+                        % ("once" if times == 1 else "up to %s times" % NUM.get(times, str(times))))
+            too_much += (", and add %s once." % q(tpl(fo["sentence_suffix"]))) if fo.get("sentence_suffix") else "."
         else:
             too_much = "The customer says the full amount is too much: do not offer a lower amount; treat it as a refusal."
         if neg.get("never_ask_how_much"):
@@ -1206,13 +1224,14 @@ HOW TO RUN THE CALL
    - Amount: from the product's floor up to its full amount.
    - %(too_much)s
 3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan; make the next attempt. Never repeat an offer the customer already refused.
-   After an amount was offered or agreed, later proposals name only the new date ("that payment"). Never restate a figure already offered.
+   %(mentioned)s
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
    - refused, when the last attempt of its plan was refused, with attempts_made.%(notes)s
    Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
+            mentioned=self.mentioned(),
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
@@ -1220,7 +1239,6 @@ HOW TO RUN THE CALL
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
-        other.append("A question you cannot answer from these facts: say you do not have that information.")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
         t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
         return t.rstrip()

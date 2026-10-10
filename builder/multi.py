@@ -67,7 +67,7 @@ try:
     st['days'] = days
     vars['mp_state'] = json.dumps(st)
     vars['mp_phase'] = 'open'
-    vars['mp_msg'] = ''
+    vars['mp_msg'] = 'none yet'
     vars['mp_readback'] = ''
     vars['rb_answer'] = 'pending'
     vars['products_text'] = '\n'.join(lines)
@@ -575,6 +575,31 @@ class Multi:
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []
         return code_node(name, code, "finish", tr)
 
+    def readback_events(self):
+        """L3: transfer and support events of negotiate are also heard at the read-back and routed like in negotiate."""
+        c = self.c
+        values, desc, trans = [], [], []
+        for ev in c.stage_events("negotiate"):
+            eid, act, trig = ev["id"], ev["action"], ev["trigger"]
+            if act == "transfer":
+                values.append(eid)
+                desc.append("%s: the customer %s." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
+                trans.append(go(t, "Transfer: " + eid, cond_any(eq("rb_answer", eid))))
+            elif act == "insist_once_then_transfer":
+                values += [eid + "_first_request", eid + "_insists"]
+                desc.append("%s_first_request: the customer %s (the first time)." % (eid, trig))
+                desc.append("%s_insists: the agent already asked whether it can help first and the customer %s again." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
+                trans.append(go(t, "Insists: " + eid, all_of(eq("rb_answer", eid + "_insists"), eq(eid + "_asked", "yes"))))
+                trans.append(go(c.ask_once_nodes("readback", ev, t), "First request: " + eid,
+                                cond_any(eq("rb_answer", eid + "_first_request"), eq("rb_answer", eid + "_insists"))))
+            elif act == "offer_transfer_else_close":
+                values.append(eid)
+                desc.append("%s: the customer %s." % (eid, trig))
+                trans.append(go("readback_reset", "Back to negotiate: " + eid, cond_any(eq("rb_answer", eid))))
+        return values, desc, trans
+
     def build(self, nodes):
         c = self.c
         # records
@@ -609,6 +634,7 @@ class Multi:
                 "response_mapping": [{"path": "data.ok", "variable": "rec%s_retry_ok" % s}], "transitions": rtr}
         # the single read-back: spoken by the engine, confirmation extracted
         q = '"%s"' % self.s["confirmation"]["question"]
+        ev_values, ev_desc, ev_trans = self.readback_events()
         nodes["readback"] = {
             "name": "readback", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": "{{mp_readback}}"},
@@ -616,15 +642,20 @@ class Multi:
                              "from the read-back and ask %s again. Nothing is registered yet: never say anything is recorded. "
                              "No tool call is allowed in this step." % (q, q)),
             "extraction_schema": [{
-                "name": "rb_answer", "type": "string", "min_confidence": 0.6, "enum_values": ["pending", "yes", "change", "other"],
+                "name": "rb_answer", "type": "string", "min_confidence": 0.6,
+                "enum_values": ["pending", "yes", "change", "other"] + ev_values,
                 "description": ("The customer's LATEST message, an answer to the read-back of the promises. yes: a clear yes, they confirm. "
-                                "change: no, or they want a different amount or date, or refuse, or raise anything else to settle "
-                                "(a human, a plan, a personal difficulty, a paid or disputed product). other: only a question about the read-back. "
+                                + " ".join(ev_desc) +
+                                " change: no, or they want a different amount or date, or refuse, or raise anything else to settle "
+                                "(a paid or disputed product). other: only a question about the read-back. "
                                 "pending: no answer yet.")}],
             "max_node_turns": 4, "max_turn_transition": "readback_reset",
-            "transitions": [go("record_plan", "Confirmed", cond_any(eq("rb_answer", "yes"))),
-                            go("readback_reset", "Not confirmed", cond_any(eq("rb_answer", "change")))]}
-        nodes["readback_reset"] = code_node("readback_reset", "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n", "negotiate")
+            "transitions": [go("record_plan", "Confirmed", cond_any(eq("rb_answer", "yes")))] + ev_trans +
+                           [go("readback_reset", "Not confirmed", cond_any(eq("rb_answer", "change")))]}
+        nodes["readback_reset"] = code_node(
+            "readback_reset", "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n"
+            "vars['mp_msg'] = 'The customer did not confirm the read-back. Handle what they said; call %s again for any product that changes, "
+            "or with product_id ALL and outcome review if the same promises stand.'\n" % SET_TOOL, "negotiate")
         # wraps
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
         refused = c.events.get("refused") or {}
