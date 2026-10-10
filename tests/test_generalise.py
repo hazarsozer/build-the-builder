@@ -322,6 +322,21 @@ def test_g8_cases_seed_policy_and_aliases():
     assert c["seed"]["identity_policy"] == {"max_wrong": 3, "scope": "total"} and "response_aliases" not in c["seed"]
 
 
+# ---------------------------------------------------------------- live: Freya dry-run on generalised workflows
+
+def test_generalised_workflows_pass_freya_dry_run():  # live; skipped without FREYA_API_KEY
+    import os
+    import pytest
+    if not os.environ.get("FREYA_API_KEY"):
+        pytest.skip()
+    import freya
+    a = _aliased(_with_fields(_company()), ALIASES)
+    a["negotiation"]["post_verify_sentence"] = PVS
+    freya.validate_workflow("dryrun", C(a, FOA))
+    freya.validate_workflow("dryrun", C(_with_fields(_memo()), FOA))
+    freya.validate_workflow("dryrun", C(_renamed(B), _renamed_oa()))
+
+
 # ---------------------------------------------------------------- G5 note reason -> close reason
 
 MOA = json.load(open("bench/multi-raw/openapi.json"))
