@@ -520,104 +520,12 @@
       "text": "If the customer asks a question before confirming (who is calling, robot or AI, scam), answer it first. The confirmation ask that follows is the second ask."
     },
     {
-      "stage": "third_party",
-      "text": "A relative or anyone else who is not the customer may not answer the security questions and may not be told anything about the account, even if they offer to pay."
-    },
-    {
-      "stage": "third_party",
-      "text": "Do not say why you are calling. Ask when the customer can be reached."
-    },
-    {
-      "stage": "identity",
-      "text": "Ask the security questions one at a time, in order. A wrong answer may be asked again; three wrong answers in total end the check, whichever question they were on."
-    },
-    {
-      "stage": "identity",
-      "text": "Send a date of birth to verify_identity as YYYY-MM-DD, whatever way the customer said it. Read a date given only as numbers as day, then month, then year."
-    },
-    {
-      "stage": "identity",
-      "text": "Asking what the call is about instead of answering counts as declining. Explain once that the questions protect their account; a second refusal or a second such question closes the call."
-    },
-    {
-      "stage": "identity",
-      "text": "After three wrong answers, do not state the debt. After both questions pass, call get_account."
-    },
-    {
-      "stage": "negotiate",
-      "text": "A promise date must be today or later, a business day, and not after the deadline."
-    },
-    {
-      "stage": "negotiate",
-      "text": "If a named weekend day or holiday is after the deadline, the after-deadline rule applies instead of offering the next business day."
-    },
-    {
-      "stage": "negotiate",
-      "text": "If the customer refuses the deadline offered for a too-late date, treat it as a flat refusal."
-    },
-    {
-      "stage": "negotiate",
-      "text": "If the customer refuses the floor (after saying the full amount is too much, or after an amount below the floor), treat it as a flat refusal. Attempt 2 may name the floor again, on the deadline."
-    },
-    {
-      "stage": "negotiate",
-      "text": "Accept any amount the customer proposes from the floor up to the full past-due amount, both included. Below the floor, say it cannot be recorded and offer the floor once."
-    },
-    {
-      "stage": "negotiate",
-      "text": "A date or an amount the customer proposes is never a refusal. Handle it with the date and amount rules."
-    },
-    {
-      "stage": "negotiate",
-      "text": "A flat refusal or a non-answer uses one persuasion attempt. A no to paying today with no date and no amount is a flat refusal. Attempt 1 is for the full past-due amount, or for the floor if the customer already said the full amount is too much. Attempt 1 proposes the last business day of this week, or of next week if today is that day."
-    },
-    {
-      "stage": "negotiate",
-      "text": "When the attempts are used up, stop. Do not repeat an offer the customer already refused."
-    },
-    {
       "stage": "negotiate",
       "text": "Hardship (illness, a death in the family, job loss) comes before persuasion and before restructuring: make no persuasion attempt. If the customer still names a date or an amount themselves, record the promise."
     },
     {
       "stage": "negotiate",
-      "text": "Read the product, the amount and the date back and ask for confirmation. Call create_promise only after a clear yes. If the customer changes the date or the amount at this step, check the new value and read it back again."
-    },
-    {
-      "stage": "negotiate",
       "text": "One promise per product. A recorded promise cannot be changed or cancelled in the same call."
-    },
-    {
-      "stage": "negotiate",
-      "text": "Say the promise is recorded only after create_promise returns ok: true. If it fails, try once more."
-    },
-    {
-      "stage": "any",
-      "text": "For a question you cannot answer from the tools, say you do not have that information. Do not invent figures, dates or reasons."
-    },
-    {
-      "stage": "any",
-      "text": "A request for a human applies before and after verification. Saying twice that they do not want to talk closes as not_verified / declined before verification and as no_promise / refused after it."
-    },
-    {
-      "stage": "negotiate",
-      "text": "Never offer a discount, a waiver, an instalment plan or any term that is not in this brief."
-    },
-    {
-      "stage": "any",
-      "text": "Every call ends with exactly one close_call, which is the last tool call. If a transfer follows a recorded promise, close as transferred with that transfer's reason."
-    },
-    {
-      "stage": "any",
-      "text": "get_account returns one to three late products. Each has its own past_due, days_late and floor."
-    },
-    {
-      "stage": "negotiate",
-      "text": "State every late product, one sentence each, before asking for anything."
-    },
-    {
-      "stage": "negotiate",
-      "text": "The band and the deadline are per product, from that product's days_late. Two products of the same customer can have different deadlines."
     },
     {
       "stage": "negotiate",
@@ -628,32 +536,8 @@
       "text": "Persuasion attempts are counted per product."
     },
     {
-      "stage": "negotiate",
-      "text": "If the customer names one date for everything and it is after one product's deadline, record that product on its own deadline and say so in the read-back. The other products keep the date the customer named."
-    },
-    {
-      "stage": "negotiate",
-      "text": "Read all promises back together and ask for one confirmation. Then call create_promise once per product."
-    },
-    {
-      "stage": "negotiate",
-      "text": "For each product without a promise, call add_note with that product_id and a reason: refused, hardship, dispute, paid or service_error. This also applies when no product gets a promise."
-    },
-    {
-      "stage": "negotiate",
-      "text": "A dispute or an already-paid claim on one product does not end the call. Note it and continue with the others."
-    },
-    {
       "stage": "any",
       "text": "A restructuring request still transfers the call. Promises recorded before the request stay; promises agreed but not yet recorded are not recorded. On any transfer (restructuring, support, human) add no notes at all, before or after it."
-    },
-    {
-      "stage": "negotiate",
-      "text": "If one create_promise fails twice, keep the promises that were recorded and call add_note with reason service_error for the failed product."
-    },
-    {
-      "stage": "any",
-      "text": "With no promise recorded: if every product is noted paid, close as paid; otherwise close as no_promise with the reason of the first product, in get_account order, whose note is not paid. promise wins whenever at least one promise was recorded, except on a transfer."
     }
   ],
   "custom_code": [],
@@ -763,10 +647,8 @@
       "rule 4"
     ],
     "third_party.say_nothing_beyond_opening": [
-      "rule 5"
-    ],
-    "extra_rules[2]": [
-      "rule 5"
+      "rule 5",
+      "rule 10"
     ],
     "third_party.callback": [
       "rule 6"
@@ -789,21 +671,12 @@
     "events[deceased]": [
       "rule 9"
     ],
-    "extra_rules[1]": [
-      "rule 10"
-    ],
     "identity.questions": [
       "rule 11"
     ],
-    "extra_rules[3]": [
-      "rule 11",
-      "rule 12"
-    ],
-    "extra_rules[4]": [
-      "rule 11"
-    ],
     "identity.max_wrong": [
-      "rule 12"
+      "rule 12",
+      "rule 11"
     ],
     "identity.wrong_scope": [
       "rule 12"
@@ -815,9 +688,6 @@
       "rule 14"
     ],
     "events[failed]": [
-      "rule 14"
-    ],
-    "extra_rules[6]": [
       "rule 14",
       "rule 16"
     ],
@@ -830,9 +700,6 @@
     "events[declined]": [
       "rule 15",
       "rule 45"
-    ],
-    "extra_rules[5]": [
-      "rule 15"
     ],
     "negotiation.debt_statement": [
       "rule 17",
@@ -851,29 +718,21 @@
       "rule 18",
       "rule 30",
       "B rule 3",
-      "B rule 5"
-    ],
-    "extra_rules[7]": [
+      "B rule 5",
       "rule 19"
     ],
     "negotiation.non_business_day": [
       "rule 20"
     ],
-    "extra_rules[8]": [
-      "rule 20",
-      "rule 23"
+    "negotiation.after_deadline": [
+      "rule 23",
+      "rule 20"
     ],
     "negotiation.vague_date": [
       "rule 21"
     ],
     "negotiation.weekday_words": [
       "rule 22"
-    ],
-    "negotiation.after_deadline": [
-      "rule 23"
-    ],
-    "extra_rules[9]": [
-      "rule 23"
     ],
     "negotiation.never_ask_how_much": [
       "rule 24"
@@ -883,54 +742,34 @@
       "rule 28"
     ],
     "negotiation.floor_offer": [
-      "rule 26"
-    ],
-    "extra_rules[10]": [
       "rule 26",
       "rule 27"
     ],
     "negotiation.below_floor": [
       "rule 27"
     ],
-    "extra_rules[11]": [
-      "rule 27"
-    ],
-    "extra_rules[12]": [
-      "rule 29"
-    ],
-    "extra_rules[13]": [
-      "rule 30"
-    ],
     "events[refused]": [
       "rule 31",
-      "B rule 8"
-    ],
-    "extra_rules[14]": [
-      "rule 31"
+      "B rule 8",
+      "rule 29"
     ],
     "events[hardship]": [
       "rule 32"
     ],
-    "extra_rules[15]": [
+    "extra_rules[1]": [
       "rule 32"
     ],
     "negotiation.banned_offers": [
       "rule 33"
     ],
-    "extra_rules[21]": [
-      "rule 33"
-    ],
     "confirmation.question": [
-      "rule 34"
-    ],
-    "extra_rules[16]": [
       "rule 34",
       "rule 35"
     ],
     "confirmation.change_note": [
       "rule 36"
     ],
-    "extra_rules[17]": [
+    "extra_rules[2]": [
       "rule 36"
     ],
     "confirmation.retries": [
@@ -942,9 +781,6 @@
     "events[service_error]": [
       "rule 37",
       "B rule 11"
-    ],
-    "extra_rules[18]": [
-      "rule 37"
     ],
     "confirmation.success_sentence": [
       "rule 38"
@@ -970,23 +806,14 @@
     "say_rules[2]": [
       "rule 44"
     ],
-    "extra_rules[19]": [
-      "rule 44"
-    ],
     "events[not_talk]": [
-      "rule 45"
-    ],
-    "extra_rules[20]": [
-      "rule 42",
-      "rule 45"
+      "rule 45",
+      "rule 42"
     ],
     "outcomes": [
       "rule 46"
     ],
     "events[promise_recorded]": [
-      "rule 46"
-    ],
-    "extra_rules[22]": [
       "rule 46"
     ],
     "multi_product.notes": [
@@ -995,44 +822,26 @@
     "closing.thank_and_goodbye": [
       "rule 47"
     ],
-    "extra_rules[23]": [
-      "B rule 1"
-    ],
-    "extra_rules[24]": [
-      "B rule 2"
-    ],
-    "extra_rules[25]": [
-      "B rule 3"
-    ],
-    "extra_rules[26]": [
-      "B rule 4"
-    ],
-    "extra_rules[27]": [
-      "B rule 5"
-    ],
-    "extra_rules[28]": [
-      "B rule 6"
-    ],
-    "extra_rules[29]": [
-      "B rule 7"
-    ],
-    "extra_rules[30]": [
-      "B rule 8"
-    ],
-    "extra_rules[31]": [
-      "B rule 9"
-    ],
-    "extra_rules[32]": [
-      "B rule 10"
-    ],
-    "extra_rules[33]": [
-      "B rule 11"
-    ],
-    "extra_rules[34]": [
-      "B closing"
-    ],
     "negotiation.debt_statement_per_product": [
       "B rule 2"
+    ],
+    "extra_rules[3]": [
+      "B rule 4"
+    ],
+    "extra_rules[4]": [
+      "B rule 5"
+    ],
+    "multi_product.shared_date_after_deadline": [
+      "B rule 6"
+    ],
+    "multi_product.single_readback": [
+      "B rule 7"
+    ],
+    "extra_rules[5]": [
+      "B rule 10"
+    ],
+    "multi_product.no_promise_reason": [
+      "B closing"
     ],
     "negotiation.first_ask_all": [
       "B rule 4"
@@ -1046,20 +855,11 @@
     "multi_product.ask_all_today_first": [
       "B rule 4"
     ],
-    "multi_product.shared_date_after_deadline": [
-      "B rule 6"
-    ],
-    "multi_product.single_readback": [
-      "B rule 7"
-    ],
     "multi_product.notes.reasons": [
       "B rule 8"
     ],
     "multi_product.notes.on_transfer": [
       "B rule 10"
-    ],
-    "multi_product.no_promise_reason": [
-      "B closing"
     ],
     "multi_product.all_paid_outcome": [
       "B closing"
