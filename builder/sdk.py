@@ -6,6 +6,8 @@ Every session runs locked down:
 - setting_sources [] (no user or project settings, hooks or CLAUDE.md);
 - strict MCP config with no servers (no claude.ai connectors);
 - deny rules on env.sh and .env files.
+- a PreToolUse hook (confine_hook, on by default for every session) denying any path outside the work dir,
+  Glob braces and symlinked directory prefixes.
 Every trace line goes through redact.scrub().
 """
 import asyncio
@@ -123,9 +125,84 @@ def load_prompt(name, **subs):
 
 # ------------------------------------------------------------------ session
 
-def options_for(work, model):
-    from claude_agent_sdk import ClaudeAgentOptions
+def _inside(root, p):
+    q = Path(os.path.expanduser(str(p)))
+    q = q if q.is_absolute() else root / q
+    try:
+        q.resolve().relative_to(root)
+        return True
+    except (ValueError, OSError, RuntimeError):
+        return False
+
+
+_GLOB_CHARS = set("*?[]{}")
+
+
+def _glob_escape(root, base, pat):
+    """Why a Glob pattern could reach outside root, or None. Denied: braces (expansion can produce absolute or ..
+    parts), absolute patterns, .. parts, and a literal directory prefix that resolves outside root (a symlink)."""
+    if "{" in pat or "}" in pat:
+        return "uses braces"
+    if os.path.isabs(os.path.expanduser(pat)):
+        return "is absolute"
+    parts = Path(pat).parts
+    if ".." in parts:
+        return "contains .."
+    base = base if base.is_absolute() else root / base
+    prefix = base
+    for part in parts:
+        if set(part) & _GLOB_CHARS:
+            break
+        prefix = prefix / part
+        if not _inside(root, prefix):
+            return "has a directory prefix outside the work dir"
+    return None
+
+
+def confine_hook(work):
+    """A PreToolUse hook that denies any tool call whose path resolves outside work.
+
+    can_use_tool would be shadowed here: the SDK auto-approves whole-tool allowed_tools entries before the callback
+    runs (claude_agent_sdk.types._get_can_use_tool_shadowed_warning), so a hook is the gate that always runs."""
+    root = Path(work).resolve()
+
+    def deny(why):
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": why}}
+
+    def check(input_data):
+        if not isinstance(input_data, dict):
+            return deny("malformed hook input")
+        ti = input_data.get("tool_input") or {}
+        if not isinstance(ti, dict):
+            return deny("malformed tool input")
+        for key in ("file_path", "path", "notebook_path", "pattern"):
+            if key in ti and ti[key] is not None and not isinstance(ti[key], str):
+                return deny("%s must be a string" % key)
+        for key in ("file_path", "path", "notebook_path"):
+            v = ti.get(key)
+            if v and not _inside(root, v):
+                return deny("%s is outside the work dir; only files in the current directory may be used" % key)
+        pat = ti.get("pattern")
+        if input_data.get("tool_name") == "Glob" and pat:
+            why = _glob_escape(root, Path(os.path.expanduser(ti.get("path") or str(root))), pat)
+            if why:
+                return deny("Glob pattern %s; patterns must stay inside the current directory" % why)
+        return {}
+
+    async def hook(input_data, tool_use_id, context):
+        try:
+            return check(input_data)
+        except Exception as exc:  # fail closed
+            return deny("path check failed (%s); denied" % type(exc).__name__)
+    return hook
+
+
+def options_for(work, model, confine=True):
+    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+    extra = {"hooks": {"PreToolUse": [HookMatcher(matcher=None, hooks=[confine_hook(work)])]}} if confine else {}
     return ClaudeAgentOptions(
+        **extra,
         cwd=str(work),
         model=model,
         system_prompt=SYSTEM,
@@ -141,15 +218,16 @@ def options_for(work, model):
 
 
 def _short(v, n=300):
-    s = v if isinstance(v, str) else json.dumps(v, default=str)
+    s = scrub(v if isinstance(v, str) else json.dumps(v, default=str))   # scrub before cutting: no secret prefix
     return s if len(s) <= n else s[:n] + "...(%d chars)" % len(s)
 
 
 class Session:
     """One Claude conversation in a work dir; ask() continues the same conversation."""
 
-    def __init__(self, work, purpose, trace, client_factory=None, model=None):
+    def __init__(self, work, purpose, trace, client_factory=None, model=None, confine=True):
         self.work = Path(work)
+        self.confine = confine
         self.purpose = purpose
         self.trace = trace
         self.model = model or model_name()
@@ -168,7 +246,7 @@ class Session:
             factory = lambda options: ClaudeSDKClient(options=options)  # noqa: E731
         else:
             factory = self.client_factory
-        self.client = factory(options_for(self.work, self.model))
+        self.client = factory(options_for(self.work, self.model, confine=self.confine))
         self.t0 = time.monotonic()
         await self.client.connect()
         return self

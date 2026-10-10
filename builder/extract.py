@@ -52,9 +52,17 @@ def _loose(s):
     return _ALNUM.sub(" ", str(s).casefold()).strip()
 
 
-def quote_in_brief(quote, brief):
+QUOTE_MIN_WORDS = 4
+QUOTE_MIN_CHARS = 20
+
+
+def quote_in_brief(quote, brief, min_words=QUOTE_MIN_WORDS, min_chars=QUOTE_MIN_CHARS):
+    """True when quote (normalised: casefold, non-alphanumerics to one space) occurs in the brief on word boundaries
+    and is long enough to be evidence: at least min_words words and min_chars characters after normalising."""
     q = _loose(quote)
-    return bool(q) and q in _loose(brief)
+    if not q or len(q.split()) < min_words or len(q) < min_chars:
+        return False
+    return (" %s " % q) in (" %s " % _loose(brief))
 
 
 def _validate(spec, openapi):
@@ -86,7 +94,7 @@ def load_spec(work, openapi):
 
 def fact_quote_misses(spec, brief):
     return [f.get("id") for f in spec.get("facts") or []
-            if isinstance(f, dict) and not quote_in_brief(f.get("quote", ""), brief)]
+            if isinstance(f, dict) and not quote_in_brief(f.get("quote", ""), brief, min_words=1, min_chars=1)]
 
 
 def _error_list(errs):
