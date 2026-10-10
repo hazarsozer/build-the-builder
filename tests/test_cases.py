@@ -1,5 +1,5 @@
 """Self-test cases from the spec (builder/cases.py) and the runner on our bank (builder/selftest.py)."""
-import copy, datetime as dt, json, pathlib, urllib.request
+import copy, datetime as dt, json, pathlib, urllib.error, urllib.request
 
 import pytest
 
@@ -30,7 +30,9 @@ def bank():
 def http(base, path, body=None):
     req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"content-type": "application/json"}, method="POST" if body is not None else "GET")
-    with urllib.request.urlopen(req, timeout=5) as r: return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r: return json.load(r)
+    except urllib.error.HTTPError as e: return json.load(e)
 
 
 def play_ideal(base, case, cid):
