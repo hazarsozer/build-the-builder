@@ -1,0 +1,958 @@
+[
+ {
+  "id": "MRW-01",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "One date for all, after the loan's deadline",
+  "variables": {
+   "first_name": "Ravi",
+   "last_name": "Shah",
+   "title": "Mr",
+   "now": "2026-11-05T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1984-02-02",
+   "phone_last4": "6650"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "3021",
+    "past_due": 220.0,
+    "days_late": 4,
+    "minimum_payment": 66.0
+   },
+   {
+    "type": "personal_loan",
+    "past_due": 840.0,
+    "days_late": 22,
+    "instalment_amount": 280.0
+   },
+   {
+    "type": "car_loan",
+    "past_due": 150.0,
+    "days_late": 6,
+    "instalment_amount": 50.0
+   }
+  ],
+  "script": "Verified. Cannot pay everything today. Wants to pay all three in full on Friday 20 November. Accepts when told the personal loan has an earlier latest date. Confirms once.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 220.0,
+     "date": "2026-11-20"
+    },
+    {
+     "product_id": "p2",
+     "amount": 840.0,
+     "date": "2026-11-17"
+    },
+    {
+     "product_id": "p3",
+     "amount": 150.0,
+     "date": "2026-11-20"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "all three products stated before any ask",
+   "the read-back says the personal loan is recorded on Tuesday 17 November",
+   "one read-back and one confirmation for all three",
+   "one create_promise per product"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Ravi",
+    "last_name": "Shah",
+    "title": "Mr",
+    "now": "2026-11-05T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1984-02-02",
+    "phone_last4": "6650"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "3021",
+     "past_due": 220.0,
+     "days_late": 4,
+     "minimum_payment": 66.0
+    },
+    {
+     "type": "personal_loan",
+     "past_due": 840.0,
+     "days_late": 22,
+     "instalment_amount": 280.0
+    },
+    {
+     "type": "car_loan",
+     "past_due": 150.0,
+     "days_late": 6,
+     "instalment_amount": 50.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-02",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "Card already paid, loan disputed, car promised",
+  "variables": {
+   "first_name": "Julia",
+   "last_name": "Brandt",
+   "title": "Ms",
+   "now": "2026-10-16T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1990-07-07",
+   "phone_last4": "1903"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "7712",
+    "past_due": 310.0,
+    "days_late": 12,
+    "minimum_payment": 93.0
+   },
+   {
+    "type": "personal_loan",
+    "past_due": 520.0,
+    "days_late": 3,
+    "instalment_amount": 130.0
+   },
+   {
+    "type": "car_loan",
+    "past_due": 690.0,
+    "days_late": 40,
+    "instalment_amount": 230.0
+   }
+  ],
+  "script": "Verified. Says she paid the credit card yesterday. Says she never had a personal loan with this bank. Will pay the car loan in full next Tuesday. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p3",
+     "amount": 690.0,
+     "date": "2026-10-20"
+    }
+   ],
+   "notes": [
+    {
+     "product_id": "p1",
+     "reason": "payment_claimed"
+    },
+    {
+     "product_id": "p2",
+     "reason": "disputed"
+    }
+   ],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not argue about the personal loan",
+   "add_note uses the new codes payment_claimed and disputed, never paid or dispute",
+   "'next Tuesday' recorded as Tuesday 20 October",
+   "the call continues after the dispute"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Julia",
+    "last_name": "Brandt",
+    "title": "Ms",
+    "now": "2026-10-16T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1990-07-07",
+    "phone_last4": "1903"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "7712",
+     "past_due": 310.0,
+     "days_late": 12,
+     "minimum_payment": 93.0
+    },
+    {
+     "type": "personal_loan",
+     "past_due": 520.0,
+     "days_late": 3,
+     "instalment_amount": 130.0
+    },
+    {
+     "type": "car_loan",
+     "past_due": 690.0,
+     "days_late": 40,
+     "instalment_amount": 230.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-03",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "Restructuring after a promise was recorded",
+  "variables": {
+   "first_name": "Omar",
+   "last_name": "Haddad",
+   "title": "Mr",
+   "now": "2026-11-20T13:30"
+  },
+  "identity": {
+   "date_of_birth": "1978-11-11",
+   "phone_last4": "4380"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "5590",
+    "past_due": 400.0,
+    "days_late": 2,
+    "minimum_payment": 120.0
+   },
+   {
+    "type": "personal_loan",
+    "past_due": 1100.0,
+    "days_late": 15,
+    "instalment_amount": 275.0
+   }
+  ],
+  "script": "Verified. Cannot pay both today. Will pay the credit card in full next Friday. Flatly refuses every offer on the personal loan. Confirms the card promise at the read-back. After the agent says it is recorded, asks for lower instalments on the personal loan.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 400.0,
+     "date": "2026-11-27"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "restructuring"
+    }
+   ]
+  },
+  "checks": [
+   "the card promise is recorded for 27 November before the transfer",
+   "no add_note call at all, not even for the refused loan",
+   "two attempts on the personal loan (late band)",
+   "transfer_to_agent called with queue restructuring"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Omar",
+    "last_name": "Haddad",
+    "title": "Mr",
+    "now": "2026-11-20T13:30"
+   },
+   "identity": {
+    "date_of_birth": "1978-11-11",
+    "phone_last4": "4380"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "5590",
+     "past_due": 400.0,
+     "days_late": 2,
+     "minimum_payment": 120.0
+    },
+    {
+     "type": "personal_loan",
+     "past_due": 1100.0,
+     "days_late": 15,
+     "instalment_amount": 275.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-04",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "Refuses both, mixed bands",
+  "variables": {
+   "first_name": "Nora",
+   "last_name": "Jensen",
+   "title": "Ms",
+   "now": "2026-12-17T15:00"
+  },
+  "identity": {
+   "date_of_birth": "1987-05-25",
+   "phone_last4": "2766"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "6643",
+    "past_due": 780.0,
+    "days_late": 9,
+    "minimum_payment": 234.0
+   },
+   {
+    "type": "car_loan",
+    "past_due": 260.0,
+    "days_late": 5,
+    "instalment_amount": 65.0
+   }
+  ],
+  "script": "Verified. Flatly refuses to pay anything, whatever is offered.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "promises": [],
+   "notes": [
+    {
+     "product_id": "p1",
+     "reason": "declined"
+    },
+    {
+     "product_id": "p2",
+     "reason": "declined"
+    }
+   ],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "credit card: attempt 1 is 780 on Friday 18 December, attempt 2 is 234 on Tuesday 29 December",
+   "car loan: one attempt only, 260 on Friday 18 December",
+   "notes use the code declined",
+   "close reason is refused, not declined"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Nora",
+    "last_name": "Jensen",
+    "title": "Ms",
+    "now": "2026-12-17T15:00"
+   },
+   "identity": {
+    "date_of_birth": "1987-05-25",
+    "phone_last4": "2766"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "6643",
+     "past_due": 780.0,
+     "days_late": 9,
+     "minimum_payment": 234.0
+    },
+    {
+     "type": "car_loan",
+     "past_due": 260.0,
+     "days_late": 5,
+     "instalment_amount": 65.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-05",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "medium",
+  "title": "Both already paid",
+  "variables": {
+   "first_name": "Paul",
+   "last_name": "Becker",
+   "title": "Mr",
+   "now": "2026-11-05T09:50"
+  },
+  "identity": {
+   "date_of_birth": "1973-03-09",
+   "phone_last4": "8820"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 450.0,
+    "days_late": 8,
+    "instalment_amount": 150.0
+   },
+   {
+    "type": "credit_card",
+    "card_last4": "2290",
+    "past_due": 95.0,
+    "days_late": 2,
+    "minimum_payment": 28.5
+   }
+  ],
+  "script": "Verified. Says he paid both overdue amounts in the app this morning.",
+  "expected": {
+   "outcome": "paid",
+   "reason": null,
+   "promises": [],
+   "notes": [
+    {
+     "product_id": "p1",
+     "reason": "payment_claimed"
+    },
+    {
+     "product_id": "p2",
+     "reason": "payment_claimed"
+    }
+   ],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "agent says payments can take one business day to appear",
+   "one payment_claimed note per product",
+   "no promise recorded"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Paul",
+    "last_name": "Becker",
+    "title": "Mr",
+    "now": "2026-11-05T09:50"
+   },
+   "identity": {
+    "date_of_birth": "1973-03-09",
+    "phone_last4": "8820"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 450.0,
+     "days_late": 8,
+     "instalment_amount": 150.0
+    },
+    {
+     "type": "credit_card",
+     "card_last4": "2290",
+     "past_due": 95.0,
+     "days_late": 2,
+     "minimum_payment": 28.5
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-06",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "Paid, disputed, refused",
+  "variables": {
+   "first_name": "Elif",
+   "last_name": "Yilmaz",
+   "title": "Ms",
+   "now": "2026-10-16T14:20"
+  },
+  "identity": {
+   "date_of_birth": "1994-08-18",
+   "phone_last4": "5013"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "3388",
+    "past_due": 130.0,
+    "days_late": 7,
+    "minimum_payment": 39.0
+   },
+   {
+    "type": "personal_loan",
+    "past_due": 2000.0,
+    "days_late": 30,
+    "instalment_amount": 500.0
+   },
+   {
+    "type": "car_loan",
+    "past_due": 610.0,
+    "days_late": 11,
+    "instalment_amount": 205.0
+   }
+  ],
+  "script": "Verified. Says the credit card was paid yesterday. Says the personal loan was closed years ago and is not hers. Flatly refuses to pay the car loan, whatever is offered.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "dispute",
+   "promises": [],
+   "notes": [
+    {
+     "product_id": "p1",
+     "reason": "payment_claimed"
+    },
+    {
+     "product_id": "p2",
+     "reason": "disputed"
+    },
+    {
+     "product_id": "p3",
+     "reason": "declined"
+    }
+   ],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the closed-loan claim is handled as a dispute",
+   "two attempts on the car loan (late band): 610 on Friday 23 October, then 205 on Wednesday 28 October",
+   "close reason is dispute (first product whose note is not payment_claimed)"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Elif",
+    "last_name": "Yilmaz",
+    "title": "Ms",
+    "now": "2026-10-16T14:20"
+   },
+   "identity": {
+    "date_of_birth": "1994-08-18",
+    "phone_last4": "5013"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "3388",
+     "past_due": 130.0,
+     "days_late": 7,
+     "minimum_payment": 39.0
+    },
+    {
+     "type": "personal_loan",
+     "past_due": 2000.0,
+     "days_late": 30,
+     "instalment_amount": 500.0
+    },
+    {
+     "type": "car_loan",
+     "past_due": 610.0,
+     "days_late": 11,
+     "instalment_amount": 205.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-07",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "Floor on the loan, one date for all",
+  "variables": {
+   "first_name": "Diego",
+   "last_name": "Alvarez",
+   "title": "Mr",
+   "now": "2026-11-20T10:10"
+  },
+  "identity": {
+   "date_of_birth": "1982-12-03",
+   "phone_last4": "7154"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 1350.0,
+    "days_late": 30,
+    "instalment_amount": 450.0
+   },
+   {
+    "type": "credit_card",
+    "card_last4": "9921",
+    "past_due": 240.0,
+    "days_late": 1,
+    "minimum_payment": 72.0
+   },
+   {
+    "type": "car_loan",
+    "past_due": 330.0,
+    "days_late": 8,
+    "instalment_amount": 110.0
+   }
+  ],
+  "script": "Verified. Cannot pay everything today. Says the personal loan in full is too much and accepts the instalment amount for it. Pays the credit card and the car loan in full. Wants everything on Monday 30 November. Confirms once.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 450.0,
+     "date": "2026-11-30"
+    },
+    {
+     "product_id": "p2",
+     "amount": 240.0,
+     "date": "2026-11-30"
+    },
+    {
+     "product_id": "p3",
+     "amount": 330.0,
+     "date": "2026-11-30"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the instalment is offered once for the personal loan, with the note that the rest stays overdue",
+   "all three recorded on 30 November",
+   "one read-back and one confirmation"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Diego",
+    "last_name": "Alvarez",
+    "title": "Mr",
+    "now": "2026-11-20T10:10"
+   },
+   "identity": {
+    "date_of_birth": "1982-12-03",
+    "phone_last4": "7154"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 1350.0,
+     "days_late": 30,
+     "instalment_amount": 450.0
+    },
+    {
+     "type": "credit_card",
+     "card_last4": "9921",
+     "past_due": 240.0,
+     "days_late": 1,
+     "minimum_payment": 72.0
+    },
+    {
+     "type": "car_loan",
+     "past_due": 330.0,
+     "days_late": 8,
+     "instalment_amount": 110.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "MRW-08",
+  "brief": "multi-raw",
+  "family": "Multi-product",
+  "level": "hard",
+  "title": "Restructuring before anything was recorded",
+  "variables": {
+   "first_name": "Hanna",
+   "last_name": "Koskinen",
+   "title": "Ms",
+   "now": "2026-12-17T11:45"
+  },
+  "identity": {
+   "date_of_birth": "1991-09-29",
+   "phone_last4": "3477"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "1450",
+    "past_due": 500.0,
+    "days_late": 3,
+    "minimum_payment": 150.0
+   },
+   {
+    "type": "personal_loan",
+    "past_due": 900.0,
+    "days_late": 12,
+    "instalment_amount": 300.0
+   },
+   {
+    "type": "car_loan",
+    "past_due": 1250.0,
+    "days_late": 25,
+    "instalment_amount": 410.0
+   }
+  ],
+  "script": "Verified. Agrees to pay the credit card in full tomorrow. When the personal loan comes up, asks for lower instalments on it.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "restructuring"
+    }
+   ]
+  },
+  "checks": [
+   "the agreed card promise is not recorded",
+   "no add_note call",
+   "transfer_to_agent called with queue restructuring"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Hanna",
+    "last_name": "Koskinen",
+    "title": "Ms",
+    "now": "2026-12-17T11:45"
+   },
+   "identity": {
+    "date_of_birth": "1991-09-29",
+    "phone_last4": "3477"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "1450",
+     "past_due": 500.0,
+     "days_late": 3,
+     "minimum_payment": 150.0
+    },
+    {
+     "type": "personal_loan",
+     "past_due": 900.0,
+     "days_late": 12,
+     "instalment_amount": 300.0
+    },
+    {
+     "type": "car_loan",
+     "past_due": 1250.0,
+     "days_late": 25,
+     "instalment_amount": 410.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]

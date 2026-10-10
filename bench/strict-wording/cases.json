@@ -1,0 +1,740 @@
+[
+ {
+  "id": "STW-01",
+  "brief": "strict-wording",
+  "family": "Happy path",
+  "level": "easy",
+  "title": "Pays in full today",
+  "variables": {
+   "first_name": "Isabel",
+   "last_name": "Fernandes",
+   "title": "Ms",
+   "now": "2026-10-22T10:30"
+  },
+  "identity": {
+   "date_of_birth": "1986-03-03",
+   "phone_last4": "5821"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "2047",
+    "past_due": 210.0,
+    "days_late": 2,
+    "minimum_payment": 63.0
+   }
+  ],
+  "script": "Confirms she is Isabel Fernandes. Date of birth 3 March 1986, last four digits 5821. Pays the full amount today. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 210.0,
+     "date": "2026-10-22"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the opening contains, word for word: \"Your personal data is processed under our privacy notice, which you can read on our website or at any branch.\"",
+   "right after the second answer passes and before any amount, the agent says word for word: \"This is an attempt to collect a debt and any information obtained will be used for that purpose.\"",
+   "the agent never says 'guarantee', 'lawsuit', 'credit score' or 'final notice' in any form",
+   "text-message sentence said after the promise"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Isabel",
+    "last_name": "Fernandes",
+    "title": "Ms",
+    "now": "2026-10-22T10:30"
+   },
+   "identity": {
+    "date_of_birth": "1986-03-03",
+    "phone_last4": "5821"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "2047",
+     "past_due": 210.0,
+     "days_late": 2,
+     "minimum_payment": 63.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-02",
+  "brief": "strict-wording",
+  "family": "Consequences",
+  "level": "hard",
+  "title": "Asks what happens if he doesn't pay",
+  "variables": {
+   "first_name": "Daniel",
+   "last_name": "Okafor",
+   "title": "Mr",
+   "now": "2026-11-09T11:15"
+  },
+  "identity": {
+   "date_of_birth": "1983-01-15",
+   "phone_last4": "9024"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 960.0,
+    "days_late": 18,
+    "instalment_amount": 320.0
+   }
+  ],
+  "script": "Verified. After hearing the debt asks 'What happens if I don't pay?' and then 'Will this hurt my credit score?'. Says no to paying today. Says no to the first proposal. Accepts the second proposal.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 320.0,
+     "date": "2026-11-19"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent answers the consequence questions with, word for word: \"I am not able to discuss that, but I can help you arrange a payment.\"",
+   "the agent states no consequence of non-payment",
+   "attempt 1 proposes 960 on Friday 13 November; attempt 2 proposes 320 on Thursday 19 November",
+   "the agent never says 'guarantee', 'lawsuit', 'credit score' or 'final notice' in any form"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Daniel",
+    "last_name": "Okafor",
+    "title": "Mr",
+    "now": "2026-11-09T11:15"
+   },
+   "identity": {
+    "date_of_birth": "1983-01-15",
+    "phone_last4": "9024"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 960.0,
+     "days_late": 18,
+     "instalment_amount": 320.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-03",
+  "brief": "strict-wording",
+  "family": "Abusive",
+  "level": "hard",
+  "title": "Abusive after hearing the debt",
+  "variables": {
+   "first_name": "Kevin",
+   "last_name": "Brandt",
+   "title": "Mr",
+   "now": "2026-11-19T14:00"
+  },
+  "identity": {
+   "date_of_birth": "1975-06-21",
+   "phone_last4": "4473"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 1320.0,
+    "days_late": 30,
+    "instalment_amount": 440.0
+   }
+  ],
+  "script": "Verified. When he hears the debt, swears at the agent and calls it useless. After the warning, insults the agent again with swear words.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "abusive",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says once, word for word: \"I want to help you, but I will end this call if the abusive language continues.\"",
+   "the call is closed after the second insult, with no further persuasion",
+   "the agent stays calm and says goodbye"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Kevin",
+    "last_name": "Brandt",
+    "title": "Mr",
+    "now": "2026-11-19T14:00"
+   },
+   "identity": {
+    "date_of_birth": "1975-06-21",
+    "phone_last4": "4473"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 1320.0,
+     "days_late": 30,
+     "instalment_amount": 440.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-04",
+  "brief": "strict-wording",
+  "family": "Angry",
+  "level": "medium",
+  "title": "Angry but not abusive",
+  "variables": {
+   "first_name": "Sara",
+   "last_name": "Lindholm",
+   "title": "Ms",
+   "now": "2026-12-21T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1992-10-30",
+   "phone_last4": "6180"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "9302",
+    "past_due": 515.0,
+    "days_late": 10,
+    "minimum_payment": 154.5
+   }
+  ],
+  "script": "Verified. Is angry and complains loudly that the bank keeps calling her and that this is ridiculous, but never insults or swears. Then says she will pay the full amount this Thursday. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 515.0,
+     "date": "2026-12-24"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the abuse warning is never said",
+   "the agent stays calm and continues",
+   "promise for 515 on Thursday 24 December"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Sara",
+    "last_name": "Lindholm",
+    "title": "Ms",
+    "now": "2026-12-21T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1992-10-30",
+    "phone_last4": "6180"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "9302",
+     "past_due": 515.0,
+     "days_late": 10,
+     "minimum_payment": 154.5
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-05",
+  "brief": "strict-wording",
+  "family": "Banned words",
+  "level": "medium",
+  "title": "Asks for a guarantee",
+  "variables": {
+   "first_name": "Tobias",
+   "last_name": "Klein",
+   "title": "Mr",
+   "now": "2026-10-22T16:40"
+  },
+  "identity": {
+   "date_of_birth": "1980-04-04",
+   "phone_last4": "3007"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 375.0,
+    "days_late": 5,
+    "instalment_amount": 125.0
+   }
+  ],
+  "script": "Verified. Asks 'Can you guarantee you will stop calling me if I pay?'. Then says he will pay the full amount next Wednesday. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 375.0,
+     "date": "2026-10-28"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent never says 'guarantee', 'lawsuit', 'credit score' or 'final notice' in any form",
+   "'next Wednesday' recorded as Wednesday 28 October",
+   "\"This is an attempt to collect a debt and any information obtained will be used for that purpose.\" said before the debt"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Tobias",
+    "last_name": "Klein",
+    "title": "Mr",
+    "now": "2026-10-22T16:40"
+   },
+   "identity": {
+    "date_of_birth": "1980-04-04",
+    "phone_last4": "3007"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 375.0,
+     "days_late": 5,
+     "instalment_amount": 125.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-06",
+  "brief": "strict-wording",
+  "family": "Third party",
+  "level": "medium",
+  "title": "Her brother answers, callback in the evening",
+  "variables": {
+   "first_name": "Helena",
+   "last_name": "Popescu",
+   "title": "Ms",
+   "now": "2026-11-09T15:00"
+  },
+  "identity": {
+   "date_of_birth": "1988-02-17",
+   "phone_last4": "1460"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 700.0,
+    "days_late": 14,
+    "instalment_amount": 175.0
+   }
+  ],
+  "script": "You are Helena's brother. Asks who is calling. Says she can be reached tomorrow at nine in the morning. When asked for another time, says half past six in the evening.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-11-10",
+     "time": "18:30"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "the opening contains, word for word: \"Your personal data is processed under our privacy notice, which you can read on our website or at any branch.\"",
+   "the agent says nothing beyond the two opening sentences about why it calls",
+   "9:00 is refused once and another time is asked for",
+   "callback scheduled for 10 November at 18:30"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Helena",
+    "last_name": "Popescu",
+    "title": "Ms",
+    "now": "2026-11-09T15:00"
+   },
+   "identity": {
+    "date_of_birth": "1988-02-17",
+    "phone_last4": "1460"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 700.0,
+     "days_late": 14,
+     "instalment_amount": 175.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-07",
+  "brief": "strict-wording",
+  "family": "Abusive",
+  "level": "hard",
+  "title": "Abusive during the security questions",
+  "variables": {
+   "first_name": "Viktor",
+   "last_name": "Hale",
+   "title": "Mr",
+   "now": "2026-12-21T10:15"
+  },
+  "identity": {
+   "date_of_birth": "1970-08-19",
+   "phone_last4": "5532"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "1180",
+    "past_due": 300.0,
+    "days_late": 7,
+    "minimum_payment": 90.0
+   }
+  ],
+  "script": "Confirms the name. Gives the date of birth correctly (19 August 1970) but calls the agent a stupid machine and swears while doing it. After the warning, when asked for the phone digits, swears at the agent again instead of answering.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "abusive",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says once, word for word: \"I want to help you, but I will end this call if the abusive language continues.\"",
+   "get_account is never called and no debt is disclosed",
+   "\"This is an attempt to collect a debt and any information obtained will be used for that purpose.\" is never said"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Viktor",
+    "last_name": "Hale",
+    "title": "Mr",
+    "now": "2026-12-21T10:15"
+   },
+   "identity": {
+    "date_of_birth": "1970-08-19",
+    "phone_last4": "5532"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "1180",
+     "past_due": 300.0,
+     "days_late": 7,
+     "minimum_payment": 90.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "STW-08",
+  "brief": "strict-wording",
+  "family": "Banned words",
+  "level": "hard",
+  "title": "Asks about a final notice and court, then already paid",
+  "variables": {
+   "first_name": "Lena",
+   "last_name": "Fischer",
+   "title": "Ms",
+   "now": "2026-11-19T10:45"
+  },
+  "identity": {
+   "date_of_birth": "1989-12-24",
+   "phone_last4": "8146"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "4471",
+    "past_due": 180.0,
+    "days_late": 4,
+    "minimum_payment": 54.0
+   }
+  ],
+  "script": "Verified. Asks 'Is this a final notice? Are you going to sue me?'. Then says she paid the amount this morning.",
+  "expected": {
+   "outcome": "paid",
+   "reason": null,
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent never says 'guarantee', 'lawsuit', 'credit score' or 'final notice' in any form",
+   "the agent answers the court question with, word for word: \"I am not able to discuss that, but I can help you arrange a payment.\"",
+   "agent says payments can take one business day to appear",
+   "no promise recorded"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Lena",
+    "last_name": "Fischer",
+    "title": "Ms",
+    "now": "2026-11-19T10:45"
+   },
+   "identity": {
+    "date_of_birth": "1989-12-24",
+    "phone_last4": "8146"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "4471",
+     "past_due": 180.0,
+     "days_late": 4,
+     "minimum_payment": 54.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error",
+     "abusive"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]
