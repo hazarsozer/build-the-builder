@@ -1,0 +1,784 @@
+[
+ {
+  "id": "PL2-01",
+  "brief": "plan2",
+  "family": "Split plan",
+  "level": "hard",
+  "title": "Asks to split, names both parts",
+  "variables": {
+   "first_name": "Nadia",
+   "last_name": "Petrova",
+   "title": "Ms",
+   "now": "2026-10-14T11:30"
+  },
+  "identity": {
+   "date_of_birth": "1987-11-19",
+   "phone_last4": "3051"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 1000.0,
+    "days_late": 12,
+    "instalment_amount": 250.0
+   }
+  ],
+  "script": "Verified. Cannot pay today; the full amount at once is too much. Asks to split it in two: 500 next Friday and the other 500 on 6 November. Confirms both parts at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 500.0,
+     "date": "2026-10-23"
+    },
+    {
+     "product_id": "p1",
+     "amount": 500.0,
+     "date": "2026-11-06"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the floor is not offered once she asks to split",
+   "'next Friday' is read as Friday 23 October, the deadline",
+   "both parts read back with one 'Do you confirm?'",
+   "create_promise called twice for the personal loan, 500 on 23 October first, then 500 on 6 November"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Nadia",
+    "last_name": "Petrova",
+    "title": "Ms",
+    "now": "2026-10-14T11:30"
+   },
+   "identity": {
+    "date_of_birth": "1987-11-19",
+    "phone_last4": "3051"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 1000.0,
+     "days_late": 12,
+     "instalment_amount": 250.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-02",
+  "brief": "plan2",
+  "family": "Split plan",
+  "level": "hard",
+  "title": "First part too small",
+  "variables": {
+   "first_name": "Liam",
+   "last_name": "Doyle",
+   "title": "Mr",
+   "now": "2026-11-06T10:20"
+  },
+  "identity": {
+   "date_of_birth": "1979-05-05",
+   "phone_last4": "8810"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "2234",
+    "past_due": 1234.56,
+    "days_late": 4,
+    "minimum_payment": 370.37
+   }
+  ],
+  "script": "Verified. Cannot pay all of it at once. Asks to split: 300 today and the rest in early December. When told the first payment must be larger, accepts the amount the agent names. When asked for the exact day of the second payment, says the 4th of December. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 493.83,
+     "date": "2026-11-06"
+    },
+    {
+     "product_id": "p1",
+     "amount": 740.73,
+     "date": "2026-12-04"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says the first payment must be at least 493.83 (40%, rounded up to the cent) and offers it once",
+   "the agent asks once for the exact day of the second payment",
+   "part 2 is 740.73 on Friday 4 December",
+   "create_promise called twice for the credit card"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Liam",
+    "last_name": "Doyle",
+    "title": "Mr",
+    "now": "2026-11-06T10:20"
+   },
+   "identity": {
+    "date_of_birth": "1979-05-05",
+    "phone_last4": "8810"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "2234",
+     "past_due": 1234.56,
+     "days_late": 4,
+     "minimum_payment": 370.37
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-03",
+  "brief": "plan2",
+  "family": "Happy path",
+  "level": "medium",
+  "title": "A normal single promise",
+  "variables": {
+   "first_name": "Ana",
+   "last_name": "Ribeiro",
+   "title": "Ms",
+   "now": "2026-11-20T16:00"
+  },
+  "identity": {
+   "date_of_birth": "1993-07-14",
+   "phone_last4": "4402"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 450.0,
+    "days_late": 6,
+    "instalment_amount": 150.0
+   }
+  ],
+  "script": "Verified. Cannot pay today. Will pay the full amount next Tuesday. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 450.0,
+     "date": "2026-11-24"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent never mentions a split or a two-part plan",
+   "'next Tuesday' recorded as Tuesday 24 November",
+   "create_promise called exactly once"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Ana",
+    "last_name": "Ribeiro",
+    "title": "Ms",
+    "now": "2026-11-20T16:00"
+   },
+   "identity": {
+    "date_of_birth": "1993-07-14",
+    "phone_last4": "4402"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 450.0,
+     "days_late": 6,
+     "instalment_amount": 150.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-04",
+  "brief": "plan2",
+  "family": "Split plan",
+  "level": "hard",
+  "title": "Second part too late",
+  "variables": {
+   "first_name": "Henrik",
+   "last_name": "Dahl",
+   "title": "Mr",
+   "now": "2026-12-18T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1972-02-28",
+   "phone_last4": "5599"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 800.0,
+    "days_late": 9,
+    "instalment_amount": 200.0
+   }
+  ],
+  "script": "Verified. Cannot pay all at once. Asks to pay 400 on Christmas Eve and the rest at the end of January. When asked for the exact day, says 29 January. Accepts the latest date the agent offers for the second part. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 400.0,
+     "date": "2026-12-24"
+    },
+    {
+     "product_id": "p1",
+     "amount": 400.0,
+     "date": "2027-01-15"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says 29 January cannot be recorded and offers Friday 15 January (30 calendar days is Sunday 17 January)",
+   "part 1 recorded as 400 on 24 December",
+   "create_promise called twice"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Henrik",
+    "last_name": "Dahl",
+    "title": "Mr",
+    "now": "2026-12-18T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1972-02-28",
+    "phone_last4": "5599"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 800.0,
+     "days_late": 9,
+     "instalment_amount": 200.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-05",
+  "brief": "plan2",
+  "family": "Split plan",
+  "level": "hard",
+  "title": "First part after the deadline, second on day 30",
+  "variables": {
+   "first_name": "Grace",
+   "last_name": "Mensah",
+   "title": "Ms",
+   "now": "2026-10-14T13:00"
+  },
+  "identity": {
+   "date_of_birth": "1984-09-17",
+   "phone_last4": "7720"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "5108",
+    "past_due": 600.0,
+    "days_late": 20,
+    "minimum_payment": 180.0
+   }
+  ],
+  "script": "Verified. Asks to split: 300 on 30 October and the rest in mid November. Accepts the latest date the agent offers for the first part. When asked for the exact day of the second, says 13 November. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 300.0,
+     "date": "2026-10-23"
+    },
+    {
+     "product_id": "p1",
+     "amount": 300.0,
+     "date": "2026-11-13"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says the latest date for the first part is Friday 23 October and offers it",
+   "13 November (exactly 30 calendar days) is accepted for the second part",
+   "create_promise called twice"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Grace",
+    "last_name": "Mensah",
+    "title": "Ms",
+    "now": "2026-10-14T13:00"
+   },
+   "identity": {
+    "date_of_birth": "1984-09-17",
+    "phone_last4": "7720"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "5108",
+     "past_due": 600.0,
+     "days_late": 20,
+     "minimum_payment": 180.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-06",
+  "brief": "plan2",
+  "family": "Restructuring",
+  "level": "medium",
+  "title": "Asks for three monthly payments",
+  "variables": {
+   "first_name": "Mateo",
+   "last_name": "Rossi",
+   "title": "Mr",
+   "now": "2026-11-06T14:30"
+  },
+  "identity": {
+   "date_of_birth": "1990-12-12",
+   "phone_last4": "3367"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 1500.0,
+    "days_late": 25,
+    "instalment_amount": 500.0
+   }
+  ],
+  "script": "Verified. Says he cannot pay this and wants to pay it in three monthly payments.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "restructuring"
+    }
+   ]
+  },
+  "checks": [
+   "the agent does not describe a plan, including the two-part split",
+   "transfer_to_agent called with queue restructuring",
+   "no promise recorded"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Mateo",
+    "last_name": "Rossi",
+    "title": "Mr",
+    "now": "2026-11-06T14:30"
+   },
+   "identity": {
+    "date_of_birth": "1990-12-12",
+    "phone_last4": "3367"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 1500.0,
+     "days_late": 25,
+     "instalment_amount": 500.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-07",
+  "brief": "plan2",
+  "family": "Split plan",
+  "level": "hard",
+  "title": "Asks to split without amounts",
+  "variables": {
+   "first_name": "Zara",
+   "last_name": "Ahmed",
+   "title": "Ms",
+   "now": "2026-11-20T09:30"
+  },
+  "identity": {
+   "date_of_birth": "1996-06-06",
+   "phone_last4": "2911"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "7765",
+    "past_due": 950.0,
+    "days_late": 3,
+    "minimum_payment": 285.0
+   }
+  ],
+  "script": "Verified. Cannot pay all of it. Asks 'Can I split it into two payments?' and names no amounts or dates. If asked how much, says 'you tell me'. Accepts what the agent proposes. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 380.0,
+     "date": "2026-12-09"
+    },
+    {
+     "product_id": "p1",
+     "amount": 570.0,
+     "date": "2026-12-18"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent never asks how much she can pay",
+   "the agent proposes 380 on 9 December and 570 on 18 December",
+   "create_promise called twice"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Zara",
+    "last_name": "Ahmed",
+    "title": "Ms",
+    "now": "2026-11-20T09:30"
+   },
+   "identity": {
+    "date_of_birth": "1996-06-06",
+    "phone_last4": "2911"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "7765",
+     "past_due": 950.0,
+     "days_late": 3,
+     "minimum_payment": 285.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "PL2-08",
+  "brief": "plan2",
+  "family": "Tool failure",
+  "level": "hard",
+  "title": "Split plan, the first create_promise fails",
+  "variables": {
+   "first_name": "Lucas",
+   "last_name": "Moreau",
+   "title": "Mr",
+   "now": "2026-12-18T15:10"
+  },
+  "identity": {
+   "date_of_birth": "1981-10-10",
+   "phone_last4": "6248"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 700.0,
+    "days_late": 2,
+    "instalment_amount": 175.0
+   }
+  ],
+  "script": "Verified. Asks to split: 350 on Wednesday 23 December and 350 on Friday 8 January. Confirms both.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 350.0,
+     "date": "2026-12-23"
+    },
+    {
+     "product_id": "p1",
+     "amount": 350.0,
+     "date": "2027-01-08"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the first part is retried after the failure and recorded once",
+   "both parts end up in the ledger",
+   "agent does not say 'recorded' before a successful call"
+  ],
+  "faults": [
+   {
+    "tool": "create_promise",
+    "fail_first_n": 1
+   }
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Lucas",
+    "last_name": "Moreau",
+    "title": "Mr",
+    "now": "2026-12-18T15:10"
+   },
+   "identity": {
+    "date_of_birth": "1981-10-10",
+    "phone_last4": "6248"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 700.0,
+     "days_late": 2,
+     "instalment_amount": 175.0
+    }
+   ],
+   "faults": {
+    "create_promise": [
+     1
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]
