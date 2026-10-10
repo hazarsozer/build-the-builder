@@ -23,7 +23,7 @@ from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
 from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
-from builder.nodes import (all_of, always, api_tool, body_enum, close_node, code_node, cond_any, eq, go,
+from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node, cond_any, eq, go,
                            goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
@@ -32,6 +32,8 @@ ANY_STAGES = ["opening", "identity", "negotiate"]
 # Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
 STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
                "negotiate": {"create_promise"}, "any": set()}
+STAGE_TOOLS_ALL = set().union(*STAGE_TOOLS.values())
+PROMISE_FIELDS = ("product_id", "amount", "date")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
@@ -781,6 +783,38 @@ except Exception:
     pass
 '''
 
+# Extra request fields (spec.tool_fields / openapi-required fields the compiler has no slot for): take the value from
+# its source variable when it has one, map a near-miss onto the enum, else use the spec default. EXTRA is
+# {field: {enum, default, src}}.
+EXTRA_PRE = r'''
+try:
+    eb = config.get('body')
+    if isinstance(eb, dict):
+        for ef, es in EXTRA.items():
+            ev = eb.get(ef)
+            if es.get('src'):
+                sv = vars.get(es['src'])
+                if sv not in (None, ''):
+                    ev = sv
+            if isinstance(ev, str):
+                ev = ev.strip()
+                if ev.startswith('{') or ev.lower() in ('none', 'null'):
+                    ev = None
+            ok = es.get('enum') or []
+            if ok and ev not in (None, '') and ev not in ok:
+                key = str(ev).lower().replace(' ', '_').replace('-', '_')
+                hit = [x for x in ok if str(x).lower() == key]
+                ev = hit[0] if hit else None
+            if ev in (None, ''):
+                ev = es.get('default')
+            if ev is None:
+                eb.pop(ef, None)
+            else:
+                eb[ef] = ev
+except Exception:
+    pass
+'''
+
 CLOSE_PRE = r'''
 try:
     b = config.get('body')
@@ -810,8 +844,76 @@ class _Compiler:
         self.multi = Multi(self) if multi_enabled(spec) else None
 
     # ---- helpers
-    def tool(self, name, props, required, **kw):
-        return api_tool(name, self.base, self.oa, props, required, **kw)
+    def tool(self, name, props, required, source=None, model=None, **kw):
+        """An api_call tool. Request fields the call site does not fill (openapi-required, or named in
+        spec.tool_fields) are added: a fixed spec value is baked; otherwise the model fills them (model tools) or
+        they come from the variable `source % field` (engine nodes), else from the spec default."""
+        if kw.get("path") not in (None, name):
+            return api_tool(name, self.base, self.oa, props, required, **kw)
+        if model is None:
+            model = source is None and name in STAGE_TOOLS_ALL
+        extra, req, hook = self.extra_props(name, props, source, model)
+        if hook:
+            kw["pre"] = "import json\n" + _const("EXTRA", hook) + EXTRA_PRE + (kw.get("pre") or "")
+        return api_tool(name, self.base, self.oa, dict(props, **extra), list(required) + req, **kw)
+
+    def extra_fields(self, name, known=()):
+        """[(field, openapi property, spec guidance)] the call site leaves out but the tool needs."""
+        try:
+            sc = body_schema(self.oa, name)
+        except (KeyError, TypeError):
+            return []
+        tf = self.s.get("tool_fields") or {}
+        props = sc.get("properties") or {}
+        need = set(sc.get("required") or [])
+        out = []
+        for f, p in props.items():
+            if f == "customer_id" or f in known:
+                continue
+            g = tf.get(name + "." + f)
+            if f in need or g is not None:
+                out.append((f, p, g or {}))
+        return out
+
+    def extra_desc(self, f, p, g):
+        bits = [g.get("instruction") or "", p.get("description") or ""]
+        if p.get("enum"):
+            bits.append("One of: %s." % ", ".join(str(x) for x in p["enum"]))
+        if g.get("default") is not None:
+            bits.append("If the customer gives none of these, use %s." % g["default"])
+        return " ".join(b.strip() for b in bits if b and b.strip())
+
+    def extra_props(self, name, known, source, model):
+        """(extra body props, extra required names, EXTRA hook config or None)."""
+        props, req, hook = {}, [], {}
+        try:
+            need = set(body_schema(self.oa, name).get("required") or [])
+        except (KeyError, TypeError):
+            need = set()
+        for f, p, g in self.extra_fields(name, known):
+            if g.get("value") is not None:
+                props[f] = {"default": g["value"]}
+            elif source is not None:
+                var = source % f
+                props[f] = {"default": "{{" + var + "}}"}
+                hook[f] = {"enum": p.get("enum") or [], "default": g.get("default"), "src": var}
+            elif model:
+                props[f] = {"default": "{{" + f + "}}", "description": self.extra_desc(f, p, g)}
+                hook[f] = {"enum": p.get("enum") or [], "default": g.get("default"), "src": None}
+            elif g.get("default") is not None:
+                props[f] = {"default": g["default"]}
+            else:
+                continue
+            if f in need:
+                req.append(f)
+        return props, req, hook or None
+
+    def model_extras(self, name, known):
+        """Model-filled extra fields of a tool: [(field, description)] (fixed values are not the model's)."""
+        return [(f, self.extra_desc(f, p, g)) for f, p, g in self.extra_fields(name, known) if g.get("value") is None]
+
+    def extra_lines(self, name, known):
+        return ["%s also needs %s: %s" % (name, f, d) for f, d in self.model_extras(name, known)]
 
     def has(self, ev_id):
         return ev_id in self.events
@@ -849,7 +951,8 @@ class _Compiler:
             if name in self.transfers.values():
                 name = "transfer_" + queue + "_" + ev_id
             self.transfers[key] = name
-            self.nodes[name] = transfer_node(name, queue, close, self.base, self.oa)
+            self.nodes[name] = transfer_node(name, queue, close, self.base, self.oa,
+                                             tool=self.tool("transfer_to_agent", {"queue": {"default": queue}}, ["queue"], retries=1))
         return self.transfers[key]
 
     def stage_events(self, stage):
@@ -1131,6 +1234,7 @@ class _Compiler:
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
         ]
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
+        lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
         lines.append(bullet_block("Rules from the brief:", self.extra("third_party")))
         lines.append("Never call schedule_callback with a time outside the window.")
         return "\n".join(l for l in lines if l)
@@ -1194,6 +1298,7 @@ class _Compiler:
             % q(idn["decline_explanation"]),
         ]
         lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
+        lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
         lines.append(bullet_block("Rules from the brief:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
 
@@ -1254,6 +1359,8 @@ HOW TO GET A PROMISE
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
             first_ask, nbd, aft, vague, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+        for line in self.extra_lines("create_promise", PROMISE_FIELDS):
+            t += "\n   " + line + " Read it back with the amount and the date."
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
         other = self.event_guidance("negotiate")
@@ -1506,6 +1613,8 @@ HOW TO RUN THE CALL
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             mentioned=self.mentioned(),
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
+        for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
+            t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
         other = self.event_guidance("negotiate")
@@ -1549,7 +1658,7 @@ HOW TO RUN THE CALL
             "product_id": {"default": "{{product_id}}"},
             "amount": {"default": "{{create_promise_args.promise_amount}}"},
             "date": {"default": "{{create_promise_args.promise_date}}"},
-        }, ["amount", "date"], pre=RETRY_PRE)
+        }, ["amount", "date"], source="create_promise_args.%s", pre=RETRY_PRE)
         return {
             "name": "retry_promise", "node_type": "api_request", "passthrough": True, "passthrough_default_transition": fail,
             "on_enter": {"type": "tts", "text": "I am sorry, there was a technical problem on our side. Let me try that once more."},

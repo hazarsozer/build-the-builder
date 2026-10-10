@@ -999,6 +999,40 @@
       },
       "description": "Optional: openapi close_call outcomes the brief never uses."
     },
+    "tool_fields": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z_][a-z0-9_]*[.][A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "instruction": {
+            "$ref": "#/$defs/str",
+            "description": "How the agent gets the value from the customer (when to ask, what to do when the answer fits no allowed value). Not said verbatim."
+          },
+          "default": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ],
+            "description": "Value sent when the customer gives none that fits (an openapi enum value when the field has an enum), or null."
+          },
+          "value": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ],
+            "description": "A fixed value the brief sets for every call: sent as is, never asked."
+          }
+        }
+      },
+      "description": "Optional: request fields of an openapi tool that the compiler has no slot for, keyed \"<tool>.<field>\" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it."
+    },
     "extra_rules": {
       "type": "array",
       "items": {

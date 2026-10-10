@@ -25,6 +25,7 @@ SLOTS = 3          # products per call the engine can record / note (the brief a
 SET_TOOL = "set_product"
 SET_MODE = "code"  # "code" (code_exec tool, nothing in the bank ledger) or "api" (get_account route + pre-hook)
 PHASE = "mp_phase"
+PROMISE_FIELDS = ("product_id", "amount", "date")
 
 
 def _const(name, value):
@@ -128,6 +129,20 @@ def _targets(st, ref, open_only):
     return [], False
 
 
+def _xval(es, v):
+    """An extra create_promise field: a near-miss maps onto the enum, else the spec default."""
+    if isinstance(v, str):
+        v = v.strip()
+    ok = es.get('enum') or []
+    if ok and v not in (None, '') and v not in ok:
+        key = str(v).lower().replace(' ', '_').replace('-', '_')
+        hit = [x for x in ok if str(x).lower() == key]
+        v = hit[0] if hit else None
+    if v in (None, ''):
+        v = es.get('default')
+    return v
+
+
 def _readback(st):
     parts = []
     for q in st['order']:
@@ -135,6 +150,9 @@ def _readback(st):
         if P['status'] != 'agreed':
             continue
         s = fmt(P['amount']) + ' for your ' + P['words'] + ' on ' + _say(P['date'])
+        for xf, xv in sorted((P.get('extra') or dict()).items()):
+            if xv not in (None, ''):
+                s += ', ' + xf.replace('_', ' ') + ' ' + str(xv).replace('_', ' ')
         if P.get('capped'):
             s += ', because that is the latest date I can accept for it'
         parts.append(s)
@@ -218,8 +236,11 @@ def _agree(st, b, today):
         new[q] = (round(amt, 2), dd, capped)
     if errs:
         return None, 'NOT accepted, nothing changed: ' + '; '.join(errs) + '.'
+    extra = dict()
+    for xf, es in (CFG.get('extra') or dict()).items():
+        extra[xf] = _xval(es, b.get(xf))
     for q, v in new.items():
-        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2])
+        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra)
     return st, 'Noted for now (nothing is registered before the confirmation).'
 
 
@@ -334,6 +355,9 @@ for i in range(1, SLOTS + 1):
         vars['rec' + str(i) + '_pid'] = ags[i - 1]
         vars['rec' + str(i) + '_amount'] = P['amount']
         vars['rec' + str(i) + '_date'] = P['date']
+        for xf in EXTRA_F:
+            xv = (P.get('extra') or dict()).get(xf)
+            vars['rec' + str(i) + '_' + xf] = '' if xv is None else xv
         vars['rec_has_' + str(i)] = 'yes'
     else:
         vars['rec' + str(i) + '_pid'] = ''
@@ -512,7 +536,13 @@ class Multi:
         cfg = {"confirm": conf["question"], "nbd": neg.get("non_business_day", "next_business_day"),
                "after": neg.get("after_deadline", "offer_deadline"), "below": neg.get("below_floor", "offer_floor_once"),
                "cap": self.mp.get("shared_date_after_deadline", "cap_to_product_deadline_and_say_so") != "reject",
-               "notes": [o for o in outcomes if o not in ("agreed", "refused", "review")], "say": say}
+               "notes": [o for o in outcomes if o not in ("agreed", "refused", "review")], "say": say, "extra": {}}
+        xprops = {}
+        for f, p, g in self.c.extra_fields("create_promise", PROMISE_FIELDS):
+            if g.get("value") is not None:
+                continue
+            cfg["extra"][f] = {"enum": p.get("enum") or [], "default": g.get("default")}
+            xprops[f] = {"type": "string", "description": "For agreed: " + self.c.extra_desc(f, p, g)}
         head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
@@ -523,6 +553,7 @@ class Multi:
             "date": {"type": "string", "description": "For agreed: the payment date, YYYY-MM-DD."},
             "attempts_made": {"type": "number", "description": "For refused: how many persuasion attempts of this product's plan you made."},
         }
+        props.update(xprops)
         desc = ("Report a settled product. CALL it every time a product is settled (agreed, refused, "
                 + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
         if mode == "api":
@@ -603,7 +634,9 @@ class Multi:
     def build(self, nodes):
         c = self.c
         # records
-        nodes["record_plan"] = code_node("record_plan", "SLOTS = %d\n" % SLOTS + RECORD_PLAN, "wrap_recorded",
+        extra_f = [f for f, _ in c.model_extras("create_promise", PROMISE_FIELDS)]
+        nodes["record_plan"] = code_node("record_plan", "import json\n" + _const("EXTRA_F", extra_f) + "SLOTS = %d\n" % SLOTS + RECORD_PLAN,
+                                         "wrap_recorded",
                                          [go("record_1", "A promise to record", cond_any(eq("rec_has_1", "yes")))])
         for i in range(1, SLOTS + 1):
             s = str(i)
@@ -616,7 +649,7 @@ class Multi:
                     "product_id": {"default": "{{rec%s_pid}}" % s},
                     "amount": {"default": "{{rec%s_amount}}" % s},
                     "date": {"default": "{{rec%s_date}}" % s},
-                }, ["product_id", "amount", "date"], pre=pre, post=post)
+                }, ["product_id", "amount", "date"], source="rec" + s + "_%s", pre=pre, post=post)
             ok = [eq("rec%s_status" % s, "recorded"), eq("rec%s_ok" % s, "true"), eq("rec%s_ok" % s, "True")]
             tr = []
             if nxt:

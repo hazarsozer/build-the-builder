@@ -150,6 +150,51 @@ def _openapi_errors(spec, openapi):
     return errs
 
 
+# Request fields the compiler fills itself, per tool (customer_id is always baked).
+COMPILED_FIELDS = {"verify_identity": {"field", "answer"}, "get_account": set(), "create_promise": {"product_id", "amount", "date"},
+                   "add_note": {"product_id", "reason"}, "schedule_callback": {"date", "time"}, "transfer_to_agent": {"queue"},
+                   "close_call": {"outcome", "reason"}}
+# Tools the engine calls without the dialogue model: an extra required field needs a fixed value or a default.
+ENGINE_TOOLS = {"get_account", "add_note", "transfer_to_agent", "close_call"}
+
+
+def _request(openapi, tool):
+    try:
+        return openapi["paths"]["/" + tool]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    except (KeyError, TypeError):
+        return None
+
+
+def _tool_field_errors(spec, openapi):
+    errs = []
+    tf = spec.get("tool_fields") or {}
+    for key, g in tf.items():
+        tool, _, field = key.partition(".")
+        sc = _request(openapi, tool)
+        props = (sc or {}).get("properties") or {}
+        if field not in props:
+            errs.append("tool_fields: %r is not an openapi request field (tool %s has %s)" % (key, tool, sorted(props)))
+            continue
+        if field == "customer_id" or field in COMPILED_FIELDS.get(tool, set()):
+            errs.append("tool_fields: %r is filled by the compiler; remove it" % key)
+        enum = props[field].get("enum")
+        for k in ("default", "value"):
+            if enum and g.get(k) is not None and g[k] not in enum:
+                errs.append("tool_fields[%s].%s: %r not in the openapi enum %s" % (key, k, g[k], enum))
+    for tool in COMPILED_FIELDS:
+        sc = _request(openapi, tool)
+        if not sc:
+            continue
+        for field in sc.get("required") or []:
+            if field == "customer_id" or field in COMPILED_FIELDS[tool] or field not in (sc.get("properties") or {}):
+                continue
+            g = tf.get(tool + "." + field) or {}
+            if tool in ENGINE_TOOLS and g.get("value") is None and g.get("default") is None:
+                errs.append("tool_fields: openapi requires %s.%s and the engine calls %s without the model; give it a value or a default"
+                            % (tool, field, tool))
+    return errs
+
+
 def _event_errors(spec):
     errs = []
     ids = [e["id"] for e in spec["events"]]
@@ -282,6 +327,7 @@ def validate(spec, openapi):
                     errs.append("facts[%d] (%s): maps_to %r does not resolve in the spec" % (i, f.get("id"), f.get("maps_to")))
         return errs
     errs += _openapi_errors(spec, openapi)
+    errs += _tool_field_errors(spec, openapi)
     errs += _event_errors(spec)
     errs += _band_errors(spec)
     if not any(e.startswith("bands") for e in errs):

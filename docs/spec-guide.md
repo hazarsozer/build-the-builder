@@ -131,6 +131,10 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `outcomes[].reason` (required): string or null. close_call reason; null only for promise and paid.
 - `outcomes[].event` (required): string. events[].id that produces this row.
 - `unused_outcomes` (optional): list of string. Optional: openapi close_call outcomes the brief never uses.
+- `tool_fields` (optional): map of name -> object. Optional: request fields of an openapi tool that the compiler has no slot for, keyed "<tool>.<field>" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it.
+- `tool_fields.<name>.instruction` (optional): string. How the agent gets the value from the customer (when to ask, what to do when the answer fits no allowed value). Not said verbatim.
+- `tool_fields.<name>.default` (optional): string or number or boolean or null. Value sent when the customer gives none that fits (an openapi enum value when the field has an enum), or null.
+- `tool_fields.<name>.value` (optional): string or number or boolean. A fixed value the brief sets for every call: sent as is, never asked.
 - `extra_rules` (required): list of object. Escape hatch: brief rules no structured field expresses, injected into the prompt of the given stage.
 - `extra_rules[].stage` (required): one of `opening`, `third_party`, `identity`, `negotiate`, `any`. Call stage: opening (before the person is confirmed), third_party (someone else answered), identity (security questions), negotiate (after verification: debt, promise, confirmation), any (every stage).
 - `extra_rules[].text` (required): string. 
