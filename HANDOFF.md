@@ -65,6 +65,7 @@ Reuse slots. The workspace limit is 200 workflows.
 
 ## Known platform facts
 
+- Cancel a stuck simulation: POST /api/v2/simulations/{id}/cancel (works; not in kit docs). List: GET /api/v2/simulations.
 - Freya's code sandbox ("snekbox") can go down. In that case a whole run fails, and those runs are discarded.
 - The judge reads literally:
   - No `record*` before a successful create_promise. The opening uses "monitored and stored".
