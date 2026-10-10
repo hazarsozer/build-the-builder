@@ -163,3 +163,22 @@ The extractor must cite the brief line for every value (`source` field). That he
 | Sun 13:00–16:00 | Full builder runs on the corpus; fix; build time ≤ 15 min |
 | Sun 16:00 | Decision: approach 1 or the fallback. Freeze the code |
 | Sun 20:00–23:00 | Run on the hidden briefs, export, write traces, submit |
+
+## Amendments from the kickoff and τ^τ-bench (2026-10-10, 18:00)
+
+Sources:
+- `~/Dev/docs/freya-yc-hackathon/raw/kickoff-transcript.txt`
+- `ARXIV-2609.04611.md` (τ^τ-bench, Sierra + Princeton). Best builder 23.9%; banking 5.9%. Top builders used fixed code guards. One build passed 10/10 of its own tests but scored 59.7%: its tests never reached the failing policy branches.
+
+1. **The self-test must be able to disagree with the spec.** Cases made from our spec share its blind spots. So we add two checks that need no simulation:
+   - **Dual extraction:** two independent extractions run in parallel and are diffed field by field. A third pass settles each disagreement and must cite a brief quote.
+   - **Brief oracle:** a separate LLM call that never sees the spec reads the raw brief and writes about 15 scenarios, each with its expected records. Our `lib` computes the same scenarios from the spec. Any mismatch is resolved with a quote, before any Freya run.
+2. **A fact pass comes first.** The extractor lists every checkable statement in the brief with its quote. Each statement must map to a spec field or to `extra_rules`. An unmapped fact is a validation error.
+3. **Fixes must cite the brief.** The LLM fix round may change the spec only by citing a brief quote. Generated tests are never relaxed to make them pass.
+4. **Overrides may be unlabelled.** A later document can decide something different without saying it's a change. The rule is: the latest dated decision wins, and decoy documents decide nothing. Every override goes into `conflicts`.
+5. **Varied wording.** Required sentences stay word for word. Everything else uses varied openings: the system prompt says never to start two replies with the same words. The self-test flags repeated reply openings.
+6. **Scope:** the organisers mentioned a "banking or insurance case" and personas who are "angry, scammer, prompt injection". So:
+   - Product types and every label stay generic.
+   - The system prompt and an injection say-rule hold the agent to its role.
+   - The case generator includes an injection persona.
+7. **What the organisers value** (kickoff): strict, deterministic routing; identity before any disclosure; a reproducible, traceable process; build speed. That matches the design. The trace logs the brief, the facts, both specs, the diff, each compile, the tests and every spec fix.
