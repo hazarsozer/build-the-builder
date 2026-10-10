@@ -73,5 +73,34 @@ Reuse slots. The workspace limit is 200 workflows.
   - Never restate an amount already offered.
 - The organisers' mock bank seeds only the 13 PUB case IDs. Self-tests for any other brief run on our mock (`bank/`) through a Cloudflare quick tunnel. The exported workflow must use openapi `servers[0]`, never the tunnel URL.
 
-## Status at usage limit (Sat ~late evening)
-See ledger tail. Next: (1) read results/pubours-t5r5-*.log → merge Task 5 if ≥ gate; (2) Opus review Task 8 (named risks in ledger) → merge; (3) dispatch Task 7b generalisation (field mapping, required tool fields, response aliases, note→close map, disclosure slot, Task 5 residual PIN rule) + bank generalisation; (4) bench/run.py + bench over 10 corpus briefs; (5) AFTER-PLAN.md items.
+## Successor orchestrator brief (written Sun ~02:30 by dev-14)
+
+You are the successor orchestrator. dev-14 stays open as the **reporter**: it writes REPORT.md for Hazar and discusses it with him in the morning. It does not start builds. Hazar is asleep until morning, so make every decision yourself as a logged `Ruling:` in the ledger. Message dev-14 (SendMessage) with one line at each milestone below, so the report stays current.
+
+**State:** all original-plan code tasks are merged on `builder` @ HEAD (suite: 451 passed). Tag `gate-green-1` is the last perfect live gate (PUB-A 10/10, PUB-B 3/3, all at 3 reps). The final Task 5 code also gave PUB-A 10/10 at 3 reps.
+
+**In flight when you start:**
+- (a) Background shell gate in the main checkout: PUB-B at 3 reps, then A-pieces at 3 reps, then B-pieces at 3 reps on agents ours-A/ours-B (Task 5 code). It holds the simulation slot. Logs: `results/t5r5-{B,A-pieces,B-pieces}-reps3.log`. Wait for it; don't start a simulation before it finishes. Check with `GET /api/v2/simulations`.
+- (b) The final whole-branch review (Opus subagent of dev-14). dev-14 relays its findings to you. Fix the Critical/Important ones via subagent-driven-development before Sunday 16:00.
+
+**Your queue, in order:**
+1. **Merge-bar re-gate of the merged builder** (7b + 8 changed code nodes). Recompile spec-a and spec-b with HEAD into ours-A/ours-B, then PUB-A and PUB-B at 3 reps. Bar: 10/10 and 3/3. On a miss, diagnose from transcripts (`freya.get_call`) and fix generically.
+2. **Dress rehearsals:**
+   - `uv run python -m builder.main briefs/brief-a.md --slot dress-A`, timed (target ≤ 15 min), then run_cases dress-A brief A at 3 reps.
+   - The same with `briefs/brief-a.md briefs/brief-b.md --slot dress-B`, brief B.
+   - Check each trace: start/end, model calls, IDs, tests, no secrets.
+   - Milestone message to dev-14.
+3. **Bench:** `uv run python bench/run.py ours` (10 briefs; plan2 is extraction-only; about 1.5 h; run it in the background). Classify failures as extraction / compile / case bug and fix generically. Milestone message.
+4. **AFTER-PLAN.md:**
+   - styles at 3 reps (all 5 × A, B; pieces is already being gated);
+   - different "today" dates (§3);
+   - variance at 5 reps (§5);
+   - judge-wording audit (§6);
+   - build-time cuts (§7);
+   - outage resilience (§8);
+   - submission readiness (§9).
+5. **Fallback gate (Task 10):** `fallback/agent_builder.py briefs/brief-a.md` and PUB-A at 3 reps, for the Sunday 16:00 comparison (Task 11). The 16:00 decision itself goes to Hazar.
+
+**Rules:** see "How the work runs" above. Before going idle, set your own heartbeat with CronCreate, every 20 min (minutes 13,33,53), idle-only. Its prompt: read the ledger tail and this file, then continue the queue. That way you resume after a usage-limit reset. Never push. Never cancel a simulation you didn't start. Secrets never printed.
+
+Known platform facts and agent IDs are above. Results: `results/` (gitignored). Rulings so far: in the ledger.
