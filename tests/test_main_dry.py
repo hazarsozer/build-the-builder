@@ -13,6 +13,7 @@ from bank import server, tunnel
 from builder import extract as ex
 from builder import main as M
 from builder import selftest
+from builder.redact import is_secret_name
 
 ROOT = Path(__file__).resolve().parent.parent
 OA = json.load(open(ROOT / "tools/openapi.json"))
@@ -25,7 +26,7 @@ HOST = "freya-bank-mock.freyavoice.workers.dev"
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
     for k in list(os.environ):
-        if k.startswith("FREYA_") or k.endswith("_KEY") or k.endswith("_TOKEN"):
+        if is_secret_name(k):
             monkeypatch.delenv(k)
 
 
