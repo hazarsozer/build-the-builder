@@ -23,8 +23,8 @@ from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
 from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
-from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_defaults_code, close_node, code_node,
-                           cond_any, eq, go, goodbye_node, gt, is_true, py_json, transfer_node)
+from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
+                           cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
 # "any" means the customer's own stages; a third party is only covered when a spec names it.
@@ -1441,10 +1441,10 @@ HOW TO GET A PROMISE
         return fe.get("outcome") or "no_promise", fe.get("reason") or ""
 
     def setup_nodes(self):
-        """setup computes the call's date facts and writes the close defaults. A snippet that did not run (sets no
-        setup_state) is run once more by setup_retry; the call goes on after that either way."""
+        """setup computes the call's date facts and writes a plain default farewell (no outcome). A snippet that did
+        not run (sets no setup_state) is run once more by setup_retry; the call goes on after that either way."""
         cb = self.s["third_party"]["callback"]
-        code = (close_defaults_code(*self.fail_close(), "I am sorry, there was a technical problem. " + self.thanks(named=False)) +
+        code = (farewell_default_code("I am sorry, there was a technical problem. " + self.thanks(named=False)) +
                 self.prelude() + _const("CB", cb) +
                 "CB_FALLBACK = %r\n" % ("A callback may be booked only " + self.cb_summary() + ".") + SETUP_CODE)
         ran = cond_any(eq("setup_state", "ok"), eq("setup_state", "error"))

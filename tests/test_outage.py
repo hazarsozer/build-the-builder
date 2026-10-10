@@ -229,10 +229,35 @@ def walk(w, x, v):
         cur = route(node, v)
 
 
-def check_stop(w, spec, stop, v, why):
+def close_body(w, v):
+    """The close_call body the engine sends at the end of the call: a field whose default is one unresolved
+    placeholder is dropped; then the pre-hook runs."""
+    t = [t for t in w["tools"] if t["function"]["name"] == "close_call"][0]
+    body = {}
+    for f, p in t["function"]["parameters"]["properties"]["body"]["properties"].items():
+        d = p.get("default")
+        m = PH.fullmatch(d) if isinstance(d, str) else None
+        if m and m.group(1) not in v:
+            continue
+        body[f] = str(v[m.group(1)]) if m else d
+    cfg = {"body": body}
+    exec(t["pre_process_code"], {"config": cfg, "vars": dict(v), "result": None})
+    return cfg["body"]
+
+
+def is_close(node):
+    return node["node_type"] == "code" and "outcome" in writes_of(code_of(node))
+
+
+def check_stop(w, spec, stop, v, why, no_close_ok=False):
+    """no_close_ok: the failed node is a close node, so the call may end with no outcome (as on a hang-up),
+    never with a wrong one."""
     node = w["nodes"][stop]
     comp = computed(w)
-    if node["node_type"] == "end_call":
+    if node["node_type"] == "end_call" and no_close_ok and "outcome" not in v:
+        assert "outcome" not in close_body(w, v) and "reason" not in close_body(w, v), why
+        assert isinstance(v.get("farewell"), str) and v["farewell"].strip().endswith("."), (why, v.get("farewell"))
+    elif node["node_type"] == "end_call":
         assert v.get("outcome") in ENUM, (why, v.get("outcome"))
         pair = (v["outcome"], v.get("reason") or None)
         assert pair in outcome_pairs(spec) or v["outcome"] in reasonless(spec), (why, pair)
@@ -243,7 +268,7 @@ def check_stop(w, spec, stop, v, why):
         assert val is not None and str(val).strip() not in ("", "None"), (why, stop, name, val)
 
 
-def check_onward(w, x, stop, v, why):
+def check_onward(w, x, stop, v, why, no_close_ok=False):
     """Every conversation node reachable from `stop` names only variables set on the way."""
     n = w["nodes"]
     comp = computed(w)
@@ -259,7 +284,8 @@ def check_onward(w, x, stop, v, why):
         missing = (set(PH.findall(spoken(node))) & comp) - s
         assert not missing, (why, "reaches", k, "without", sorted(missing))
         if node["node_type"] == "end_call":
-            assert {"outcome", "farewell"} <= s, (why, "ends without", {"outcome", "farewell"} - s)
+            need = {"farewell"} if no_close_ok else {"outcome", "farewell"}
+            assert need <= s, (why, "ends without", need - s)
             continue
         if node["node_type"] == "code" and k != x:
             s = s | writes_of(code_of(node))
@@ -287,8 +313,9 @@ def test_failed_code_node_reaches_a_valid_close(spec_key, node):
         for label, v in failures(w["nodes"][node], before):
             why = "%s/%s state %d %s" % (spec_key, node, i, label)
             stop, path = walk(w, node, v)
-            check_stop(w, spec, stop, v, why + " via " + ">".join(path))
-            check_onward(w, node, stop, v, why)
+            nc = is_close(w["nodes"][node])
+            check_stop(w, spec, stop, v, why + " via " + ">".join(path), no_close_ok=nc)
+            check_onward(w, node, stop, v, why, no_close_ok=nc)
 
 
 @pytest.mark.parametrize("spec_key", sorted(SPECS))
@@ -336,14 +363,31 @@ def test_close_call_prehook_drops_an_empty_reason(spec_key):
 
 
 @pytest.mark.parametrize("spec_key", sorted(SPECS))
-def test_setup_writes_valid_close_defaults(spec_key):
-    spec = SPECS[spec_key]
-    w = C(spec, OA)
+def test_setup_writes_a_farewell_but_no_outcome(spec_key):
+    w = C(SPECS[spec_key], OA)
     for node in ("setup", "setup_retry"):
         v = dict(CALL)
         run_ok(w["nodes"][node], v)
-        assert (v["outcome"], v["reason"] or None) in outcome_pairs(spec) and v["outcome"] in ENUM
+        assert "outcome" not in v and "reason" not in v
         assert v["farewell"].endswith("Goodbye.")
+
+
+@pytest.mark.parametrize("spec_key", sorted(SPECS))
+def test_early_hangup_sends_no_outcome(spec_key):
+    """A call that ends before any close node ran (a hang-up) sends close_call without outcome or reason: no false
+    close next to a promise or callback that was recorded."""
+    w = C(SPECS[spec_key], OA)
+    u1, u2 = upstream(w)
+    for v in (dict(CALL), u1, u2):
+        body = close_body(w, v)
+        assert "outcome" not in body and "reason" not in body, body
+    # a close that ran is sent as written
+    v = dict(u2)
+    run_ok(w["nodes"]["close_refused"], v)
+    assert close_body(w, v)["outcome"] == "no_promise"
+    v = dict(u2)
+    run_ok(w["nodes"]["close_promise_recorded"], v)
+    assert close_body(w, v)["outcome"] == "promise" and "reason" not in close_body(w, v)
 
 
 def test_harness_catches_a_close_without_defaults():

@@ -94,3 +94,33 @@ The same in spec-a and spec-b. **No `task_message`, `on_enter` text, extraction 
 - **Not covered.** The multi `set_product` code_exec *tool* and the api pre/post hooks are tools, not code nodes.
 - **Not run live.** The setup, prepare_account and close-node code changed, so the merge-bar re-gate (PUB-A/PUB-B at 3 reps) should run before relying on this.
 - **Size.** `setup_retry` adds about 9 KB, a duplicate of the setup code, to each workflow.
+
+## Fix round 1 (reviewer finding: default close on early hang-up)
+
+Ruling applied: `setup` no longer pre-writes `outcome`/`reason`. A call that ends before any close node runs sends
+close_call with no outcome and no reason again (the `{{outcome}}`/`{{reason}}` defaults are unresolved and dropped), as
+before A8. Kept: setup_retry, the prepare_account inversion, the single-statement outcome/reason/farewell write in close
+nodes, the empty-reason drop in the close_call pre-hook, the multi `finish` default.
+
+- `builder/nodes.py`: `close_defaults_code` replaced by `farewell_default_code(farewell)` (writes only
+  `vars['farewell']`). Kept deliberately: it touches no close_call field, and without it a failed close node makes
+  goodbye speak the literal `{{farewell}}`. Easy to drop if the controller prefers.
+- `builder/compile.py`: setup's first line is now `vars['farewell'] = 'I am sorry, there was a technical problem.
+  Thank you for your time. Goodbye.'` (was the `vars.update(dict(outcome=..., reason=..., farewell=...))` line).
+  No other compiled-output change versus round 0.
+- `tests/test_outage.py`:
+  - new `close_body(w, v)` builds the close_call body as the engine sends it (single unresolved placeholder → field
+    dropped, then the pre-hook);
+  - a failed close node may now end the call with no outcome (asserted: body has no outcome and no reason, goodbye
+    still speaks a farewell) but never with a wrong one; every other failed node must still reach a valid close;
+  - `test_setup_writes_valid_close_defaults` → `test_setup_writes_a_farewell_but_no_outcome`;
+  - new `test_early_hangup_sends_no_outcome` (A, B): after call start, after setup, after a loaded account, the body
+    has no outcome/reason; after `close_refused` / `close_promise_recorded` ran, it carries their outcome (promise
+    without reason).
+
+Behaviour change vs round 0: a close node whose snippet fails now ends the call with no outcome (same as a hang-up)
+instead of no_promise/service_error.
+
+Commands and results:
+- `uv run pytest -q tests/test_outage.py tests/test_multi.py tests/test_compile.py` → `153 passed, 2 skipped in 1.03s`
+- `uv run pytest -q` → `520 passed, 6 skipped in 18.71s`
