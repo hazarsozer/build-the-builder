@@ -123,9 +123,46 @@ def load_prompt(name, **subs):
 
 # ------------------------------------------------------------------ session
 
-def options_for(work, model):
-    from claude_agent_sdk import ClaudeAgentOptions
+def _inside(root, p):
+    q = Path(os.path.expanduser(str(p)))
+    q = q if q.is_absolute() else root / q
+    try:
+        q.resolve().relative_to(root)
+        return True
+    except (ValueError, OSError, RuntimeError):
+        return False
+
+
+def confine_hook(work):
+    """A PreToolUse hook that denies any tool call whose path resolves outside work.
+
+    can_use_tool would be shadowed here: the SDK auto-approves whole-tool allowed_tools entries before the callback
+    runs (claude_agent_sdk.types._get_can_use_tool_shadowed_warning), so a hook is the gate that always runs."""
+    root = Path(work).resolve()
+
+    def deny(why):
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": why}}
+
+    async def hook(input_data, tool_use_id, context):
+        ti = (input_data or {}).get("tool_input") or {}
+        for key in ("file_path", "path", "notebook_path"):
+            v = ti.get(key)
+            if v and not _inside(root, v):
+                return deny("%s is outside the work dir; only files in the current directory may be used" % key)
+        pat = ti.get("pattern")
+        if (input_data or {}).get("tool_name") == "Glob" and pat and (
+                os.path.isabs(os.path.expanduser(pat)) or ".." in Path(pat).parts):
+            return deny("Glob patterns must stay inside the current directory")
+        return {}
+    return hook
+
+
+def options_for(work, model, confine=False):
+    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+    extra = {"hooks": {"PreToolUse": [HookMatcher(matcher=None, hooks=[confine_hook(work)])]}} if confine else {}
     return ClaudeAgentOptions(
+        **extra,
         cwd=str(work),
         model=model,
         system_prompt=SYSTEM,
@@ -148,8 +185,9 @@ def _short(v, n=300):
 class Session:
     """One Claude conversation in a work dir; ask() continues the same conversation."""
 
-    def __init__(self, work, purpose, trace, client_factory=None, model=None):
+    def __init__(self, work, purpose, trace, client_factory=None, model=None, confine=False):
         self.work = Path(work)
+        self.confine = confine
         self.purpose = purpose
         self.trace = trace
         self.model = model or model_name()
@@ -168,7 +206,7 @@ class Session:
             factory = lambda options: ClaudeSDKClient(options=options)  # noqa: E731
         else:
             factory = self.client_factory
-        self.client = factory(options_for(self.work, self.model))
+        self.client = factory(options_for(self.work, self.model, confine=self.confine))
         self.t0 = time.monotonic()
         await self.client.connect()
         return self
