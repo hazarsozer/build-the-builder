@@ -484,3 +484,26 @@ def test_reference_spec_does_not_contradict_its_cases(spec):
                         assert not promises, case["title"]
     assert {"late_refusal", "floor_after_too_much", "non_business_day", "after_deadline", "service_error",
             "wrong_answers"} <= seen
+
+
+# --- seed hints follow the spec and the openapi (final review item 5) ----------------------------------------------
+
+def test_seed_hints_from_spec_and_openapi(bank):
+    base, _ = bank
+    assert C.bank_hints(SPEC_A, OPENAPI) == {"day_month_swapped": {"when": "swapped_date"}}
+    spec = copy.deepcopy(SPEC_A)
+    spec["identity"]["non_counting_hints"] = {"partial_phone": "Ask for all four digits."}
+    oa = copy.deepcopy(OPENAPI)
+    oa["paths"]["/verify_identity"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["hint"]["enum"] = []
+    assert C.bank_hints(spec, oa) == {"partial_phone": {"when": "prefix"}}
+    assert C.bank_hints(spec, OPENAPI) == {"partial_phone": {"when": "prefix"}, "day_month_swapped": {"when": "swapped_date"}}
+    case = C.build(spec, oa, "happy_full_today", NOW)
+    assert case["seed"]["hints"] == {"partial_phone": {"when": "prefix"}}
+    cid = http(base, "/v1/practice/sessions", {"seed": case["seed"]})["variables"]["customer_id"]
+    r = http(base, "/v1/verify_identity", {"customer_id": cid, "field": "phone_last4", "answer": case["identity"]["phone_last4"][:2]})
+    assert r.get("hint") == "partial_phone", r
+    d = dt.date.fromisoformat(case["identity"]["date_of_birth"])
+    if d.day != d.month and d.day <= 12:     # a swapped date is a plain wrong answer: this spec has no date hint
+        swapped = "%d-%02d-%02d" % (d.year, d.day, d.month)
+        r = http(base, "/v1/verify_identity", {"customer_id": cid, "field": "date_of_birth", "answer": swapped})
+        assert "hint" not in r, r

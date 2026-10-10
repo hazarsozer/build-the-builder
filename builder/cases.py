@@ -150,6 +150,32 @@ def _identity(spec, openapi, rng):
     return {q["field"]: _answer(q, kinds.get(q["field"]), rng) for q in qs}
 
 
+def _openapi_hints(openapi):
+    try:
+        props = openapi["paths"]["/verify_identity"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+        return [h for h in props["hint"].get("enum") or [] if isinstance(h, str)]
+    except (KeyError, TypeError, AttributeError):
+        return []
+
+
+def bank_hints(spec, openapi):
+    """The seed's `hints` for our bank: every verify_identity hint the spec handles (identity.non_counting_hints) or the
+    openapi can return, each with the answer shape that triggers it. A hint goes to a swapped date when a question is a
+    date and its name points at a date or the day/month order, or when no question is anything but a date; else to a
+    prefix (part of a text or digits answer)."""
+    qs = spec["identity"]["questions"]
+    kinds = set(field_kinds(openapi, [q["field"] for q in qs]).values()) | {"date" for q in qs if q.get("format") == "date"}
+    has_date, has_other = "date" in kinds, bool(kinds - {"date"})
+    names = list(dict.fromkeys(list(spec["identity"].get("non_counting_hints") or {}) + _openapi_hints(openapi)))
+    out = {}
+    for h in names:
+        low = h.lower()
+        datey = not re.search(r"partial|prefix|part|incomplete|short|missing", low) and \
+            bool(re.search(r"swap|date|day|month|year|order|birth|dob", low))
+        out[h] = {"when": "swapped_date" if has_date and (datey or not has_other) else "prefix"}
+    return out
+
+
 def _extra_var(name, rng):
     """A plausible value for a call variable the brief adds (e.g. company_name): a name, or the words of its name."""
     if "name" in name:
@@ -547,7 +573,8 @@ def build(spec, openapi, scenario, now, products=None, identity=None, variables=
     case["fixed"] = fixed_sentences(spec)
     case["seed"] = {"variables": dict(c.variables), "identity": dict(c.identity), "products": [dict(p) for p in got["products"]],
                     "faults": faults, "reasons": reasons_table(spec),
-                    "identity_policy": {"max_wrong": spec["identity"]["max_wrong"], "scope": spec["identity"]["wrong_scope"]}}
+                    "identity_policy": {"max_wrong": spec["identity"]["max_wrong"], "scope": spec["identity"]["wrong_scope"]},
+                    "hints": bank_hints(spec, openapi)}
     aliases = {tool: {k: v for k, v in m.items() if k != v} for tool, m in (spec.get("responses") or {}).items()}
     aliases = {tool: m for tool, m in aliases.items() if m}
     if aliases: case["seed"]["response_aliases"] = aliases
