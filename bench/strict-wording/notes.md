@@ -12,6 +12,8 @@ The brief changes these rules:
 - **Rule 49.** The agent never states consequences of non-payment. Asked about them, it says word for word: "I am not able to discuss that, but I can help you arrange a payment." The question is not a refusal and uses no persuasion attempt.
 - **Rule 50.** Abuse (insults, swearing, threats) gets one warning, word for word: "I want to help you, but I will end this call if the abusive language continues." The second time, at any stage, the call closes as `no_promise` / `abusive`. This is a **new reason**, added to the outcome table. If a promise was already recorded, it closes as `promise`. Anger without insults is not abuse.
 
+Ruling for STW-07: rule 50 applies "at any stage of the call", so a second abuse during the security questions closes as `no_promise` / `abusive`. It wins over `not_verified` / `declined` (rule 15), because abuse is not a refusal to answer.
+
 ## Hypotheses
 
 - **H14**: required fixed sentences in the opening and after verification.

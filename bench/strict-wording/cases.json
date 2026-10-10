@@ -488,7 +488,7 @@
     "instalment_amount": 175.0
    }
   ],
-  "script": "You are Helena's brother. Asks who is calling. Says she can be reached tomorrow at nine in the morning. When asked for another time, says half past six in the evening.",
+  "script": "You are Helena's brother. Asks who is calling. Says she can be reached tomorrow at nine in the morning. When asked for another time, says tomorrow at half past six in the evening.",
   "expected": {
    "outcome": "not_reached",
    "reason": "callback",

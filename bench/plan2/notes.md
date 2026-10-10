@@ -1,5 +1,7 @@
 # bench/plan2 — two-part split plan (H13)
 
+> **Extraction-only.** Use these cases to check the spec and the compile, not to run calls on a bank. A bank that behaves like the official one returns "this product already has a promise" for a second promise on the same product. So `bench/run.py` must not run the plan2 cases on our bank, because 6 of the 8 would fail for the bank's reason, not the agent's.
+
 **Base:** Brief A, as "Larkspur Bank". The calendar, bands, ladder, floor and outcome table are unchanged.
 
 ## Mutation

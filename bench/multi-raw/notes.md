@@ -15,6 +15,10 @@
 
 `openapi.json`: the `add_note.reason` enum is the new code set. Our bank rejects the old codes ("unknown reason").
 
+There are two clarifications in the policy extract:
+- **Rule 38** says notes are written at the end of the call, just before closing, so a call that ends in a transfer gets no notes. That leaves MRW-03 with only one reading.
+- **Rule 30** defers the close outcome and reason to rule 43, so the two rules no longer conflict when `create_promise` fails twice.
+
 ## Hypotheses
 
 - **H1**: raw material, a memo that overrides the policy, a code list.
