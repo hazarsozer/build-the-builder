@@ -1,5 +1,6 @@
 """Extractor plumbing with a fake Agent SDK client (no model calls)."""
 import asyncio
+import time
 import copy
 import json
 from pathlib import Path
@@ -27,6 +28,8 @@ class FakeClient:
         self.log = log
         self.n = 0
         self.say = "ok"
+        self.delay = 0.0      # seconds before the result, set by a script
+        self.is_error = False
 
     async def connect(self):
         self.log.append(("connect", self.kind(), self.options))
@@ -50,10 +53,13 @@ class FakeClient:
         self.n += 1
 
     async def receive_response(self):
+        if self.delay:
+            await asyncio.sleep(self.delay)
         yield AssistantMessage(content=[ToolUseBlock(id="t1", name="Write", input={"file_path": "spec.json"}),
                                         TextBlock(text=self.say)], model="fake")
-        yield ResultMessage(subtype="success", duration_ms=1000, duration_api_ms=900, is_error=False,
-                            num_turns=2, session_id="s", total_cost_usd=0.5)
+        yield ResultMessage(subtype="success", duration_ms=1000, duration_api_ms=900, is_error=self.is_error,
+                            num_turns=2, session_id="s", total_cost_usd=0.5,
+                            result="api error" if self.is_error else None)
 
 
 def factory(script, log):
@@ -297,3 +303,117 @@ def test_apply_settle_remove_and_append():
     assert not any(e["id"] == "unclear" for e in spec["events"])
     assert spec["unused_outcomes"] == []
     assert applied[0]["removed"] is True and skipped == [] and rejected == []
+
+
+# --------------------------------------------------------------------------- fix round 1: budget, recovery
+
+def _human_queue(spec, q):
+    s = copy.deepcopy(spec)
+    [e for e in s["events"] if e["id"] == "human"][0]["queue"] = q
+    return s
+
+
+def test_second_extraction_gets_bounded_wait_and_its_disk_spec_is_kept(monkeypatch):
+    monkeypatch.setattr(ex, "SECOND_WAIT_S", 0.3)
+    b = _human_queue(A, "support")
+
+    def script(kind, cwd, prompt, n, c):
+        if kind.startswith("extract"):
+            write(cwd, "facts.json", FACTS)
+            write(cwd, "spec.json", A if kind == "extract-a" else b)
+            if kind == "extract-b":
+                c.delay = 30          # wrote its spec, then hangs
+        elif kind == "settle":
+            write(cwd, "settle.json", {"decisions": []})
+    t0 = time.monotonic()
+    spec, errs, info, trace = run(script, [], use_oracle=False)
+    assert time.monotonic() - t0 < 5
+    assert errs == []
+    assert info["failures"]["b"] == "cancelled (time budget)"
+    assert info["extract"]["b"]["interrupted"] == "cancelled (time budget)"
+    assert info["diff_paths"] == ["events[human].queue"]       # b's spec was read back from disk
+    assert any(k == "extract_interrupted" for k, _ in trace.events)
+
+
+def test_phase_deadline_cuts_everything_and_skips_settle():
+    b = _human_queue(A, "support")
+
+    def script(kind, cwd, prompt, n, c):
+        write(cwd, "facts.json", FACTS)
+        write(cwd, "spec.json", A if kind == "extract-a" else b)
+        c.delay = 30
+    t0 = time.monotonic()
+    spec, errs, info, _ = run(script, [], use_oracle=False, deadline_s=0.5)
+    assert time.monotonic() - t0 < 5
+    assert errs == [] and spec is not None
+    assert set(info["failures"]) == {"a", "b"}
+    assert "settle_skipped" in info and "settle" not in info
+    assert info["open_diffs"] == ["events[human].queue"]
+
+
+def test_session_error_keeps_spec_on_disk():
+    def script(kind, cwd, prompt, n, c):
+        write(cwd, "facts.json", FACTS)
+        write(cwd, "spec.json", A)
+        c.is_error = True
+    spec, errs, info, _ = run(script, [], dual=False, use_oracle=False)
+    assert errs == [] and spec["bands"] == A["bands"]
+    assert "SessionError" in info["extract"]["a"]["interrupted"]
+
+
+def test_no_candidates_falls_back_to_workdirs(monkeypatch):
+    async def broken(brief_paths, openapi, trace, label, client_factory=None, workdirs=None):
+        work = sdk.make_workdir(brief_paths, openapi, "extract-" + label)
+        workdirs[label] = work
+        write(work, "facts.json", FACTS)
+        write(work, "spec.json", A)
+        raise RuntimeError("crashed after writing")
+    monkeypatch.setattr(ex, "extract_one", broken)
+    spec, errs, info, trace = run(lambda *a: None, [], use_oracle=False)
+    assert errs == [] and spec["bands"] == A["bands"]
+    assert info["extract"]["a"]["recovered_from_disk"] is True
+    assert any(k == "extract_recovered" for k, _ in trace.events)
+
+
+def test_fallback_keeps_spec_with_fewer_errors():
+    one_err = copy.deepcopy(A)
+    one_err["examples"][0]["expect"] = "2026-11-03"          # one failing example, never repaired
+
+    def script(kind, cwd, prompt, n, c):
+        if kind.startswith("extract"):
+            write(cwd, "facts.json", FACTS)
+            write(cwd, "spec.json", one_err)
+        elif kind == "settle":
+            write(cwd, "settle.json", {"decisions": [
+                {"path": "events[human].queue", "value": "nowhere", "quote": "queue"}]})
+    spec, errs, info, _ = run(script, [], use_oracle=False)
+    assert len(errs) == 1 and "example[0]" in errs[0]
+    assert len(info["merge_rejected_errors"]) > 1
+    assert [e for e in spec["events"] if e["id"] == "human"][0]["queue"] == "general"
+
+
+def test_settle_budget_is_enforced(monkeypatch):
+    monkeypatch.setattr(ex, "SETTLE_S", 0.3)
+    monkeypatch.setattr(ex, "SETTLE_MIN_S", 0.1)
+    b = _human_queue(A, "support")
+
+    def script(kind, cwd, prompt, n, c):
+        if kind.startswith("extract"):
+            write(cwd, "facts.json", FACTS)
+            write(cwd, "spec.json", A if kind == "extract-a" else b)
+        elif kind == "settle":
+            c.delay = 30
+    t0 = time.monotonic()
+    spec, errs, info, _ = run(script, [], use_oracle=False)
+    assert time.monotonic() - t0 < 5
+    assert "timed out" in info["settle_error"]
+    assert errs == [] and spec["bank_name"] == A["bank_name"]
+
+
+def test_brief_dirs_never_copy_secret_files(tmp_path):
+    d = tmp_path / "raw"
+    d.mkdir()
+    for name in ("mail.md", "env.sh", ".env", ".env.local", "openapi.json", "codes.csv"):
+        (d / name).write_text("x")
+    assert [p.name for p in sdk.expand_briefs([d])] == ["codes.csv", "mail.md"]
+    assert sdk.expand_briefs([d / "env.sh", d / ".env.local", d / "mail.md"]) == [d / "mail.md"]

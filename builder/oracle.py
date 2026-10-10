@@ -320,6 +320,7 @@ async def oracle_async(brief_paths, openapi, trace, *, workdir=None, client_fact
 
 
 def oracle(brief_paths, openapi, trace, **kw):
+    """Synchronous wrapper (asyncio.run). Async callers must use `await oracle_async(...)`."""
     import asyncio
     return asyncio.run(oracle_async(brief_paths, openapi, trace, **kw))[0]
 

@@ -1,6 +1,9 @@
 """Extractor: brief files + openapi -> policy spec.
 
-extract(brief_paths, openapi, trace) -> (spec, errors, info)
+extract(brief_paths, openapi, trace, deadline_s=...) -> (spec, errors, info)
+
+`extract()` calls asyncio.run(); a caller that is already inside an event loop (async code)
+must `await extract_async(...)` instead.
 
 1. Three sessions run concurrently: two independent extractions (each: fact pass, then
    spec.json, then up to 3 validate-repair rounds in the same conversation) and the brief
@@ -9,7 +12,13 @@ extract(brief_paths, openapi, trace) -> (spec, errors, info)
    where one side is verbatim in the brief) are resolved in code; the rest, plus every
    oracle mismatch (oracle.check), go to one settle session that must cite a brief quote
    for each change or rejected scenario.
-3. The merged spec is validated; if the merge breaks it, the best single spec is kept.
+3. The merged spec is validated; if the merge has more errors than the best single spec,
+   that spec is kept.
+
+Time budget (deadline_s, from the call): the parallel phase ends after PHASE_S at most;
+once the first extraction finishes, the others get SECOND_WAIT_S more. Settle gets
+SETTLE_S at most and is skipped when less than SETTLE_MIN_S is left. A session cut off by
+the budget never loses a spec it already wrote: its work dir is read back.
 
 Every trace line goes through redact.scrub() (see builder.sdk.Session).
 """
@@ -27,10 +36,13 @@ from builder.validate import validate
 
 REPAIR_ROUNDS = 3
 SETTLE_ROUNDS = 2
-FIRST_TIMEOUT_S = 480
+FIRST_TIMEOUT_S = 480     # per-ask ceiling; the phase budget cancels earlier
 REPAIR_TIMEOUT_S = 180
-PHASE_BUDGET_S = 540      # all three parallel sessions
-SETTLE_TIMEOUT_S = 240
+PHASE_S = 270             # all three parallel sessions
+SECOND_WAIT_S = 45        # after the first extraction finishes
+SETTLE_S = 75             # settle session, all rounds
+SETTLE_MIN_S = 60         # skip settle with less than this left
+DEADLINE_S = PHASE_S + SETTLE_S + 15
 MAX_ERRORS_SHOWN = 40
 
 _ALNUM = re.compile(r"[^a-z0-9]+")
@@ -89,24 +101,41 @@ def repair_prompt(errs):
 
 # ------------------------------------------------------------------ one extraction
 
-async def extract_one(brief_paths, openapi, trace, label, client_factory=None):
+async def extract_one(brief_paths, openapi, trace, label, client_factory=None, workdirs=None):
+    """One extraction session. Never raises and never loses spec.json already on disk:
+    on any failure, including cancellation by the time budget, the work dir is read back
+    and the failure is appended to the errors."""
     work = sdk.make_workdir(brief_paths, openapi, "extract-" + label)
+    if workdirs is not None:
+        workdirs[label] = work
     info = {"label": label, "workdir": str(work), "errors_per_round": []}
     t0 = time.monotonic()
-    prompt = sdk.load_prompt("extract.md", briefs=sdk.brief_names(work))
-    async with sdk.Session(work, "extract:" + label, trace, client_factory=client_factory) as sess:
-        await sess.ask(prompt, timeout_s=FIRST_TIMEOUT_S)
-        spec, errs = load_spec(work, openapi)
-        info["errors_per_round"].append(len(errs))
-        trace.event("extract_round", label=label, round=0, errors=len(errs), first=[sdk.scrub(e) for e in errs[:5]])
-        r = 0
-        while errs and r < REPAIR_ROUNDS:
-            r += 1
-            await sess.ask(repair_prompt(errs), timeout_s=REPAIR_TIMEOUT_S)
+    spec, errs = None, ["spec.json was not written"]
+    sess = None
+    try:
+        prompt = sdk.load_prompt("extract.md", briefs=sdk.brief_names(work))
+        async with sdk.Session(work, "extract:" + label, trace, client_factory=client_factory) as sess:
+            await sess.ask(prompt, timeout_s=FIRST_TIMEOUT_S)
             spec, errs = load_spec(work, openapi)
             info["errors_per_round"].append(len(errs))
-            trace.event("extract_round", label=label, round=r, errors=len(errs),
+            trace.event("extract_round", label=label, round=0, errors=len(errs),
                         first=[sdk.scrub(e) for e in errs[:5]])
+            r = 0
+            while errs and r < REPAIR_ROUNDS:
+                r += 1
+                await sess.ask(repair_prompt(errs), timeout_s=REPAIR_TIMEOUT_S)
+                spec, errs = load_spec(work, openapi)
+                info["errors_per_round"].append(len(errs))
+                trace.event("extract_round", label=label, round=r, errors=len(errs),
+                            first=[sdk.scrub(e) for e in errs[:5]])
+    except (Exception, asyncio.CancelledError) as exc:  # incl. SessionError: keep what is on disk
+        why = "cancelled (time budget)" if isinstance(exc, asyncio.CancelledError) else \
+            sdk.scrub("%s: %s" % (type(exc).__name__, exc))
+        spec, errs = load_spec(work, openapi)
+        errs = errs + ["extraction %s interrupted: %s" % (label, why)]
+        info["interrupted"] = why
+        trace.event("extract_interrupted", label=label, why=why, spec_on_disk=spec is not None)
+    if sess is not None:
         info.update(sess.stats())
         info["init"] = sess.init
     info["seconds"] = round(time.monotonic() - t0, 1)
@@ -151,7 +180,9 @@ def apply_settle(base, settle, brief):
 
 
 async def settle(brief_paths, openapi, trace, base, other, open_diffs, mismatches, scenarios,
-                 client_factory=None):
+                 client_factory=None, budget_s=SETTLE_S):
+    """One settle session within budget_s seconds in total (all rounds)."""
+    end = time.monotonic() + budget_s
     work = sdk.make_workdir(brief_paths, openapi, "settle")
     brief = sdk.brief_text(work)
     (work / "spec-a.json").write_text(json.dumps(base, indent=1))
@@ -168,7 +199,7 @@ async def settle(brief_paths, openapi, trace, base, other, open_diffs, mismatche
     async with sdk.Session(work, "settle", trace, client_factory=client_factory) as sess:
         prompt = sdk.load_prompt("settle.md", briefs=sdk.brief_names(work),
                                  n_diff=len(open_diffs), n_mismatch=len(mismatches))
-        await sess.ask(prompt, timeout_s=SETTLE_TIMEOUT_S)
+        await sess.ask(prompt, timeout_s=max(1.0, end - time.monotonic()))
         for r in range(SETTLE_ROUNDS):
             data, err = sdk.read_json(work / "settle.json")
             spec, applied, skipped, rejected = apply_settle(base, data or {}, brief)
@@ -176,15 +207,16 @@ async def settle(brief_paths, openapi, trace, base, other, open_diffs, mismatche
             rej = {x["scenario"] for x in rejected}
             left = check(spec, [s for s in scenarios if s.get("id") not in rej]) if not errs else []
             info["settle_rounds"].append({"errors": len(errs), "mismatches_left": len(left),
-                                   "applied": len(applied), "skipped": len(skipped)})
+                                          "applied": len(applied), "skipped": len(skipped)})
             trace.event("settle_round", round=r, errors=len(errs), mismatches_left=len(left),
                         applied=len(applied), skipped=len(skipped))
-            if not errs and not left or r == SETTLE_ROUNDS - 1:
+            left_s = end - time.monotonic()
+            if not errs and not left or r == SETTLE_ROUNDS - 1 or left_s < 15:
                 break
             (work / "remaining.json").write_text(json.dumps({"validate_errors": errs[:MAX_ERRORS_SHOWN],
                                                               "oracle_mismatches": left}, indent=1))
             await sess.ask(sdk.load_prompt("settle_repair.md", errors=_error_list(errs) if errs else "(none)",
-                                           n_mismatch=len(left)), timeout_s=REPAIR_TIMEOUT_S)
+                                           n_mismatch=len(left)), timeout_s=left_s)
         info.update(sess.stats())
     info.update(applied=applied, skipped=skipped, rejected=rejected)
     return spec, info
@@ -211,34 +243,50 @@ def _write(run_dir, name, obj):
     (run_dir / name).write_text(json.dumps(obj, indent=1, default=str))
 
 
-async def extract_async(brief_paths, openapi, trace=None, *, client_factory=None, dual=True,
-                        use_oracle=True, phase_budget_s=PHASE_BUDGET_S):
-    trace = trace or sdk.NullTrace()
-    t0 = time.monotonic()
-    run_dir = sdk.make_workdir(brief_paths, openapi, "run", with_schema=False)
-    brief = sdk.brief_text(run_dir)
-    info = {"run_dir": str(run_dir), "model": sdk.model_name(), "timings": {}}
-    trace.event("extract_start", briefs=[str(p) for p in brief_paths], model=sdk.model_name(),
-                dual=dual, oracle=use_oracle)
-
-    tasks = {"a": asyncio.create_task(extract_one(brief_paths, openapi, trace, "a", client_factory))}
-    if dual:
-        tasks["b"] = asyncio.create_task(extract_one(brief_paths, openapi, trace, "b", client_factory))
-    if use_oracle:
-        tasks["oracle"] = asyncio.create_task(oracle_async(brief_paths, openapi, trace,
-                                                           client_factory=client_factory))
-    done, pending = await asyncio.wait(tasks.values(), timeout=phase_budget_s)
-    ext_ok = [k for k in ("a", "b") if k in tasks and tasks[k] in done and not tasks[k].exception()
-              and tasks[k].result()[0] is not None]
-    if pending and not ext_ok:
-        # nothing usable yet: give the extractions a last grace period, drop the rest
-        more, pending = await asyncio.wait(pending, timeout=REPAIR_TIMEOUT_S)
-        done |= more
+async def _run_phase(tasks, phase_end):
+    """Wait for the first extraction (or the phase end), then SECOND_WAIT_S for the rest."""
+    ext = [t for k, t in tasks.items() if k in ("a", "b")]
+    pending = set(tasks.values())
+    first_done = False
+    while pending and not first_done:
+        left = phase_end - time.monotonic()
+        if left <= 0:
+            break
+        done, pending = await asyncio.wait(pending, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+        first_done = any(t in done for t in ext) or not any(t in pending for t in ext)
+    if pending and first_done:
+        grace = min(SECOND_WAIT_S, max(0.0, phase_end - time.monotonic()))
+        if grace > 0:
+            _, pending = await asyncio.wait(pending, timeout=grace)
     for t in pending:
         t.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
-        trace.event("extract_cancelled", tasks=[k for k, t in tasks.items() if t in pending])
+    return pending
+
+
+async def extract_async(brief_paths, openapi, trace=None, *, client_factory=None, dual=True,
+                        use_oracle=True, deadline_s=DEADLINE_S):
+    """deadline_s: seconds this call may take in total (main passes what is left of the build)."""
+    trace = trace or sdk.NullTrace()
+    t0 = time.monotonic()
+    end = t0 + deadline_s
+    run_dir = sdk.make_workdir(brief_paths, openapi, "run", with_schema=False)
+    brief = sdk.brief_text(run_dir)
+    info = {"run_dir": str(run_dir), "model": sdk.model_name(), "timings": {}, "deadline_s": deadline_s}
+    trace.event("extract_start", briefs=[str(p) for p in brief_paths], model=sdk.model_name(),
+                dual=dual, oracle=use_oracle, deadline_s=deadline_s)
+
+    workdirs = {}
+    tasks = {"a": asyncio.create_task(extract_one(brief_paths, openapi, trace, "a", client_factory, workdirs))}
+    if dual:
+        tasks["b"] = asyncio.create_task(extract_one(brief_paths, openapi, trace, "b", client_factory, workdirs))
+    if use_oracle:
+        tasks["oracle"] = asyncio.create_task(oracle_async(brief_paths, openapi, trace,
+                                                           client_factory=client_factory))
+    cut = await _run_phase(tasks, t0 + min(PHASE_S, deadline_s))
+    if cut:
+        trace.event("extract_cut", tasks=[k for k, t in tasks.items() if t in cut])
     info["timings"]["parallel_s"] = round(time.monotonic() - t0, 1)
 
     results, failures = {}, {}
@@ -249,12 +297,25 @@ async def extract_async(brief_paths, openapi, trace=None, *, client_factory=None
             failures[k] = sdk.scrub("%s: %s" % (type(t.exception()).__name__, t.exception()))
         else:
             results[k] = t.result()
+    for k in ("a", "b"):
+        if k in results and results[k][2].get("interrupted"):
+            failures[k] = results[k][2]["interrupted"]
     info["failures"] = failures
     for k, why in failures.items():
         trace.event("extract_failed", task=k, why=why)
 
     cands = [(k, results[k]) for k in ("a", "b") if k in results and results[k][0] is not None]
+    if not cands:
+        # last resort: a spec a session wrote before it failed
+        for k, work in sorted(workdirs.items()):
+            s, e = load_spec(work, openapi)
+            if s is not None:
+                cands.append((k, (s, e, {"label": k, "workdir": str(work), "recovered_from_disk": True})))
+        if cands:
+            trace.event("extract_recovered", labels=[k for k, _ in cands])
     info["extract"] = {k: results[k][2] for k in ("a", "b") if k in results}
+    for k, (_, _, i) in cands:
+        info["extract"].setdefault(k, i)
     scenarios, oinfo = results.get("oracle", ([], {}))
     info["oracle"] = dict(oinfo, scenarios=len(scenarios))
     if not cands:
@@ -266,7 +327,7 @@ async def extract_async(brief_paths, openapi, trace=None, *, client_factory=None
 
     # best spec first: fewest validation errors, then A
     cands.sort(key=lambda kv: len(kv[1][1]))
-    base_label, (base, base_errs, _) = cands[0]
+    base_label, (base, _, _) = cands[0]
     other = cands[1][1][0] if len(cands) > 1 else None
     info["base"] = base_label
     for k, (s, e, _) in cands:
@@ -294,24 +355,33 @@ async def extract_async(brief_paths, openapi, trace=None, *, client_factory=None
 
     final = merged
     if open_diffs or mismatches or merged_errs:
-        t1 = time.monotonic()
-        try:
-            settled, sinfo = await settle(brief_paths, openapi, trace, merged, other, open_diffs, mismatches,
-                                          scenarios, client_factory=client_factory)
-            info["settle"] = sinfo
-            info["settle_decisions"] = sinfo["applied"]
-            info["rejected_scenarios"] = sinfo["rejected"]
-            final = settled
-        except Exception as exc:
-            info["settle_error"] = sdk.scrub("%s: %s" % (type(exc).__name__, exc))
-            trace.event("settle_failed", why=info["settle_error"])
-        info["timings"]["settle_s"] = round(time.monotonic() - t1, 1)
+        left = end - time.monotonic()
+        if left < SETTLE_MIN_S:
+            info["settle_skipped"] = "%.0f s left, below %d s" % (left, SETTLE_MIN_S)
+            trace.event("settle_skipped", seconds_left=round(left, 1))
+        else:
+            t1 = time.monotonic()
+            try:
+                settled, sinfo = await settle(brief_paths, openapi, trace, merged, other, open_diffs, mismatches,
+                                              scenarios, client_factory=client_factory,
+                                              budget_s=min(SETTLE_S, left))
+                info["settle"] = sinfo
+                info["settle_decisions"] = sinfo["applied"]
+                info["rejected_scenarios"] = sinfo["rejected"]
+                final = settled
+            except Exception as exc:
+                info["settle_error"] = sdk.scrub("%s: %s" % (type(exc).__name__, exc))
+                trace.event("settle_failed", why=info["settle_error"])
+            info["timings"]["settle_s"] = round(time.monotonic() - t1, 1)
 
+    # keep whichever of the merged spec and the best single spec has fewer errors
     errs = _validate(final, openapi)
-    if errs and not base_errs:
-        trace.event("merge_rejected", errors=len(errs), first=[sdk.scrub(e) for e in errs[:5]])
+    base_errs = _validate(base, openapi)
+    if len(base_errs) < len(errs):
+        trace.event("merge_rejected", errors=len(errs), base_errors=len(base_errs),
+                    first=[sdk.scrub(e) for e in errs[:5]])
         info["merge_rejected_errors"] = errs
-        final, errs = base, []
+        final, errs = base, base_errs
     if scenarios and not errs:
         rej = {x["scenario"] for x in info.get("rejected_scenarios", [])}
         info["oracle_mismatches_after"] = check(final, [s for s in scenarios if s.get("id") not in rej])
@@ -324,4 +394,5 @@ async def extract_async(brief_paths, openapi, trace=None, *, client_factory=None
 
 
 def extract(brief_paths, openapi, trace=None, **kw):
+    """Synchronous wrapper (asyncio.run). Async callers must use `await extract_async(...)`."""
     return asyncio.run(extract_async(brief_paths, openapi, trace, **kw))

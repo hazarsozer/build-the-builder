@@ -59,16 +59,22 @@ class SessionError(RuntimeError):
 # ------------------------------------------------------------------ files
 
 def expand_briefs(brief_paths):
-    """Brief files in order; a directory contributes its files (sorted), except openapi.json."""
+    """Brief files in order; a directory contributes its files (sorted), except openapi.json,
+    hidden files and secret files (env.sh, .env*)."""
     out = []
     for p in brief_paths:
         p = Path(p)
         if p.is_dir():
             out += sorted(x for x in p.iterdir() if x.is_file() and x.name != "openapi.json"
-                          and not x.name.startswith("."))
-        else:
+                          and not x.name.startswith(".") and not _secret_file(x.name))
+        elif not _secret_file(p.name):
             out.append(p)
     return out
+
+
+def _secret_file(name):
+    """env.sh and .env* never go into a work dir, even when they sit next to a brief."""
+    return name == "env.sh" or name.startswith(".env")
 
 
 def make_workdir(brief_paths, openapi, label, with_schema=True):
@@ -169,8 +175,8 @@ class Session:
 
     async def __aexit__(self, *exc):
         try:
-            await self.client.disconnect()
-        except Exception:
+            await asyncio.wait_for(self.client.disconnect(), 10)
+        except (Exception, asyncio.CancelledError):
             pass
         return False
 
