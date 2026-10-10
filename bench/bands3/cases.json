@@ -1,0 +1,743 @@
+[
+ {
+  "id": "BND-01",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "medium",
+  "title": "Band 1, accepts attempt 1",
+  "variables": {
+   "first_name": "Pieter",
+   "last_name": "Smit",
+   "title": "Mr",
+   "now": "2026-10-14T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1987-03-22",
+   "phone_last4": "1180"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "7302",
+    "past_due": 300.0,
+    "days_late": 7,
+    "minimum_payment": 90.0
+   }
+  ],
+  "script": "Verified. Says no, he cannot pay today, without giving a date or amount. Accepts the first offer. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 300.0,
+     "date": "2026-10-16"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 300 on Friday 16 October",
+   "promise for 300 on 16 October",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Pieter",
+    "last_name": "Smit",
+    "title": "Mr",
+    "now": "2026-10-14T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1987-03-22",
+    "phone_last4": "1180"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "7302",
+     "past_due": 300.0,
+     "days_late": 7,
+     "minimum_payment": 90.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-02",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "hard",
+  "title": "Band 1 on the last business day of the week",
+  "variables": {
+   "first_name": "Marta",
+   "last_name": "Silva",
+   "title": "Ms",
+   "now": "2026-10-16T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1991-10-09",
+   "phone_last4": "6623"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 410.0,
+    "days_late": 3,
+    "instalment_amount": 205.0
+   }
+  ],
+  "script": "Verified. Says no, she cannot pay today, without giving a date or amount. Accepts the first offer. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 410.0,
+     "date": "2026-10-23"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1 is Friday 23 October (today is the last business day of this week)",
+   "promise for 410 on 23 October, which is also the band 1 deadline",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Marta",
+    "last_name": "Silva",
+    "title": "Ms",
+    "now": "2026-10-16T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1991-10-09",
+    "phone_last4": "6623"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 410.0,
+     "days_late": 3,
+     "instalment_amount": 205.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-03",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "medium",
+  "title": "Band 1 boundary (10 days), one attempt only",
+  "variables": {
+   "first_name": "Kofi",
+   "last_name": "Mensah",
+   "title": "Mr",
+   "now": "2026-11-09T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1983-07-01",
+   "phone_last4": "2957"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "1146",
+    "past_due": 220.0,
+    "days_late": 10,
+    "minimum_payment": 66.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses every offer, without giving a date or amount.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 220 on Friday 13 November",
+   "no floor offer and no second attempt (band 1 has one attempt)",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Kofi",
+    "last_name": "Mensah",
+    "title": "Mr",
+    "now": "2026-11-09T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1983-07-01",
+    "phone_last4": "2957"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "1146",
+     "past_due": 220.0,
+     "days_late": 10,
+     "minimum_payment": 66.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-04",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "hard",
+  "title": "Band 2, accepts the floor at attempt 2",
+  "variables": {
+   "first_name": "Lucia",
+   "last_name": "Moreno",
+   "title": "Ms",
+   "now": "2026-10-22T15:00"
+  },
+  "identity": {
+   "date_of_birth": "1979-11-17",
+   "phone_last4": "3381"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 840.0,
+    "days_late": 18,
+    "instalment_amount": 210.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses the first offer, without giving a date or amount. Accepts the second offer. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 210.0,
+     "date": "2026-11-04"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 840 on Friday 23 October",
+   "attempt 2: floor 210 on the band 2 deadline, Wednesday 4 November",
+   "promise for 210 on 4 November",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Lucia",
+    "last_name": "Moreno",
+    "title": "Ms",
+    "now": "2026-10-22T15:00"
+   },
+   "identity": {
+    "date_of_birth": "1979-11-17",
+    "phone_last4": "3381"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 840.0,
+     "days_late": 18,
+     "instalment_amount": 210.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-05",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "medium",
+  "title": "Band 2 boundary (11 days), refuses both attempts",
+  "variables": {
+   "first_name": "Arjun",
+   "last_name": "Mehta",
+   "title": "Mr",
+   "now": "2026-11-09T14:00"
+  },
+  "identity": {
+   "date_of_birth": "1994-02-03",
+   "phone_last4": "7714"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "5098",
+    "past_due": 470.0,
+    "days_late": 11,
+    "minimum_payment": 141.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses every offer, without giving a date or amount.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 470 on Friday 13 November",
+   "attempt 2: floor 141 on the band 2 deadline, Friday 20 November",
+   "no third attempt",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Arjun",
+    "last_name": "Mehta",
+    "title": "Mr",
+    "now": "2026-11-09T14:00"
+   },
+   "identity": {
+    "date_of_birth": "1994-02-03",
+    "phone_last4": "7714"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "5098",
+     "past_due": 470.0,
+     "days_late": 11,
+     "minimum_payment": 141.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-06",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "hard",
+  "title": "Band 3, accepts the floor at attempt 3",
+  "variables": {
+   "first_name": "Greta",
+   "last_name": "Holm",
+   "title": "Ms",
+   "now": "2026-11-10T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1972-06-26",
+   "phone_last4": "4065"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 1500.0,
+    "days_late": 45,
+    "instalment_amount": 500.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses the first two offers, without giving a date or amount. Accepts the third offer. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 500.0,
+     "date": "2026-11-12"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 1500 on Friday 13 November",
+   "attempt 2: floor 500 on the band 3 deadline, Monday 30 November",
+   "attempt 3: floor 500 on Thursday 12 November (11 November is a holiday)",
+   "promise for 500 on 12 November",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Greta",
+    "last_name": "Holm",
+    "title": "Ms",
+    "now": "2026-11-10T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1972-06-26",
+    "phone_last4": "4065"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 1500.0,
+     "days_late": 45,
+     "instalment_amount": 500.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-07",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "hard",
+  "title": "Band 3, refuses all three attempts",
+  "variables": {
+   "first_name": "Viktor",
+   "last_name": "Petrov",
+   "title": "Mr",
+   "now": "2026-12-21T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1966-12-12",
+   "phone_last4": "8892"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "3317",
+    "past_due": 2200.0,
+    "days_late": 52,
+    "minimum_payment": 660.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses every offer, without giving a date or amount.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 2200 on Thursday 24 December (25 December is a holiday)",
+   "attempt 2: floor 660 on the band 3 deadline, Friday 8 January 2027",
+   "attempt 3: floor 660 on Tuesday 22 December",
+   "no fourth attempt; no offer repeated",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Viktor",
+    "last_name": "Petrov",
+    "title": "Mr",
+    "now": "2026-12-21T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1966-12-12",
+    "phone_last4": "8892"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "3317",
+     "past_due": 2200.0,
+     "days_late": 52,
+     "minimum_payment": 660.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "BND-08",
+  "brief": "bench-bands3",
+  "family": "Bands",
+  "level": "hard",
+  "title": "Band 3 boundary (31 days) on a Friday",
+  "variables": {
+   "first_name": "Yara",
+   "last_name": "Nasser",
+   "title": "Ms",
+   "now": "2026-11-27T09:30"
+  },
+  "identity": {
+   "date_of_birth": "1989-08-08",
+   "phone_last4": "5240"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 960.0,
+    "days_late": 31,
+    "instalment_amount": 240.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses the first offer, without giving a date or amount. Accepts the second offer. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 240.0,
+     "date": "2026-12-15"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 960 on Friday 4 December (today is the last business day of this week)",
+   "attempt 2: floor 240 on the band 3 deadline, Tuesday 15 December (not the band 2 deadline)",
+   "promise for 240 on 15 December",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Yara",
+    "last_name": "Nasser",
+    "title": "Ms",
+    "now": "2026-11-27T09:30"
+   },
+   "identity": {
+    "date_of_birth": "1989-08-08",
+    "phone_last4": "5240"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 960.0,
+     "days_late": 31,
+     "instalment_amount": 240.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]

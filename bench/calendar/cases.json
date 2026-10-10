@@ -1,0 +1,760 @@
+[
+ {
+  "id": "CAL-01",
+  "brief": "bench-calendar",
+  "family": "Dates",
+  "level": "hard",
+  "title": "Friday before a Saturday holiday, accepts attempt 1",
+  "variables": {
+   "first_name": "Jonas",
+   "last_name": "Weber",
+   "title": "Mr",
+   "now": "2026-10-16T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1985-06-03",
+   "phone_last4": "5521"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 620.0,
+    "days_late": 15,
+    "instalment_amount": 155.0
+   }
+  ],
+  "script": "Verified. Says no, he cannot pay today, without giving a date or amount. Accepts the first date the agent proposes for the full amount. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 620.0,
+     "date": "2026-10-24"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1 is Saturday 24 October: Saturday 17 October is a holiday, so today is the last business day of this week",
+   "promise for 620 on 24 October, which is also the deadline",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Jonas",
+    "last_name": "Weber",
+    "title": "Mr",
+    "now": "2026-10-16T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1985-06-03",
+    "phone_last4": "5521"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 620.0,
+     "days_late": 15,
+     "instalment_amount": 155.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-02",
+  "brief": "bench-calendar",
+  "family": "Third party",
+  "level": "hard",
+  "title": "After 18:00 on a Friday before a holiday",
+  "variables": {
+   "first_name": "Elif",
+   "last_name": "Kaya",
+   "title": "Ms",
+   "now": "2026-10-16T18:45"
+  },
+  "identity": {
+   "date_of_birth": "1990-02-11",
+   "phone_last4": "7718"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "2290",
+    "past_due": 180.0,
+    "days_late": 6,
+    "minimum_payment": 54.0
+   }
+  ],
+  "script": "You are Elif Kaya's husband. Says she can be reached tomorrow, Saturday, at ten in the morning. If told that does not work, says Monday at ten.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-10-19",
+     "time": "10:00"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "no callback today, it is after 18:00",
+   "Saturday 17 October refused because it is a holiday; one more time is asked",
+   "callback scheduled for Monday 19 October at 10:00",
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Elif",
+    "last_name": "Kaya",
+    "title": "Ms",
+    "now": "2026-10-16T18:45"
+   },
+   "identity": {
+    "date_of_birth": "1990-02-11",
+    "phone_last4": "7718"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "2290",
+     "past_due": 180.0,
+     "days_late": 6,
+     "minimum_payment": 54.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-03",
+  "brief": "bench-calendar",
+  "family": "Dates",
+  "level": "medium",
+  "title": "On a Saturday, 'next Saturday'",
+  "variables": {
+   "first_name": "Marek",
+   "last_name": "Novak",
+   "title": "Mr",
+   "now": "2026-10-24T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1977-09-30",
+   "phone_last4": "3046"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "8125",
+    "past_due": 340.0,
+    "days_late": 4,
+    "minimum_payment": 102.0
+   }
+  ],
+  "script": "Verified. Cannot pay today. Says he can pay the full amount next Saturday. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 340.0,
+     "date": "2026-10-31"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "'next Saturday' said on Saturday 24 October is 31 October",
+   "Saturday is accepted as a business day",
+   "promise for 340 on 31 October",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Marek",
+    "last_name": "Novak",
+    "title": "Mr",
+    "now": "2026-10-24T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1977-09-30",
+    "phone_last4": "3046"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "8125",
+     "past_due": 340.0,
+     "days_late": 4,
+     "minimum_payment": 102.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-04",
+  "brief": "bench-calendar",
+  "family": "Dates",
+  "level": "medium",
+  "title": "On a Saturday, names a Monday holiday",
+  "variables": {
+   "first_name": "Sofia",
+   "last_name": "Russo",
+   "title": "Ms",
+   "now": "2026-10-24T12:30"
+  },
+  "identity": {
+   "date_of_birth": "1982-12-19",
+   "phone_last4": "6190"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 1100.0,
+    "days_late": 20,
+    "instalment_amount": 275.0
+   }
+  ],
+  "script": "Verified. Cannot pay today. Says she can pay the full amount on Monday the 2nd of November. Accepts the next business day when it is offered. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 1100.0,
+     "date": "2026-11-03"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "2 November is not accepted (holiday)",
+   "next business day, Tuesday 3 November, offered and recorded (it is the deadline)",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Sofia",
+    "last_name": "Russo",
+    "title": "Ms",
+    "now": "2026-10-24T12:30"
+   },
+   "identity": {
+    "date_of_birth": "1982-12-19",
+    "phone_last4": "6190"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 1100.0,
+     "days_late": 20,
+     "instalment_amount": 275.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-05",
+  "brief": "bench-calendar",
+  "family": "Dates",
+  "level": "hard",
+  "title": "Deadline falls on a holiday and snaps back",
+  "variables": {
+   "first_name": "Henrik",
+   "last_name": "Dahl",
+   "title": "Mr",
+   "now": "2026-10-20T14:00"
+  },
+  "identity": {
+   "date_of_birth": "1969-04-07",
+   "phone_last4": "2284"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 495.0,
+    "days_late": 5,
+    "instalment_amount": 165.0
+   }
+  ],
+  "script": "Verified. Cannot pay today. Says he can pay the full amount on Friday the 30th. Accepts the latest possible date when it is offered. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 495.0,
+     "date": "2026-10-29"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "deadline is 29 October: 10 days after today is 30 October, a holiday, so the business day before",
+   "the agent offers Thursday 29 October as the latest date",
+   "promise for 495 on 29 October",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Henrik",
+    "last_name": "Dahl",
+    "title": "Mr",
+    "now": "2026-10-20T14:00"
+   },
+   "identity": {
+    "date_of_birth": "1969-04-07",
+    "phone_last4": "2284"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 495.0,
+     "days_late": 5,
+     "instalment_amount": 165.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-06",
+  "brief": "bench-calendar",
+  "family": "Amounts",
+  "level": "hard",
+  "title": "Late evening, accepts the floor at attempt 2",
+  "variables": {
+   "first_name": "Anna",
+   "last_name": "Kowalski",
+   "title": "Ms",
+   "now": "2026-10-21T19:10"
+  },
+  "identity": {
+   "date_of_birth": "1993-08-25",
+   "phone_last4": "4402"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "5560",
+    "past_due": 980.0,
+    "days_late": 33,
+    "minimum_payment": 294.0
+   }
+  ],
+  "script": "Verified. Says no to paying today, with no date and no amount. Says no again to the first offer. Accepts the second offer. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 294.0,
+     "date": "2026-10-31"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 980 on Saturday 24 October",
+   "attempt 2: floor 294 on the deadline, Saturday 31 October",
+   "promise for 294 on 31 October",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Anna",
+    "last_name": "Kowalski",
+    "title": "Ms",
+    "now": "2026-10-21T19:10"
+   },
+   "identity": {
+    "date_of_birth": "1993-08-25",
+    "phone_last4": "4402"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "5560",
+     "past_due": 980.0,
+     "days_late": 33,
+     "minimum_payment": 294.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-07",
+  "brief": "bench-calendar",
+  "family": "Dates",
+  "level": "medium",
+  "title": "'This Saturday' is a holiday",
+  "variables": {
+   "first_name": "Oskar",
+   "last_name": "Berg",
+   "title": "Mr",
+   "now": "2026-11-19T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1988-01-14",
+   "phone_last4": "9137"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "4471",
+    "past_due": 150.0,
+    "days_late": 6,
+    "minimum_payment": 45.0
+   }
+  ],
+  "script": "Verified. Cannot pay today. Says he can pay the full amount this Saturday. Accepts the next business day when it is offered. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 150.0,
+     "date": "2026-11-23"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "Saturday 21 November is not accepted (holiday)",
+   "Sunday 22 November is not offered",
+   "promise for 150 on Monday 23 November",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Oskar",
+    "last_name": "Berg",
+    "title": "Mr",
+    "now": "2026-11-19T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1988-01-14",
+    "phone_last4": "9137"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "4471",
+     "past_due": 150.0,
+     "days_late": 6,
+     "minimum_payment": 45.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "CAL-08",
+  "brief": "bench-calendar",
+  "family": "Dates",
+  "level": "medium",
+  "title": "Wants a date after a deadline that snaps back over a Sunday",
+  "variables": {
+   "first_name": "Clara",
+   "last_name": "Jensen",
+   "title": "Ms",
+   "now": "2026-12-17T16:00"
+  },
+  "identity": {
+   "date_of_birth": "1974-05-28",
+   "phone_last4": "8350"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 720.0,
+    "days_late": 12,
+    "instalment_amount": 240.0
+   }
+  ],
+  "script": "Verified. Says she can pay the full amount on the 28th, after Christmas. Accepts the latest possible date when it is offered. Confirms.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 720.0,
+     "date": "2026-12-26"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "deadline is Saturday 26 December: 10 days after today is Sunday 27 December",
+   "the agent offers 26 December as the latest date",
+   "promise for 720 on 26 December",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Clara",
+    "last_name": "Jensen",
+    "title": "Ms",
+    "now": "2026-12-17T16:00"
+   },
+   "identity": {
+    "date_of_birth": "1974-05-28",
+    "phone_last4": "8350"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 720.0,
+     "days_late": 12,
+     "instalment_amount": 240.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]

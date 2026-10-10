@@ -1,0 +1,742 @@
+[
+ {
+  "id": "OUT-01",
+  "brief": "bench-outcomes",
+  "family": "Refusal",
+  "level": "medium",
+  "title": "Refuses both attempts: declined_to_pay",
+  "variables": {
+   "first_name": "Ines",
+   "last_name": "Duarte",
+   "title": "Ms",
+   "now": "2026-10-14T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1986-04-15",
+   "phone_last4": "2711"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "6604",
+    "past_due": 510.0,
+    "days_late": 16,
+    "minimum_payment": 153.0
+   }
+  ],
+  "script": "Verified. Refuses to pay today and refuses every offer, without giving a date or amount.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "declined_to_pay",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "attempt 1: full 510 on Friday 16 October",
+   "attempt 2: floor 153 on the deadline, Friday 23 October",
+   "close_call reason is declined_to_pay, not refused",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Ines",
+    "last_name": "Duarte",
+    "title": "Ms",
+    "now": "2026-10-14T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1986-04-15",
+    "phone_last4": "2711"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "6604",
+     "past_due": 510.0,
+     "days_late": 16,
+     "minimum_payment": 153.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-02",
+  "brief": "bench-outcomes",
+  "family": "Dispute",
+  "level": "medium",
+  "title": "Never had the product: disputed",
+  "variables": {
+   "first_name": "Rafael",
+   "last_name": "Costa",
+   "title": "Mr",
+   "now": "2026-10-20T10:30"
+  },
+  "identity": {
+   "date_of_birth": "1975-01-29",
+   "phone_last4": "9046"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 1180.0,
+    "days_late": 9,
+    "instalment_amount": 395.0
+   }
+  ],
+  "script": "Verified. Says he never had a car loan with this bank and it must be a mistake.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "disputed",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not argue",
+   "no promise recorded",
+   "close_call reason is disputed, not dispute",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Rafael",
+    "last_name": "Costa",
+    "title": "Mr",
+    "now": "2026-10-20T10:30"
+   },
+   "identity": {
+    "date_of_birth": "1975-01-29",
+    "phone_last4": "9046"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 1180.0,
+     "days_late": 9,
+     "instalment_amount": 395.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-03",
+  "brief": "bench-outcomes",
+  "family": "Hardship",
+  "level": "medium",
+  "title": "Illness, declines support: vulnerable",
+  "variables": {
+   "first_name": "Hanna",
+   "last_name": "Virtanen",
+   "title": "Ms",
+   "now": "2026-11-02T15:00"
+  },
+  "identity": {
+   "date_of_birth": "1962-09-04",
+   "phone_last4": "1357"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 640.0,
+    "days_late": 19,
+    "instalment_amount": 160.0
+   }
+  ],
+  "script": "Verified. Says she has been in hospital for weeks and cannot deal with this now. Does not want to be transferred.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "vulnerable",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "one sentence of sympathy",
+   "no persuasion attempt",
+   "support team offered once",
+   "close_call reason is vulnerable, not hardship",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Hanna",
+    "last_name": "Virtanen",
+    "title": "Ms",
+    "now": "2026-11-02T15:00"
+   },
+   "identity": {
+    "date_of_birth": "1962-09-04",
+    "phone_last4": "1357"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 640.0,
+     "days_late": 19,
+     "instalment_amount": 160.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-04",
+  "brief": "bench-outcomes",
+  "family": "Hardship",
+  "level": "medium",
+  "title": "Death in the family, accepts support",
+  "variables": {
+   "first_name": "Samir",
+   "last_name": "Aziz",
+   "title": "Mr",
+   "now": "2026-11-02T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1980-03-18",
+   "phone_last4": "6628"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "2045",
+    "past_due": 390.0,
+    "days_late": 6,
+    "minimum_payment": 117.0
+   }
+  ],
+  "script": "Verified. Says his mother passed away last week. Accepts being connected to the support team.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "support",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "support"
+    }
+   ]
+  },
+  "checks": [
+   "one sentence of sympathy",
+   "no persuasion attempt",
+   "transfer_to_agent called with queue support",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Samir",
+    "last_name": "Aziz",
+    "title": "Mr",
+    "now": "2026-11-02T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1980-03-18",
+    "phone_last4": "6628"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "2045",
+     "past_due": 390.0,
+     "days_late": 6,
+     "minimum_payment": 117.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-05",
+  "brief": "bench-outcomes",
+  "family": "Bankruptcy",
+  "level": "hard",
+  "title": "Filed for bankruptcy: transfer to legal",
+  "variables": {
+   "first_name": "Mateo",
+   "last_name": "Ruiz",
+   "title": "Mr",
+   "now": "2026-11-17T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1971-10-21",
+   "phone_last4": "4480"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 2350.0,
+    "days_late": 27,
+    "instalment_amount": 470.0
+   }
+  ],
+  "script": "Verified. After hearing the amount, says he filed for bankruptcy last week and his lawyer handles all his debts.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "legal",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "legal"
+    }
+   ]
+  },
+  "checks": [
+   "no persuasion attempt and no promise",
+   "the agent says it will connect him with the legal team",
+   "transfer_to_agent called with queue legal",
+   "close_call transferred / legal",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Mateo",
+    "last_name": "Ruiz",
+    "title": "Mr",
+    "now": "2026-11-17T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1971-10-21",
+    "phone_last4": "4480"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 2350.0,
+     "days_late": 27,
+     "instalment_amount": 470.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-06",
+  "brief": "bench-outcomes",
+  "family": "Letter",
+  "level": "medium",
+  "title": "Wants it in writing: letter_requested",
+  "variables": {
+   "first_name": "Eva",
+   "last_name": "Novotna",
+   "title": "Ms",
+   "now": "2026-11-17T14:30"
+  },
+  "identity": {
+   "date_of_birth": "1990-07-07",
+   "phone_last4": "3092"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "7781",
+    "past_due": 275.0,
+    "days_late": 5,
+    "minimum_payment": 82.5
+   }
+  ],
+  "script": "Verified. After hearing the amount, says she will not agree to anything on the phone and wants the details in a letter first.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "letter_requested",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says a letter will be sent",
+   "no persuasion attempt",
+   "no promise recorded",
+   "close_call no_promise / letter_requested",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Eva",
+    "last_name": "Novotna",
+    "title": "Ms",
+    "now": "2026-11-17T14:30"
+   },
+   "identity": {
+    "date_of_birth": "1990-07-07",
+    "phone_last4": "3092"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "7781",
+     "past_due": 275.0,
+     "days_late": 5,
+     "minimum_payment": 82.5
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-07",
+  "brief": "bench-outcomes",
+  "family": "Bankruptcy",
+  "level": "hard",
+  "title": "Job loss and bankruptcy in one breath: legal comes first",
+  "variables": {
+   "first_name": "Jakub",
+   "last_name": "Wozniak",
+   "title": "Mr",
+   "now": "2026-12-03T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1984-05-10",
+   "phone_last4": "5536"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 860.0,
+    "days_late": 14,
+    "instalment_amount": 287.0
+   }
+  ],
+  "script": "Verified. Says he lost his job in the summer and has filed for bankruptcy since. If offered the support team, says he would rather the right people handle it.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "legal",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "legal"
+    }
+   ]
+  },
+  "checks": [
+   "the bankruptcy rule is applied before the hardship rule",
+   "no support-team transfer",
+   "transfer_to_agent called with queue legal exactly once",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Jakub",
+    "last_name": "Wozniak",
+    "title": "Mr",
+    "now": "2026-12-03T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1984-05-10",
+    "phone_last4": "5536"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 860.0,
+     "days_late": 14,
+     "instalment_amount": 287.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "OUT-08",
+  "brief": "bench-outcomes",
+  "family": "Refusal",
+  "level": "medium",
+  "title": "Does not want to talk, twice, after verification",
+  "variables": {
+   "first_name": "Chloe",
+   "last_name": "Martin",
+   "title": "Ms",
+   "now": "2026-12-03T16:00"
+  },
+  "identity": {
+   "date_of_birth": "1997-11-23",
+   "phone_last4": "7019"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 315.0,
+    "days_late": 7,
+    "instalment_amount": 105.0
+   }
+  ],
+  "script": "Verified. After hearing the amount, says she does not want to talk about this. When the agent continues, says again she does not want to talk.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "declined_to_pay",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "call closed after the second 'I do not want to talk'",
+   "close_call reason is declined_to_pay, not refused",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Chloe",
+    "last_name": "Martin",
+    "title": "Ms",
+    "now": "2026-12-03T16:00"
+   },
+   "identity": {
+    "date_of_birth": "1997-11-23",
+    "phone_last4": "7019"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 315.0,
+     "days_late": 7,
+     "instalment_amount": 105.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support",
+     "legal"
+    ],
+    "no_promise": [
+     "declined_to_pay",
+     "vulnerable",
+     "disputed",
+     "service_error",
+     "letter_requested"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]

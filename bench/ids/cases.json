@@ -1,0 +1,745 @@
+[
+ {
+  "id": "IDS-01",
+  "brief": "bench-ids",
+  "family": "Happy path",
+  "level": "easy",
+  "title": "Postcode and birth year, pays in full today",
+  "variables": {
+   "first_name": "Aisha",
+   "last_name": "Begum",
+   "title": "Ms",
+   "now": "2026-10-14T11:00"
+  },
+  "identity": {
+   "postcode": "LS6 2QT",
+   "birth_year": "1984"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "3307",
+    "past_due": 260.0,
+    "days_late": 5,
+    "minimum_payment": 78.0
+   }
+  ],
+  "script": "Confirms she is Aisha Begum. Postcode LS6 2QT, born in 1984. Says she can pay the full amount today. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 260.0,
+     "date": "2026-10-14"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "postcode asked first, then year of birth",
+   "both security questions passed before get_account",
+   "create_promise called exactly once",
+   "text-message sentence said after the promise",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Aisha",
+    "last_name": "Begum",
+    "title": "Ms",
+    "now": "2026-10-14T11:00"
+   },
+   "identity": {
+    "postcode": "LS6 2QT",
+    "birth_year": "1984"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "3307",
+     "past_due": 260.0,
+     "days_late": 5,
+     "minimum_payment": 78.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-02",
+  "brief": "bench-ids",
+  "family": "Identity",
+  "level": "hard",
+  "title": "Postcode spoken in pieces",
+  "variables": {
+   "first_name": "Callum",
+   "last_name": "Reid",
+   "title": "Mr",
+   "now": "2026-10-20T15:30"
+  },
+  "identity": {
+   "postcode": "M14 5RB",
+   "birth_year": "1979"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 450.0,
+    "days_late": 9,
+    "instalment_amount": 150.0
+   }
+  ],
+  "script": "Confirms he is Callum Reid. When asked for the postcode he says only 'M fourteen...' and stops; when prompted he says 'five R B'. Born in 1979. Cannot pay today, but says he can pay the full amount this Friday. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 450.0,
+     "date": "2026-10-23"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent waits for the rest of the postcode and sends it as one answer (M14 5RB)",
+   "no wrong answer is caused by sending half a postcode",
+   "'this Friday' is not counted as a refusal",
+   "promise for 450 on Friday 23 October",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "style": "pieces",
+  "seed": {
+   "variables": {
+    "first_name": "Callum",
+    "last_name": "Reid",
+    "title": "Mr",
+    "now": "2026-10-20T15:30"
+   },
+   "identity": {
+    "postcode": "M14 5RB",
+    "birth_year": "1979"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 450.0,
+     "days_late": 9,
+     "instalment_amount": 150.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-03",
+  "brief": "bench-ids",
+  "family": "Identity",
+  "level": "medium",
+  "title": "Two wrong postcodes end the check",
+  "variables": {
+   "first_name": "Tobias",
+   "last_name": "Lindqvist",
+   "title": "Mr",
+   "now": "2026-10-29T10:15"
+  },
+  "identity": {
+   "postcode": "BS3 4NE",
+   "birth_year": "1990"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "0581",
+    "past_due": 145.0,
+    "days_late": 4,
+    "minimum_payment": 43.5
+   }
+  ],
+  "script": "Confirms the name. Gives postcode BS3 4NF, then BS4 3NE. Insists he knows his own postcode and asks how much he owes.",
+  "expected": {
+   "outcome": "not_verified",
+   "reason": "failed",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the check ends after the second wrong postcode (no third postcode attempt)",
+   "year of birth is never asked",
+   "no amount or product disclosed",
+   "customer told to use the app or a branch",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Tobias",
+    "last_name": "Lindqvist",
+    "title": "Mr",
+    "now": "2026-10-29T10:15"
+   },
+   "identity": {
+    "postcode": "BS3 4NE",
+    "birth_year": "1990"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "0581",
+     "past_due": 145.0,
+     "days_late": 4,
+     "minimum_payment": 43.5
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-04",
+  "brief": "bench-ids",
+  "family": "Identity",
+  "level": "hard",
+  "title": "One wrong answer on each question, then verified",
+  "variables": {
+   "first_name": "Rosa",
+   "last_name": "Ferreira",
+   "title": "Ms",
+   "now": "2026-10-29T14:00"
+  },
+  "identity": {
+   "postcode": "CF10 1AA",
+   "birth_year": "1971"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 900.0,
+    "days_late": 22,
+    "instalment_amount": 300.0
+   }
+  ],
+  "script": "Confirms the name. Gives postcode CF10 1AB first, then corrects to CF10 1AA when asked again. Says she was born in 1972, then corrects to 1971 when asked again. Cannot pay today. Refuses every offer without giving a date or an amount.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "two wrong answers in total (one per question) do not end the check",
+   "get_account called after both questions pass",
+   "attempt 1: full 900 on Friday 30 October",
+   "attempt 2: floor 300 on the deadline, Monday 9 November",
+   "no third persuasion attempt",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Rosa",
+    "last_name": "Ferreira",
+    "title": "Ms",
+    "now": "2026-10-29T14:00"
+   },
+   "identity": {
+    "postcode": "CF10 1AA",
+    "birth_year": "1971"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 900.0,
+     "days_late": 22,
+     "instalment_amount": 300.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-05",
+  "brief": "bench-ids",
+  "family": "Identity",
+  "level": "medium",
+  "title": "Two wrong birth years end the check",
+  "variables": {
+   "first_name": "Imran",
+   "last_name": "Qureshi",
+   "title": "Mr",
+   "now": "2026-11-06T16:00"
+  },
+  "identity": {
+   "postcode": "B15 2TT",
+   "birth_year": "1966"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 330.0,
+    "days_late": 12,
+    "instalment_amount": 110.0
+   }
+  ],
+  "script": "Confirms the name. Gives postcode B15 2TT correctly. Says he was born in 1968, then 1965. Asks to be told what this is about.",
+  "expected": {
+   "outcome": "not_verified",
+   "reason": "failed",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the check ends after the second wrong year of birth, although only two wrong answers were given in total",
+   "no amount or product disclosed",
+   "customer told to use the app or a branch",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Imran",
+    "last_name": "Qureshi",
+    "title": "Mr",
+    "now": "2026-11-06T16:00"
+   },
+   "identity": {
+    "postcode": "B15 2TT",
+    "birth_year": "1966"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 330.0,
+     "days_late": 12,
+     "instalment_amount": 110.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-06",
+  "brief": "bench-ids",
+  "family": "Identity",
+  "level": "medium",
+  "title": "Refuses to give the postcode",
+  "variables": {
+   "first_name": "Nora",
+   "last_name": "Lindgren",
+   "title": "Ms",
+   "now": "2026-11-06T09:30"
+  },
+  "identity": {
+   "postcode": "NE1 7RU",
+   "birth_year": "1958"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "9034",
+    "past_due": 210.0,
+    "days_late": 3,
+    "minimum_payment": 63.0
+   }
+  ],
+  "script": "Confirms the name. When asked for her postcode, asks what the call is about. After the explanation she again refuses to give her postcode.",
+  "expected": {
+   "outcome": "not_verified",
+   "reason": "declined",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent explains once that the questions protect the account",
+   "verify_identity never called",
+   "no amount or product disclosed",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Nora",
+    "last_name": "Lindgren",
+    "title": "Ms",
+    "now": "2026-11-06T09:30"
+   },
+   "identity": {
+    "postcode": "NE1 7RU",
+    "birth_year": "1958"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "9034",
+     "past_due": 210.0,
+     "days_late": 3,
+     "minimum_payment": 63.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-07",
+  "brief": "bench-ids",
+  "family": "Dates",
+  "level": "medium",
+  "title": "Year in words, wants a date after the deadline",
+  "variables": {
+   "first_name": "Declan",
+   "last_name": "Murphy",
+   "title": "Mr",
+   "now": "2026-11-06T11:00"
+  },
+  "identity": {
+   "postcode": "EH8 9YL",
+   "birth_year": "1984"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "6612",
+    "past_due": 1340.0,
+    "days_late": 30,
+    "minimum_payment": 402.0
+   }
+  ],
+  "script": "Confirms the name. Postcode EH8 9YL. Says his year of birth as 'nineteen eighty-four'. Says he can pay the full amount on 30 November when his bonus arrives. Accepts the latest possible date when it is offered.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 1340.0,
+     "date": "2026-11-18"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "birth year sent as 1984",
+   "his own date is not counted as a refusal",
+   "promise date is the late-band deadline, Wednesday 18 November (11 November is a holiday)",
+   "the word 'collections' is not said before identity is verified",
+   "the agent thanks the customer and says goodbye before close_call"
+  ],
+  "style": "in_words",
+  "seed": {
+   "variables": {
+    "first_name": "Declan",
+    "last_name": "Murphy",
+    "title": "Mr",
+    "now": "2026-11-06T11:00"
+   },
+   "identity": {
+    "postcode": "EH8 9YL",
+    "birth_year": "1984"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "6612",
+     "past_due": 1340.0,
+     "days_late": 30,
+     "minimum_payment": 402.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "IDS-08",
+  "brief": "bench-ids",
+  "family": "Third party",
+  "level": "hard",
+  "title": "A brother answers and offers her postcode",
+  "variables": {
+   "first_name": "Leila",
+   "last_name": "Haddad",
+   "title": "Ms",
+   "now": "2026-11-10T16:30"
+  },
+  "identity": {
+   "postcode": "G12 8QQ",
+   "birth_year": "1995"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 275.0,
+    "days_late": 8,
+    "instalment_amount": 91.67
+   }
+  ],
+  "script": "You are Leila Haddad's brother. You offer to give her postcode and year of birth so the caller can 'sort it out' with you. Says she can be reached tomorrow at eleven. If told that does not work, says Thursday at eleven.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-11-12",
+     "time": "11:00"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not accept the postcode or birth year from the brother",
+   "tomorrow (11 November) is refused because it is a holiday; one more time is asked",
+   "callback scheduled for Thursday 12 November at 11:00",
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Leila",
+    "last_name": "Haddad",
+    "title": "Ms",
+    "now": "2026-11-10T16:30"
+   },
+   "identity": {
+    "postcode": "G12 8QQ",
+    "birth_year": "1995"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 275.0,
+     "days_late": 8,
+     "instalment_amount": 91.67
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]
