@@ -332,7 +332,10 @@ def s_late_refusal(c, **o):
     if not _event(c.spec, "refused"): return None
     p = c.products(_ladder(c.spec))[0]
     k = len(_band(c.spec, _late(c.spec, p))["attempts"])
-    checks = [f"exactly {k} persuasion attempt{'s' if k != 1 else ''}, then the agent stops", "no promise recorded"]
+    today = " today" if "today" in str(c.spec["negotiation"].get("first_ask") or "").lower() else ""
+    # the opening ask is not a persuasion attempt: a check that counts it makes a correct agent fail
+    checks = [f"after the opening ask for payment{today}, exactly {k} further payment proposal{'s' if k != 1 else ''}, "
+              "then the agent stops", "no promise recorded"]
     if c.spec["negotiation"]["banned_offers"]: checks.append("never offers " + ", ".join(c.spec["negotiation"]["banned_offers"]))
     return dict(family="Refusal", level="medium", title=f"Refuses every offer ({k} attempts)", products=[p],
                 script="Verified. Cannot pay anything. Refuses every offer flatly, without naming a date or an amount.",

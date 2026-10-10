@@ -410,3 +410,77 @@ def test_http_returns_status_for_a_non_json_error_page():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try: assert S._http(f"http://127.0.0.1:{srv.server_address[1]}", "/v1/practice/ledger/x") == {"ok": False, "status": 502}
     finally: srv.shutdown()
+
+
+# --- checks the reference specs must not contradict (final review item 4) ---------------------------
+
+def _spec_strings(x):
+    if isinstance(x, str): yield x
+    elif isinstance(x, dict):
+        for v in x.values(): yield from _spec_strings(v)
+    elif isinstance(x, list):
+        for v in x: yield from _spec_strings(v)
+
+
+def _sayable(spec, text):
+    """True when `text` is a spec sentence, verbatim or with its {placeholders} filled."""
+    import re
+    for s in _spec_strings(spec):
+        if s == text: return True
+        if "{" in s and re.fullmatch(re.sub(r"\\\{\w+\\\}", ".+", re.escape(s)), text): return True
+    return False
+
+
+@pytest.mark.parametrize("spec", [SPEC_A, SPEC_B], ids=["spec-a", "spec-b"])
+def test_reference_spec_does_not_contradict_its_cases(spec):
+    import re
+    seen = set()
+    for now in ("2026-10-14T11:00", "2026-10-16T11:00", "2026-10-19T11:00", "2026-10-23T11:00"):
+        for seed in (0, 1):
+            for case in C.generate(spec, OPENAPI, now, n=14, seed=seed):
+                today = dt.date.fromisoformat(now[:10])
+                promises = case["expected"].get("promises") or []
+                prod = case["products"][0]
+                band = C._band(spec, C._late(spec, prod))
+                money = {C._money(C._amt(spec, p)) for p in case["products"]} | \
+                        {C._money(C._floor(spec, p)) for p in case["products"]}
+                for chk in case["checks"]:
+                    seen.add(case["scenario"])
+                    # counts: the opening ask is never counted as a persuasion attempt
+                    assert "persuasion attempt" not in chk or "no persuasion attempt" in chk, chk
+                    m = re.search(r"exactly (\d+) further payment proposals?", chk)
+                    if m:
+                        assert chk.startswith("after the opening ask"), chk
+                        assert int(m[1]) == len(band["attempts"]), (chk, band["name"])
+                    if "offered once" in chk:
+                        assert spec["negotiation"]["floor_offer"]["times"] == 1, chk
+                    m = re.match(r"never offers (.+)$", chk)
+                    if m:
+                        assert m[1] == ", ".join(spec["negotiation"]["banned_offers"]), chk
+                    m = re.match(r"the check ends after wrong answer number (\d+)$", chk)
+                    if m:
+                        assert int(m[1]) == spec["identity"]["max_wrong"], chk
+                    m = re.match(r"create_promise is tried (\d+) times$", chk)
+                    if m:
+                        assert int(m[1]) == spec["confirmation"]["retries"] + 1, chk
+                    m = re.match(r'the agent says "(.+)"( after the promise)?$', chk)
+                    if m:
+                        assert _sayable(spec, m[1]), chk
+                    m = re.match(r"none of these is said before identity is verified: (.+)$", chk)
+                    if m:
+                        assert m[1] == ", ".join(spec["opening"]["banned_before_verify"]), chk
+                    # amounts named in a check are this customer's amounts or floors
+                    for amt in re.findall(r"\b\d+\.\d\d\b", chk):
+                        assert amt in money, (chk, money)
+                    # a promise date named in a check is the expected promise's date, a business day by the deadline
+                    m = re.search(r"(?:promise for [\d.]+ on|promise recorded for|promise date is the deadline,) (\w+ \d+ \w+)", chk)
+                    if m:
+                        days = {C._day(dt.date.fromisoformat(p["date"])) for p in promises}
+                        assert m[1] in days, (chk, days)
+                        for p in promises:
+                            d = dt.date.fromisoformat(p["date"])
+                            assert D.is_bd(d, spec["calendar"]) and today <= d <= D.deadline(today, band["deadline"], spec["calendar"])
+                    if chk == "no promise recorded":
+                        assert not promises, case["title"]
+    assert {"late_refusal", "floor_after_too_much", "non_business_day", "after_deadline", "service_error",
+            "wrong_answers"} <= seen
