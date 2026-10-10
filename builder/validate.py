@@ -15,8 +15,8 @@ SCHEMA = json.loads((Path(__file__).resolve().parent / "spec_schema.json").read_
 
 # Names a sentence may use besides call_variables and get_account product fields.
 RUNTIME_NAMES = {"product_words", "past_due", "days_late", "floor", "deadline", "amount", "date", "product"}
-# close_call outcomes whose reason may be null (openapi: "Required for every outcome except promise and paid").
-REASONLESS = {"promise", "paid"}
+# close_call outcomes whose reason may be null are read from the openapi close_call `reason` description
+# ("Required for every outcome except X and Y"); see reasonless_outcomes().
 # Keys whose string values are not sentences said to the customer.
 NOT_SENTENCES = {"sources", "facts", "examples", "custom_code", "conflicts"}
 
@@ -45,6 +45,22 @@ def _product_props(openapi):
         return resp["properties"]["products"]["items"]["properties"]
     except KeyError:
         return {}
+
+
+def reasonless_outcomes(openapi):
+    """close_call outcomes that need no reason, parsed from the `reason` description ("... except X and Y."), kept
+    only when they are in the outcome enum. None when the description names none: the check is then skipped."""
+    try:
+        desc = str(_body(openapi, "close_call")["reason"].get("description") or "")
+    except (KeyError, TypeError, AttributeError):
+        return None
+    m = re.search(r"\bexcept\s+(?:for\s+)?(.+?)(?:\.\s|\.$|;|$)", desc)
+    if not m:
+        return None
+    outcomes = set(_enum(openapi, "close_call", "outcome") or [])
+    words = [w.strip(" `'\"") for w in re.split(r",|\band\b|\bor\b", m.group(1))]
+    got = {w for w in words if w in outcomes}
+    return got or None
 
 
 # ------------------------------------------------------------------ path resolution
@@ -103,12 +119,14 @@ def _openapi_errors(spec, openapi):
     fields = _enum(openapi, "verify_identity", "field") or []
     product_types = (_product_props(openapi).get("type") or {}).get("enum") or []
     product_props = set(_product_props(openapi))
+    reasonless = reasonless_outcomes(openapi)
 
     for i, row in enumerate(spec["outcomes"]):
         if row["outcome"] not in outcomes:
             errs.append("outcomes[%d]: outcome %r not in openapi close_call enum %s" % (i, row["outcome"], outcomes))
-        if row["reason"] is None and row["outcome"] not in REASONLESS:
-            errs.append("outcomes[%d]: outcome %r needs a reason (only promise and paid may have none)" % (i, row["outcome"]))
+        if reasonless is not None and row["reason"] is None and row["outcome"] not in reasonless:
+            errs.append("outcomes[%d]: outcome %r needs a reason (only %s may have none)"
+                        % (i, row["outcome"], " and ".join(sorted(reasonless))))
     for o in spec.get("unused_outcomes", []):
         if o not in outcomes:
             errs.append("unused_outcomes: %r not in openapi close_call enum" % o)
