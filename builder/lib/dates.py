@@ -18,8 +18,8 @@ MAX_SCAN_DAYS = 800
 def check_weekdays(cal):
     """calendar.weekdays must be a non-empty list of whole numbers 0 (Monday) to 6; else ValueError."""
     wd = cal.get("weekdays") if isinstance(cal, dict) else None
-    if not isinstance(wd, list) or not wd or not all(type(x) is int and 0 <= x <= 6 for x in wd):
-        raise ValueError("calendar.weekdays must be a non-empty list of integers 0-6, got " + repr(wd))
+    if not isinstance(wd, list) or not wd or not all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 6 for x in wd):
+        raise ValueError("calendar.weekdays must be a non-empty list of integers 0-6, got " + str(wd))
 
 
 def is_bd(d, cal):
