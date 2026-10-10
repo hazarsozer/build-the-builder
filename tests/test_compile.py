@@ -359,7 +359,18 @@ def test_g2_human_transfer_requires_asked_flag():
         assert _human_transition(n)["condition"]["conditions"][0]["logic"] == "and"
         enum = n["extraction_schema"][0]["enum_values"]
         assert "human_first_request" in enum and "human_insists" in enum and "human" not in enum
-        assert "human_asked" in [x["name"] for x in n["extraction_schema"]]
+        assert "human_asked" not in [x["name"] for x in n["extraction_schema"]]
+        first = [t for t in n["transitions"] if "human_first_request" in json.dumps(t["condition"])][0]
+        assert first["target_node"] == "human_ask_" + k
+        code = _code(w["nodes"]["human_ask_" + k])
+        v = {}
+        exec(code, {"vars": v})
+        assert v["human_asked"] == "yes"
+        hold = w["nodes"]["human_hold_" + k]
+        assert hold["on_enter"]["text"] == "Can I help you with that first?"
+        ht = {t["target_node"]: json.dumps(t["condition"]) for t in hold["transitions"]}
+        assert '"insists"' in ht["transfer_general"] and '"other"' in ht[k]
+        assert hold["max_turn_transition"] == k
 
 
 def test_g2_say_rules_listed_as_not_events():

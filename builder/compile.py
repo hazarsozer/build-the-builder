@@ -693,6 +693,8 @@ class _Compiler:
                 desc.append("%s_insists: the agent already asked whether it can help first, and in this message %s again." % (eid, subj(who, trig)))
                 t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
                 trans.append(go(t, "Insists: " + eid, all_of(eq(EXTRACT_VAR[stage], eid + "_insists"), eq(eid + "_asked", "yes"))))
+                trans.append(go(self.ask_once_nodes(stage, ev, t), "First request: " + eid,
+                                cond_any(eq(EXTRACT_VAR[stage], eid + "_first_request"), eq(EXTRACT_VAR[stage], eid + "_insists"))))
             elif act == "offer_transfer_else_close":
                 team = team_words(ev["queue"]).replace("our ", "the ")
                 values += [eid, eid + "_accepted", eid + "_declined"]
@@ -726,12 +728,33 @@ class _Compiler:
         default = "not_confirmed" if stage == "opening" else "continue"
         return ("These are NOT any transfer or close event (value %s): the person %s." % (default, "; or ".join(trig)))
 
+    def ask_once_nodes(self, stage, ev, transfer):
+        """insist_once_then_transfer: a code node sets <id>_asked, then a conversation node speaks the ask-once line
+        and transfers only if the person insists; anything else returns to the stage."""
+        eid = ev["id"]
+        code_name, hold = "%s_ask_%s" % (eid, stage), "%s_hold_%s" % (eid, stage)
+        if code_name in self.nodes:
+            return code_name
+        self.nodes[code_name] = code_node(code_name, "vars[%r] = 'yes'\nvars[%r] = 'pending'\n" % (eid + "_asked", eid + "_reply"), hold)
+        say = tpl(ev.get("say") or "Can I help you with that first?")
+        who = "the customer" if stage == "negotiate" else "the person"
+        self.nodes[hold] = {
+            "name": hold, "node_type": "conversation",
+            "on_enter": {"type": "tts", "text": say},
+            "task_message": "You asked %s. If %s answers anything other than insisting, reply briefly. No tool call is allowed in this step." % (q(say), who),
+            "extraction_schema": [{
+                "name": eid + "_reply", "type": "string", "min_confidence": 0.6, "enum_values": ["pending", "insists", "other"],
+                "description": ("The LATEST message, a reply to %s. insists: %s still %s (says yes, repeats it, or refuses help). "
+                                "other: anything else (accepts help, answers a question, asks something). pending: no reply yet."
+                                % (q(say), who, ev["trigger"]))}],
+            "max_node_turns": 2, "max_turn_transition": stage,
+            "transitions": [go(transfer, "Insists: " + eid, cond_any(eq(eid + "_reply", "insists"))),
+                            go(stage, "Back to the conversation", cond_any(eq(eid + "_reply", "other")))]}
+        return code_name
+
     def seen_vars(self, stage):
         out = []
         for ev in self.stage_events(stage):
-            if ev["action"] == "insist_once_then_transfer":
-                out.append({"name": ev["id"] + "_asked", "type": "string", "min_confidence": 0.6, "enum_values": ["yes", "no"],
-                            "description": "yes if, in an EARLIER message, the person %s and the agent replied by asking whether it can help first. Otherwise no." % ev["trigger"]})
             if ev["action"] == "offer_transfer_else_close":
                 out.append({"name": ev["id"] + "_seen", "type": "string", "min_confidence": 0.6, "enum_values": ["yes", "no"],
                             "description": "yes if anywhere in the conversation the customer %s. Otherwise no." % ev["trigger"]})
@@ -742,10 +765,8 @@ class _Compiler:
         for ev in self.stage_events(stage):
             ins = (ev.get("instruction") or "").strip()
             if ev["action"] == "insist_once_then_transfer":
-                lines.append("If %s: %s %s" % (
-                    subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]),
-                    ("say %s" % q(tpl(ev["say"])) + ("" if ev["say"].rstrip()[-1:] in ".?!" else ".")) if ev.get("say") else "ask once whether you can help first.",
-                    ins or "Transfer only if they insist."))
+                lines.append("If %s: the question whether you can help first is asked automatically; if they then accept help, continue." % (
+                    subj("the customer" if stage == "negotiate" else "the person", ev["trigger"])))
             elif ev["action"] == "offer_transfer_else_close":
                 extra = (" This comes before persuasion: make no persuasion attempt."
                          if ev.get("overrides_persuasion") and "persuasion" not in ins else "")
@@ -1189,13 +1210,12 @@ HOW TO RUN THE CALL
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
    - refused, when the last attempt of its plan was refused, with attempts_made.%(notes)s
-   The result's what_to_do_next is computed from all products: do exactly what it says (it names the next product, or gives you the read-back).
-5. When every product is settled, what_to_do_next gives you ONE read-back of all promises with one question %(confirm)s. A read-back is not an offer, so it states product, amount and date. If the customer changes something, call %(tool)s again for that product.
-6. After a clear yes to the read-back: call %(tool)s with product_id ALL and outcome confirmed. Nothing is registered before that; never say anything is recorded.""" % dict(
+   Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
+5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
         if conf.get("change_note"):
-            t += "\n7. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
+            t += "\n6. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
         other = self.event_guidance("negotiate")
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
@@ -1212,7 +1232,7 @@ HOW TO RUN THE CALL
         sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
-        tr = [go("record_plan", "All promises confirmed", cond_any(eq(multi_mod.PHASE, "confirmed"))),
+        tr = [go("readback", "Every product settled: read back the promises", cond_any(eq(multi_mod.PHASE, "readback"))),
               go("wrap_done", "Every product settled, nothing to confirm", cond_any(eq(multi_mod.PHASE, "done")))] + trans
         return {
             "name": "negotiate", "node_type": "conversation",
@@ -1227,7 +1247,7 @@ HOW TO RUN THE CALL
                                         ["continue: anything else (a date, an amount, a question, a confirmation, an agreement, "
                                          "a refusal, a claim that a product is paid or not theirs)."]),
             }] + self.seen_vars("negotiate"),
-            "max_node_turns": 60, "max_turn_transition": "wrap_done",
+            "max_node_turns": 30, "max_turn_transition": "wrap_done",
             "transitions": tr,
         }
 

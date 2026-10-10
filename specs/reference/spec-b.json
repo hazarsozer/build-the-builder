@@ -591,7 +591,7 @@
   "conflicts": [
     {
       "field": "events[hardship]",
-      "kept": "Declining the support transfer ends the call: every product without a recorded promise is noted hardship (at close), and the call closes as promise if any promise was recorded, otherwise no_promise / hardship.",
+      "kept": "Declining the support transfer ends the call: every product not yet settled (or agreed but not confirmed) is noted hardship at close, and products already settled keep their own note. The call closes as promise if any promise was recorded; otherwise by the Brief B closing rule: paid if every note is paid, else no_promise with the reason of the first product (in get_account order) whose note is not paid.",
       "overridden": "Brief B is silent on whether declining hardship support on one product ends the call or continues with the other products.",
       "why": "Brief A rule 32 closes on a declined transfer and makes no persuasion attempt; hardship concerns the customer, not one product, so persuading on the remaining products would break rule 32."
     },
