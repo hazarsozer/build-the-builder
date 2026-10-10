@@ -17,13 +17,16 @@ updates the JSON state in vars and writes the next instruction. Nothing is writt
 confirmation; promises and notes are then written by engine-run nodes, never by the model.
 Verified 10 Oct (probe): a pre-hook sees the model's arguments in config['body'] and its vars writes persist;
 a post-hook sees vars but not <tool>_args.
+Verified 11 Oct (chat-API probe, call 26dc5ce1): SET_POST's rewrite of result['data'] is the tool result the model
+reads (it spoke a token that existed only in what_to_do_next). A code_exec tool returns data null instead, so the
+model never sees a rejection: api is the default. A non-2xx response is a function_call_error and skips the post-hook.
 """
 from builder.lib import dates, embed, money
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
 
 SLOTS = 3          # products per call the engine can record / note (the brief allows up to three)
 SET_TOOL = "set_product"
-SET_MODE = "code"  # "code" (code_exec tool, nothing in the bank ledger) or "api" (get_account route + pre-hook)
+SET_MODE = "api"   # "api" (get_account route + pre/post hooks; the model reads what_to_do_next) or "code" (code_exec, data null)
 PHASE = "mp_phase"
 PROMISE_FIELDS = ("product_id", "amount", "date")
 
@@ -330,7 +333,10 @@ except Exception as e:
 
 API_ARGS = r'''
 def ARGS():
-    return config.get('body') if isinstance(config, dict) else None
+    b = config.get('body') if isinstance(config, dict) else None
+    if isinstance(b, dict):
+        return dict((k, v) for k, v in b.items() if not (isinstance(v, str) and v.strip()[:2] == chr(123) * 2))
+    return b
 '''
 
 CODE_ARGS = r'''
@@ -580,8 +586,7 @@ class Multi:
         desc = ("Report a settled product. CALL it every time a product is settled (agreed, refused, "
                 + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
         if mode == "api":
-            body = {k: dict(v, default="{{sp_%s}}" % k) for k, v in props.items()}
-            return self.c.tool(SET_TOOL, body, ["product_id", "outcome"], path="get_account", description=desc,
+            return self.c.tool(SET_TOOL, props, ["product_id", "outcome"], path="get_account", description=desc,
                                mapping=[{"path": "data.phase", "variable": PHASE}], pre=head + API_ARGS + SET_PRE, post=SET_POST)
         code = head + CODE_ARGS + SET_PRE + CODE_RESULT
         assert_no_braces(code, SET_TOOL)

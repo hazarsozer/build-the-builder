@@ -17,6 +17,20 @@ def _code(node):
     return node["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
 
 
+def _sp_props(sp):
+    """set_product's model-filled fields (api mode: the request body)."""
+    p = sp["function"]["parameters"]["properties"]
+    return p["body"]["properties"] if "body" in p else p
+
+
+def _sp_call(sp, v, params):
+    """One set_product call (api mode: its pre-hook gets the model's arguments as the request body)."""
+    if sp.get("pre_process_code"):
+        exec(sp["pre_process_code"], {"vars": v, "config": {"url": "x", "body": dict(params)}})
+    else:
+        exec(sp["function"]["parameters"]["properties"]["code"]["default"], {"vars": v, "params": dict(params)})
+
+
 def _tools(w):
     for k, n in w["nodes"].items():
         for t in n.get("tools", []) + n.get("pre_actions", []):
@@ -351,8 +365,7 @@ def test_m1_multi_token_match_and_ack():
     v = {"now": "2026-10-14T11:00", "acct_products_json": json.dumps(prods)}
     exec(_code(w["nodes"]["setup"]), {"vars": v})
     exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
-    exec(sp["function"]["parameters"]["properties"]["code"]["default"],
-         {"vars": v, "params": {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-16", "channel": "credit card"}})
+    _sp_call(sp, v, {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-16", "channel": "credit card"})
     assert json.loads(v["mp_state"])["p"]["p1"]["extra"]["channel"] == "card"
     assert "channel" in v["mp_msg"] and "card" in v["mp_msg"]
 
@@ -360,7 +373,7 @@ def test_m1_multi_token_match_and_ack():
 def test_m2_set_product_channel_has_enum():
     w = C(_with_fields(B), FOA)
     sp = [t for t in w["nodes"]["negotiate"]["tools"] if t["function"]["name"] == "set_product"][0]
-    assert sp["function"]["parameters"]["properties"]["channel"]["enum"] == ["bank_transfer", "card", "app"]
+    assert _sp_props(sp)["channel"]["enum"] == ["bank_transfer", "card", "app"]
 
 
 def _conds(c):
@@ -678,17 +691,14 @@ def test_g3_multi_records_the_extra_field():
     w = C(s, FOA)
     assert [p for p in lint(w, s) if not p.startswith("warning:")] == []
     sp = [t for t in w["nodes"]["negotiate"]["tools"] if t["function"]["name"] == "set_product"][0]
-    assert "channel" in sp["function"]["parameters"]["properties"]
+    assert "channel" in _sp_props(sp)
     prods = [dict(CARD, days_late=3), dict(CARD, product_id="p2", type="car_loan", past_due=900.0, days_late=3,
                                            instalment_amount=210.0)]
     v = {"now": "2026-10-14T11:00", "title": "Ms", "last_name": "X", "acct_products_json": json.dumps(prods)}
     exec(_code(w["nodes"]["setup"]), {"vars": v})
     exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
-    code = sp["function"]["parameters"]["properties"]["code"]["default"]
-    exec(code, {"vars": v, "params": {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-16",
-                                      "channel": "card"}})
-    exec(code, {"vars": v, "params": {"product_id": "p2", "outcome": "agreed", "amount": "full", "date": "2026-10-16",
-                                      "channel": "cash"}})
+    _sp_call(sp, v, {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-16", "channel": "card"})
+    _sp_call(sp, v, {"product_id": "p2", "outcome": "agreed", "amount": "full", "date": "2026-10-16", "channel": "cash"})
     assert v["mp_phase"] == "readback", v["mp_msg"]
     assert "card" in v["mp_readback"] and "bank transfer" in v["mp_readback"]
     exec(_code(w["nodes"]["record_plan"]), {"vars": v})

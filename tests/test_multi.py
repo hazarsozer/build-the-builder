@@ -89,7 +89,8 @@ def test_spec_b_negotiate_has_set_product_not_create_promise():
     names = [t["function"]["name"] for t in n["tools"]]
     assert names == ["set_product"]
     body = n["tools"][0]["function"]["parameters"]["properties"]
-    assert n["tools"][0]["function"]["handler"] == "__function__:code_exec"
+    assert n["tools"][0]["function"]["handler"] == "__function__:api_call"
+    body = body["body"]["properties"]
     assert set(body["outcome"]["enum"]) == {"agreed", "refused", "dispute", "paid", "review"}
     for i in (1, 2, 3):
         assert _tool(wf()["nodes"]["record_%d" % i], "create_promise")
@@ -152,6 +153,17 @@ class Sim:
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
 
     def say(self, **body):
+        """One set_product call as the platform runs it: api mode = pre-hook, request, post-hook, response mapping."""
+        if self.t["function"]["handler"] == "__function__:api_call":
+            cfg = {"url": "x", "body": dict(body)}
+            exec(self.t["pre_process_code"], {"vars": self.v, "config": cfg})
+            r = {"status": "success", "data": {"ok": True, "products": []}, "header": {}}
+            exec(self.t["post_process_code"], {"vars": self.v, "result": r})
+            assert r["data"]["what_to_do_next"] == self.v["mp_msg"] and "header" not in r
+            for m in self.t.get("response_mapping", []):
+                self.v[m["variable"]] = r["data"][m["path"].split(".", 1)[1]]
+            self.last_result = r
+            return self.v["mp_msg"]
         g = {"vars": self.v, "params": dict(body)}
         exec(self.t["function"]["parameters"]["properties"]["code"]["default"], g)
         assert g["_result"]["what_to_do_next"] == self.v["mp_msg"]
@@ -396,10 +408,13 @@ def test_product_reference_by_number_or_words():
 
 def test_hooks_never_raise():
     s = Sim("PUB-11")
-    code = s.t["function"]["parameters"]["properties"]["code"]["default"]
+    code = s.t["pre_process_code"]
     for body in [{}, {"product_id": None}, {"outcome": "agreed"}, {"product_id": "zz", "outcome": "agreed", "amount": "x", "date": "y"}]:
-        exec(code, {"vars": s.v, "params": body})
-    exec(code, {"vars": {}})
+        exec(code, {"vars": s.v, "config": {"body": body}})
+    exec(code, {"vars": {}, "config": {}})
+    exec(code, {"vars": {}, "config": None})
+    for r in [None, {}, {"data": None}, "x"]:
+        exec(s.t["post_process_code"], {"vars": {}, "result": r})
 
 
 def test_counted_close_tool_name_matches_its_wrap():
@@ -410,11 +425,39 @@ def test_counted_close_tool_name_matches_its_wrap():
 
 def test_set_product_code_needs_no_datetime_and_no_braces():
     t = _tool(wf()["nodes"]["negotiate"], "set_product")
-    code = t["function"]["parameters"]["properties"]["code"]["default"]
+    code = t["pre_process_code"] + t["post_process_code"]
     assert "datetime" not in code and "{{" not in code and "}}" not in code
-    props = t["function"]["parameters"]["properties"]
-    for k in ("product_id", "outcome", "amount", "date", "attempts_made"):
+    props = t["function"]["parameters"]["properties"]["body"]["properties"]
+    for k in ("product_id", "outcome", "amount", "date"):
         assert "default" not in props[k], k
+
+
+def test_a9_set_product_is_api_mode_and_model_reads_the_answer():
+    """A9 item 1: the model must read set_product's answer. The 11 Oct chat-API probe showed a post-hook's
+    result['data'] rewrite reaches the model and a code_exec result is data null, so the default is api."""
+    from builder import multi
+    assert multi.SET_MODE == "api"
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
+    s.say(product_id="p2", outcome="agreed", amount="900", date="2026-10-30")  # same date given product by product
+    msg = s.say(product_id="p2", outcome="agreed", amount="900", date="2026-11-30")
+    assert msg.startswith("NOT accepted") and s.last_result["data"]["what_to_do_next"] == msg
+    assert s.last_result["data"]["phase"] == s.v["mp_phase"]
+
+
+def test_a9_unfilled_template_args_are_ignored():
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="{{sp_amount}}", date="2026-10-20")
+    assert json.loads(s.v["mp_state"])["p"]["p1"]["amount"] == 300.0
+
+
+def test_code_mode_still_works(monkeypatch):
+    from builder import multi
+    monkeypatch.setattr(multi, "SET_MODE", "code")
+    s = Sim("PUB-13")
+    assert s.t["function"]["handler"] == "__function__:code_exec"
+    s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-20")
+    assert s.v["mp_phase"] == "readback"
 
 
 def test_api_mode_still_works(monkeypatch):
@@ -454,7 +497,7 @@ def test_r3_missing_attempts_counts_as_zero():
 
 def test_r4_model_cannot_confirm():
     t = _tool(wf()["nodes"]["negotiate"], "set_product")
-    assert "confirmed" not in t["function"]["parameters"]["properties"]["outcome"]["enum"]
+    assert "confirmed" not in t["function"]["parameters"]["properties"]["body"]["properties"]["outcome"]["enum"]
     s = Sim("PUB-13")
     s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-20")
     s.say(product_id="ALL", outcome="confirmed")
