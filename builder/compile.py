@@ -1715,12 +1715,14 @@ HOW TO RUN THE CALL
     def negotiate_multi_node(self):
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
-        structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else [])
+        structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else []) + ["goodbye"]
         sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
+        sdesc.append("goodbye: they only say goodbye or end the conversation (\"thank you, goodbye\"), with no date, amount, refusal or question.")
         tr = [go("readback", "Every product settled: read back the promises", cond_any(eq(multi_mod.PHASE, "readback"))),
-              go("wrap_done", "Every product settled, nothing to confirm", cond_any(eq(multi_mod.PHASE, "done")))] + trans
+              go("wrap_done", "Every product settled, nothing to confirm", cond_any(eq(multi_mod.PHASE, "done")))] + trans + [
+              go(multi_mod.END_NODE, "The customer says goodbye", cond_any(eq("neg_event", "goodbye")))]
         return {
             "name": "negotiate", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} {{first_ask_text}}"},
@@ -1734,7 +1736,7 @@ HOW TO RUN THE CALL
                                         ["continue: anything else (a date, an amount, a question, a confirmation, an agreement, "
                                          "a refusal, a claim that a product is paid or not theirs)."]),
             }] + self.seen_vars("negotiate"),
-            "max_node_turns": 30, "max_turn_transition": "wrap_done",
+            "max_node_turns": 30, "max_turn_transition": multi_mod.END_NODE,
             "transitions": tr,
         }
 

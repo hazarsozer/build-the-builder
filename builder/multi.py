@@ -77,6 +77,7 @@ try:
     vars['mp_msg'] = 'none yet'
     vars['mp_readback'] = ''
     vars['rb_answer'] = 'pending'
+    vars['mp_ended'] = 'no'
     vars['products_text'] = '\n'.join(lines)
     vars['products_count'] = str(len(order))
     if len(order) > 1:
@@ -329,8 +330,9 @@ try:
             still = _targets(st, b.get('product_id'), ('pending',))[0] if out == 'refused' else []
             phase, nxt = _next(st, still[0] if still else None)
             msg = (ack + ' ' + nxt).strip()
+    # the read-back of the agreed products is kept current: negotiate_end (max turns, goodbye) can speak it too
+    vars['mp_readback'] = _readback(st) if [q for q in st['order'] if st['p'][q]['status'] == 'agreed'] else ''
     if phase == 'readback':
-        vars['mp_readback'] = _readback(st)
         vars['rb_answer'] = 'pending'
     vars['mp_state'] = json.dumps(st)
     vars['mp_phase'] = phase
@@ -432,6 +434,23 @@ except Exception:
     pass
 '''
 
+END_NODE = "negotiate_end"
+NEG_END_CODE = r'''
+import json
+try:
+    st = json.loads(str(vars.get('mp_state') or '{}'))
+    ags = [q for q in st.get('order', []) if st['p'][q]['status'] == 'agreed']
+except Exception:
+    ags = []
+if ags and str(vars.get('mp_readback') or '') and str(vars.get('mp_ended') or '') != 'yes':
+    vars['mp_phase'] = 'readback'
+    vars['rb_answer'] = 'pending'
+    vars['mp_end'] = 'readback'
+else:
+    vars['mp_end'] = 'wrap'
+vars['mp_ended'] = 'yes'
+'''
+
 WRAP_CODE = r'''
 import json
 def _true(k):
@@ -455,7 +474,8 @@ for q in (st.get('ga') or order):
         continue
     stt = P.get('status')
     if stt == 'agreed':
-        r = FAIL_NOTE if RECORDING else END_NOTE
+        # an agreed product is never noted as refused: unconfirmed at a wrap, it gets the wrap's own note or none
+        r = FAIL_NOTE if RECORDING else AGREED_NOTE
         if RECORDING:
             failed.append(P['words'])
     elif stt == 'pending':
@@ -633,6 +653,7 @@ class Multi:
             lead[t] = " ".join(parts)
         code = ("import json\n" + embed.source(dates, money) + "\n" + "SLOTS = %d\n" % SLOTS +
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
+                "AGREED_NOTE = %r\n" % (None if end_note == self.refused_note else end_note) +
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
@@ -724,7 +745,12 @@ class Multi:
         nodes["readback_reset"] = code_node(
             "readback_reset", "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n"
             "vars['mp_msg'] = 'The customer did not confirm the read-back. Handle what they said; call %s again for any product that changes, "
-            "or with product_id ALL and outcome review if the same promises stand.'\n" % SET_TOOL, "negotiate")
+            "or with product_id ALL and outcome review if the same promises stand.'\n" % SET_TOOL, "negotiate",
+            [go("wrap_done", "The call is already ending: no second negotiation", cond_any(eq("mp_ended", "yes")))])
+        # negotiate's turn cap and the customer's goodbye: agreed products are read back once (and recorded on a yes),
+        # never noted as refused; nothing agreed -> wrap_done
+        nodes[END_NODE] = code_node(END_NODE, NEG_END_CODE, "wrap_done",
+                                    [go("readback", "Agreed products: read them back", cond_any(eq("mp_end", "readback")))])
         # wraps
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
         refused = c.events.get("refused") or {}

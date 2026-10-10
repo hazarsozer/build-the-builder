@@ -567,9 +567,85 @@ def test_r4_model_cannot_confirm():
     assert s.v["mp_phase"] == "readback"  # unknown outcome: nothing changes, recording only via the readback node
 
 
-def test_max_turns_go_to_wrap():
+def test_max_turns_go_to_negotiate_end():
     n = wf()["nodes"]["negotiate"]
-    assert n["max_node_turns"] == 30 and n["max_turn_transition"] == "wrap_done"
+    assert n["max_node_turns"] == 30 and n["max_turn_transition"] == "negotiate_end"
+    by = {t["target_node"]: t for t in n["transitions"]}
+    assert '"goodbye"' in json.dumps(by["negotiate_end"]["condition"])
+    assert "goodbye" in n["extraction_schema"][0]["enum_values"]
+
+
+def _pub12_r3(s):
+    """B PUB-12 r3: p1 agreed, p2 refused once (attempt 2 not made), p3 refused; then the goodbye loop."""
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.say(product_id="p2", outcome="refused")
+    s.say(product_id="p3", outcome="refused")
+    assert s.v["mp_phase"] == "open"
+
+
+def test_a9_timeout_with_agreed_product_reads_back_and_records():
+    s = Sim("PUB-12")
+    _pub12_r3(s)
+    s.run("negotiate_end")
+    assert s.route(s.w["nodes"]["negotiate_end"]) == "readback"
+    assert "510.00 for your credit card ending 9015" in s.v["mp_readback"]
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")] and notes == [("p2", "refused"), ("p3", "refused")]
+    assert outcome == "promise"
+
+
+def test_a9_timeout_never_notes_an_agreed_product_refused():
+    s = Sim("PUB-12")
+    _pub12_r3(s)
+    s.run("negotiate_end")
+    s.v["rb_answer"] = "change"  # no confirmation at the read-back after the timeout
+    nxt = s.route(s.w["nodes"]["readback"])
+    assert nxt == "readback_reset"
+    s.run("readback_reset")
+    s.end = s.route(s.w["nodes"]["readback_reset"])
+    assert s.end == "wrap_done"  # no second negotiation
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [] and ("p1", "refused") not in notes
+    assert notes == [("p2", "refused"), ("p3", "refused")]
+
+
+def test_a9_goodbye_with_nothing_agreed_goes_to_wrap_done():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="refused")
+    s.run("negotiate_end")
+    assert s.route(s.w["nodes"]["negotiate_end"]) == "wrap_done"
+    s.v["neg_event"] = "goodbye"
+    assert s.route(s.w["nodes"]["negotiate"]) == "negotiate_end"
+
+
+def test_a9_negotiate_end_reads_back_only_once():
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-20")
+    s.run("negotiate_end")
+    assert s.v["mp_end"] == "readback"
+    s.run("negotiate_end")
+    assert s.v["mp_end"] == "wrap" and s.route(s.w["nodes"]["negotiate_end"]) == "wrap_done"
+
+
+def test_a9_normal_readback_change_still_goes_back_to_negotiate():
+    s = Sim("PUB-13")
+    s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-20")
+    s.run("readback_reset")
+    assert s.route(s.w["nodes"]["readback_reset"]) == "negotiate"
+
+
+def test_a9_other_wraps_keep_their_own_note_for_agreed():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.end = "wrap_hardship"
+    promises, notes, close, outcome, reason = s.chain()
+    assert ("p1", "hardship") in notes
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.end = "wrap_not_talk"
+    promises, notes, close, outcome, reason = s.chain()
+    assert ("p1", "refused") not in notes
 
 
 def test_weekend_after_deadline_offers_deadline():
