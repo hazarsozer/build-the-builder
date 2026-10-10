@@ -435,6 +435,7 @@ class Build:
             self.failed("fix", e)
             return
         self.ev("fix_round", round=1, changes=info.get("changes") or [], discarded=info.get("discarded") or [],
+                warnings=info.get("warnings") or [], sandbox=info.get("sandbox") or [],
                 errors=info.get("errors"), kept_original=info.get("kept_original", False),
                 cost_usd=info.get("cost_usd"), seconds=info.get("wall_s"))
         if not info.get("changes"):

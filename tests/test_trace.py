@@ -67,6 +67,20 @@ def test_markdown_summary(tmp_path, monkeypatch):
     assert text.count("mdsecret99999") == 0
 
 
+def test_markdown_lists_orphans_and_fix_details(tmp_path):
+    t = Trace(tmp_path / "t.jsonl")
+    t.event("simulation_started", round=1, simulation_id="sim-a")
+    t.event("orphan_simulation", id="sim-a", round=1)
+    t.event("workspace_busy", round=1)
+    t.event("fix_round", round=1, changes=[{"path": "a.b", "quote": "q q q q", "before": 1, "after": 2}],
+            discarded=[], warnings=[{"path": "a.b", "literal": "2", "why": "added number is not in the decision's quote"}])
+    t.event("fix_sandbox", round=1, changed=[{"path": "spec.json", "change": "modified"}])
+    text = t.write_markdown().read_text()
+    assert "ORPHAN simulation sim-a" in text and "workspace busy" in text
+    assert "before: 1" in text and "after: 2" in text and "warning `a.b`" in text
+    assert "spec.json" in text
+
+
 def test_model_call_gets_one_line_description(tmp_path):
     t = Trace(tmp_path / "t.jsonl")
     for p in ("extract:a#1", "extract:b#2", "oracle#1", "settle#1", "fix:round1#1", "other"):

@@ -140,8 +140,33 @@ def render_markdown(events, name):
         for f in fixes:
             out.append("- round %s: %s change(s), %s discarded" % (f.get("round"), len(f.get("changes") or []),
                                                                   len(f.get("discarded") or [])))
-            out += ["  - `%s` (quote: \"%s\")" % (_cell(c.get("path")), _cell(c.get("quote"), 200)) for c in f.get("changes") or []]
+            for c in f.get("changes") or []:
+                out.append("  - `%s` (quote: \"%s\")" % (_cell(c.get("path")), _cell(c.get("quote"), 200)))
+                if "before" in c or "after" in c:
+                    out.append("    - before: %s" % _cell(c.get("before"), 200))
+                    out.append("    - after: %s" % _cell(c.get("after"), 200))
+            out += ["  - warning `%s`: %s %s" % (_cell(w.get("path")), _cell(w.get("why")), _cell(w.get("literal")))
+                    for w in f.get("warnings") or []]
         out.append("")
+
+    notes = []
+    for e in events:
+        k = e["kind"]
+        if k == "simulation_started":
+            notes.append("- simulation %s started (round %s)" % (_cell(e.get("simulation_id")), e.get("round")))
+        elif k == "orphan_simulation":
+            notes.append("- ORPHAN simulation %s (round %s) left running at the budget stop" % (_cell(e.get("id")), e.get("round")))
+        elif k == "workspace_busy":
+            notes.append("- workspace busy: another simulation was running (round %s)" % e.get("round"))
+        elif k == "fix_sandbox":
+            notes.append("- fix session changed files other than fix.json: %s" % _cell(e.get("changed"), 300))
+        elif k == "final_spec_switch":
+            notes.append("- final spec switched to %s: %s" % (_cell(e.get("to_label")), _cell(e.get("why"))))
+        elif k == "best_spec":
+            notes.append("- best spec: %s (comparable cases %s: round 1 %s, round 2 %s)" % (
+                _cell(e.get("label")), e.get("comparable"), e.get("round1_passed"), e.get("round2_passed")))
+    if notes:
+        out += ["## Simulations and decisions", ""] + notes + [""]
 
     out += ["## Export", ""]
     out += ["- %s" % _cell(e.get("path")) for e in _of(events, "export")] or ["- (none)"]
