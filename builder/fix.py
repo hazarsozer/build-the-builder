@@ -33,6 +33,7 @@ from pathlib import Path
 
 from builder import sdk
 from builder.extract import _error_list, _loose, apply_settle, quote_in_brief
+from builder.specdiff import _tokens
 from builder.validate import resolve_path, validate
 
 FIX_S = 240                # whole session, all asks
@@ -52,8 +53,8 @@ def _line(m):
     text = m.get("message")
     if not text:
         rest = {k: v for k, v in m.items() if k not in ("role", "message") and v not in (None, "", [], {})}
-        text = json.dumps(rest, default=str)[:MESSAGE_CHARS] if rest else ""
-    text = " ".join(str(text).split())
+        text = json.dumps(rest, default=str) if rest else ""
+    text = " ".join(sdk.scrub(str(text)).split())     # scrub before cutting: a cut secret would escape the scrub
     if len(text) > MESSAGE_CHARS:
         text = text[:MESSAGE_CHARS] + "..."
     return "%s: %s" % (role, text)
@@ -95,26 +96,75 @@ def failures_for(result, cases, get_call):
 
 # ------------------------------------------------------------------ decisions
 
-def _is_top_level(path):
-    return not re.search(r"[.\[]", path)
+_TOKEN_TEXT = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*$")
 
 
-def screen(data, brief):
-    """(kept decisions, discarded [{index, path, why}]). Decides each decision by its index, never by path."""
+def _render(toks):
+    out = ""
+    for i, (kind, k) in enumerate(toks):
+        if kind == "key":
+            out += k if i == 0 else "." + k
+        else:
+            out += "[%s]" % k
+    return out
+
+
+def canonical_path(path, spec):
+    """(canonical path, None) or (None, why). The path must round-trip specdiff's tokenizer exactly (the parser the
+    edit uses), start with a key, and use plain names; a list index whose item has an id becomes [id]."""
+    if not isinstance(path, str) or not path:
+        return None, "path is not a non-empty string"
+    toks = _tokens(path)
+    if not toks or toks[0][0] != "key" or _render(toks) != path:
+        return None, "path does not round-trip the spec path syntax (stray dots or brackets)"
+    if any(not _TOKEN_TEXT.match(str(k)) for kind, k in toks if kind != "idx"):
+        return None, "path has a name with characters outside [A-Za-z0-9_-]"
+    canon, cur = [], spec
+    for kind, k in toks:
+        if kind == "idx" and isinstance(cur, list) and k < len(cur) and isinstance(cur[k], dict) and cur[k].get("id"):
+            kind, k = "id", cur[k]["id"]
+        canon.append((kind, k))
+        if kind == "key":
+            cur = cur.get(k) if isinstance(cur, dict) else None
+        elif kind == "idx":
+            cur = cur[k] if isinstance(cur, list) and k < len(cur) else None
+        else:
+            hit = [x for x in cur if isinstance(x, dict) and x.get("id") == k] if isinstance(cur, list) else []
+            cur = hit[0] if len(hit) == 1 else None
+    return _render(canon), None
+
+
+def _overlaps(a, b):
+    return a == b or b.startswith(a + ".") or b.startswith(a + "[") or a.startswith(b + ".") or a.startswith(b + "[")
+
+
+def screen(data, brief, spec=None):
+    """(kept decisions with canonical paths, discarded [{index, path, why}]). Each decision is judged by its own
+    index, never by path. A fix.json whose decisions touch the same or nested canonical paths is rejected whole."""
+    spec = spec if spec is not None else {}
     if not isinstance(data, dict) or not isinstance(data.get("decisions"), list):
         return [], [{"why": "fix.json has no decisions list"}] if data is not None else []
     decisions = data["decisions"]
-    paths = [d.get("path") for d in decisions if isinstance(d, dict) and d.get("path")]
-    dup = sorted({p for p in paths if paths.count(p) > 1})
-    if dup:
-        return [], [{"why": "fix.json rejected: more than one decision on the same path", "paths": dup}]
-    kept, discarded = [], []
+    canon, discarded = {}, []
     for i, d in enumerate(decisions):
         path = d.get("path") if isinstance(d, dict) else None
+        c, why = canonical_path(path, spec)
+        if why:
+            discarded.append({"index": i, "path": path if isinstance(path, str) else repr(path), "why": why})
+        else:
+            canon[i] = c
+    cs = list(canon.values())
+    clash = sorted({x for x in cs for y in cs if x is not y and _overlaps(x, y)} |
+                   {x for x in cs if cs.count(x) > 1})
+    if clash:
+        return [], [{"why": "fix.json rejected: more than one decision on the same or nested paths", "paths": clash}]
+    kept = []
+    for i, d in enumerate(decisions):
+        if i not in canon:
+            continue
+        path = canon[i]
         why = None
-        if not isinstance(path, str) or not path.strip():
-            why = "no path"
-        elif _is_top_level(path) and path not in TOP_LEVEL_OK:
+        if len(_tokens(path)) == 1 and path not in TOP_LEVEL_OK:
             why = "top-level path (only %s may be replaced whole)" % ", ".join(TOP_LEVEL_OK)
         elif not str(d.get("quote") or "").strip():
             why = "no quote: a spec change must cite the brief"
@@ -123,10 +173,10 @@ def screen(data, brief):
         elif len(kept) >= MAX_DECISIONS:
             why = "over the cap of %d decisions per round" % MAX_DECISIONS
         if why:
-            discarded.append({"index": i, "path": path, "why": why,
-                              "quote": d.get("quote") if isinstance(d, dict) else None})
+            discarded.append({"index": i, "path": path, "why": why, "quote": d.get("quote")})
         else:
-            kept.append(d)
+            kept.append(dict(d, path=path))
+    discarded.sort(key=lambda x: x.get("index", -1))
     return kept, discarded
 
 
@@ -168,7 +218,7 @@ def _cut(v):
 
 def apply_decisions(spec, data, brief):
     """(patched spec, changes, discarded, warnings)."""
-    kept, discarded = screen(data, brief)
+    kept, discarded = screen(data, brief, spec)
     patched, applied, skipped, _ = apply_settle(spec, {"decisions": kept}, brief)
     discarded += skipped
     changes, warnings = [], []
@@ -218,7 +268,18 @@ def read_fix_json(work):
         return None, "fix.json is not a plain file in the work dir; ignored"
     if p.exists() and p.resolve().parent != Path(work).resolve():
         return None, "fix.json resolves outside the work dir; ignored"
-    return sdk.read_json(p)
+    if not p.exists():
+        return None, "fix.json was not written"
+
+    def no_dup(pairs):
+        keys = [k for k, _ in pairs]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate key in fix.json: %s" % sorted({k for k in keys if keys.count(k) > 1}))
+        return dict(pairs)
+    try:
+        return json.loads(p.read_text(), object_pairs_hook=no_dup), None
+    except ValueError as exc:
+        return None, "fix.json is not valid JSON: %s" % exc
 
 
 # ------------------------------------------------------------------ session

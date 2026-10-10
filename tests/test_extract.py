@@ -432,3 +432,29 @@ def test_brief_dirs_never_copy_secret_files(tmp_path):
         (d / name).write_text("x")
     assert [p.name for p in sdk.expand_briefs([d])] == ["codes.csv", "mail.md"]
     assert sdk.expand_briefs([d / "env.sh", d / ".env.local", d / "mail.md"]) == [d / "mail.md"]
+
+
+def test_every_session_kind_is_confined_to_its_workdir():
+    """S2: extract, oracle and settle sessions all get the PreToolUse confine hook; outside Read/Glob are denied."""
+    b = copy.deepcopy(A)
+    [e for e in b["events"] if e["id"] == "human"][0]["queue"] = "support"
+
+    def script(kind, cwd, prompt, n, c):
+        if kind.startswith("extract"):
+            write(cwd, "facts.json", FACTS)
+            write(cwd, "spec.json", A if kind == "extract-a" else b)
+    log = []
+    run(script, log)
+    opts = {k: o for ev, k, o in [x for x in log if x[0] == "connect"]}
+    assert {"extract-a", "extract-b", "oracle", "settle"} <= set(opts)
+    deny = lambda r: (r.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"
+    for kind, o in opts.items():
+        [m] = o.hooks["PreToolUse"]
+        hook = m.hooks[0]
+        call = lambda name, ti: asyncio.run(hook({"tool_name": name, "tool_input": ti}, "t", None))
+        assert deny(call("Read", {"file_path": str(ROOT / "env.example")})), kind
+        assert deny(call("Read", {"file_path": "../../env.sh"})), kind
+        assert deny(call("Glob", {"pattern": "{/etc,x}/*"})), kind
+        assert deny(call("Glob", {"pattern": "*", "path": str(ROOT)})), kind
+        assert not deny(call("Read", {"file_path": str(Path(o.cwd) / "openapi.json")})), kind
+        assert not deny(call("Glob", {"pattern": "*.md"})), kind

@@ -6,6 +6,8 @@ Every session runs locked down:
 - setting_sources [] (no user or project settings, hooks or CLAUDE.md);
 - strict MCP config with no servers (no claude.ai connectors);
 - deny rules on env.sh and .env files.
+- a PreToolUse hook (confine_hook, on by default for every session) denying any path outside the work dir,
+  Glob braces and symlinked directory prefixes.
 Every trace line goes through redact.scrub().
 """
 import asyncio
@@ -133,6 +135,30 @@ def _inside(root, p):
         return False
 
 
+_GLOB_CHARS = set("*?[]{}")
+
+
+def _glob_escape(root, base, pat):
+    """Why a Glob pattern could reach outside root, or None. Denied: braces (expansion can produce absolute or ..
+    parts), absolute patterns, .. parts, and a literal directory prefix that resolves outside root (a symlink)."""
+    if "{" in pat or "}" in pat:
+        return "uses braces"
+    if os.path.isabs(os.path.expanduser(pat)):
+        return "is absolute"
+    parts = Path(pat).parts
+    if ".." in parts:
+        return "contains .."
+    base = base if base.is_absolute() else root / base
+    prefix = base
+    for part in parts:
+        if set(part) & _GLOB_CHARS:
+            break
+        prefix = prefix / part
+        if not _inside(root, prefix):
+            return "has a directory prefix outside the work dir"
+    return None
+
+
 def confine_hook(work):
     """A PreToolUse hook that denies any tool call whose path resolves outside work.
 
@@ -151,14 +177,15 @@ def confine_hook(work):
             if v and not _inside(root, v):
                 return deny("%s is outside the work dir; only files in the current directory may be used" % key)
         pat = ti.get("pattern")
-        if (input_data or {}).get("tool_name") == "Glob" and pat and (
-                os.path.isabs(os.path.expanduser(pat)) or ".." in Path(pat).parts):
-            return deny("Glob patterns must stay inside the current directory")
+        if (input_data or {}).get("tool_name") == "Glob" and pat:
+            why = _glob_escape(root, Path(os.path.expanduser(str(ti.get("path") or root))), str(pat))
+            if why:
+                return deny("Glob pattern %s; patterns must stay inside the current directory" % why)
         return {}
     return hook
 
 
-def options_for(work, model, confine=False):
+def options_for(work, model, confine=True):
     from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
     extra = {"hooks": {"PreToolUse": [HookMatcher(matcher=None, hooks=[confine_hook(work)])]}} if confine else {}
     return ClaudeAgentOptions(
@@ -178,14 +205,14 @@ def options_for(work, model, confine=False):
 
 
 def _short(v, n=300):
-    s = v if isinstance(v, str) else json.dumps(v, default=str)
+    s = scrub(v if isinstance(v, str) else json.dumps(v, default=str))   # scrub before cutting: no secret prefix
     return s if len(s) <= n else s[:n] + "...(%d chars)" % len(s)
 
 
 class Session:
     """One Claude conversation in a work dir; ask() continues the same conversation."""
 
-    def __init__(self, work, purpose, trace, client_factory=None, model=None, confine=False):
+    def __init__(self, work, purpose, trace, client_factory=None, model=None, confine=True):
         self.work = Path(work)
         self.confine = confine
         self.purpose = purpose

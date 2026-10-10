@@ -104,7 +104,7 @@ def test_invented_quote_does_not_ride_on_a_real_one_same_path():
         write_fix(cwd, dec(value="real"), dec(value="invented", quote="the brief never says these words zzq"))
     (spec, info), _, _ = run(script)
     assert spec == A and info["changes"] == []
-    assert "same path" in info["discarded"][0]["why"]
+    assert "same or nested" in info["discarded"][0]["why"]
 
 
 def test_decisions_kept_by_index_not_path():
@@ -222,5 +222,64 @@ def test_confine_hook_denies_outside_paths(tmp_path):
     assert deny(call("Read", {"file_path": "link/x"}))
 
 
-def test_extractor_sessions_not_confined(tmp_path):
-    assert getattr(sdk.options_for(tmp_path, "m"), "hooks", None) in (None, {})
+def test_every_session_confined_by_default(tmp_path):
+    hooks = sdk.options_for(tmp_path, "m").hooks
+    assert hooks and "PreToolUse" in hooks
+
+
+def test_glob_braces_and_symlinked_prefix_denied(tmp_path):
+    """probe_hook.py: brace expansion and a symlinked directory prefix escaped the Glob check."""
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "etclink").symlink_to("/etc")
+    hook = sdk.confine_hook(work)
+    call = lambda ti: asyncio.run(hook({"tool_name": "Glob", "tool_input": ti}, "t", None))
+    deny = lambda r: (r.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"
+    assert deny(call({"pattern": "{/etc,x}/*"}))
+    assert deny(call({"pattern": "{..,x}/*"}))
+    assert deny(call({"pattern": "etclink/*"}))
+    assert deny(call({"pattern": "etclink/**/passwd"}))
+    assert not deny(call({"pattern": "*.md"}))
+    assert not deny(call({"pattern": "**/*.json"}))
+
+
+# ---- S1: path parser differential (probe_fix.py)
+
+PQ = "always greet the customer politely by name"
+PBRIEF = "The agent must always greet the customer politely by name. Late fees apply after five days."
+PSPEC = {"persona": {"name": "A"}, "events": [{"id": "paid", "say": "x"}, {"id": "dispute", "say": "y"}], "outcomes": []}
+
+
+@pytest.mark.parametrize("path", [".persona", "persona.", "..persona", "[persona]", "persona..name", "events[paid]..say",
+                                  "events[ paid ].say", "events[paid]x", ""])
+def test_paths_must_round_trip_the_tokenizer(path):
+    p, ch, disc, _ = fix.apply_decisions(PSPEC, {"decisions": [{"path": path, "value": {"pwned": 1}, "quote": PQ}]}, PBRIEF)
+    assert p == PSPEC and ch == []
+    assert len(disc) == 1
+
+
+@pytest.mark.parametrize("a,b", [("events[paid].say", "events[0].say"), ("events[paid]", "events[paid].say"),
+                                 ("events[0]", "events[paid].say")])
+def test_duplicates_checked_on_canonical_paths(a, b):
+    p, ch, disc, _ = fix.apply_decisions(PSPEC, {"decisions": [{"path": a, "value": "one", "quote": PQ},
+                                                               {"path": b, "value": "two", "quote": PQ}]}, PBRIEF)
+    assert p == PSPEC and ch == [] and "same or nested" in disc[0]["why"]
+
+
+def test_index_path_canonicalised_and_before_correct():
+    p, ch, disc, _ = fix.apply_decisions(PSPEC, {"decisions": [{"path": "events[1].say", "value": "z", "quote": PQ}]}, PBRIEF)
+    assert disc == [] and ch[0]["path"] == "events[dispute].say"
+    assert ch[0]["before"] == "y" and ch[0]["after"] == "z"
+    assert p["events"][1]["say"] == "z"
+
+
+def test_non_string_paths_rejected_without_crash():
+    kept, disc = fix.screen({"decisions": [{"path": ["a"], "quote": PQ}, {"path": ["a"], "quote": PQ},
+                                           {"path": 3, "quote": PQ}]}, PBRIEF, PSPEC)
+    assert kept == [] and len(disc) == 3
+
+
+def test_duplicate_json_keys_in_fix_json_rejected(tmp_path):
+    (tmp_path / "fix.json").write_text('{"decisions":[{"path":"a.b","value":1,"quote":"q"}],"decisions":[]}')
+    data, err = fix.read_fix_json(tmp_path)
+    assert data is None and "duplicate key" in err
