@@ -378,70 +378,244 @@ except Exception:
 VERIFY_PRE = r'''
 try:
     import re
+    import datetime
     MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september',
               'october', 'november', 'december']
-    FILLER = ['the', 'of', 'in', 'on', 'born', 'i', 'was', 'its', 'it', 'is', 'and', 'my', 'birthday', 'year']
-    FIX = r'(?:sorry|i mean|i meant|actually|correction|no wait|wait|rather|scratch that)'
+    MON3 = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+    UNITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
+    TEENS = ['ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+    ORD_UNITS = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth']
+    ORD_TEENS = ['tenth', 'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth',
+                 'eighteenth', 'nineteenth']
+    ORD_TENS = ['', '', 'twentieth', 'thirtieth']
+    FIX = r'\b(?:sorry|i mean|i meant|actually|correction|no wait|wait|rather|scratch that|no)\b'
+
     def _month(w):
-        w = w.lower()
-        if len(w) < 3:
-            return 0
-        for i, m in enumerate(MONTHS):
-            if m[:3] == w[:3]:
-                return i + 1
+        w = w.lower().rstrip('.')
+        if w in MONTHS:
+            return MONTHS.index(w) + 1
+        if w == 'sept':
+            return 9
+        if w in MON3:
+            return MON3.index(w) + 1
         return 0
-    def _date(a, order):
-        a = re.sub(r'^(?:the\s+)', '', a.strip().rstrip('.'), flags=re.I)
-        m = re.match(r'^(\d{4}),?\s+([A-Za-z].*)$', a)
-        if m:
-            a = m.group(2) + ' ' + m.group(1)
-        if re.match(r'^\d{4}-\d{2}-\d{2}$', a):
-            return a
-        m = re.match(r'^(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+([A-Za-z]+)\.?,?\s+(\d{4})$', a)
-        if m and _month(m.group(2)):
-            return '%s-%02d-%02d' % (m.group(3), _month(m.group(2)), int(m.group(1)))
-        m = re.match(r'^([A-Za-z]+)\.?\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$', a)
-        if m and _month(m.group(1)):
-            return '%s-%02d-%02d' % (m.group(3), _month(m.group(1)), int(m.group(2)))
-        m = re.match(r'^(\d{1,4})[./ -](\d{1,2})[./ -](\d{1,4})$', a)
-        if m:
-            x, y, z = m.group(1), m.group(2), m.group(3)
-            if order == 'YMD' or len(x) == 4:
-                yr, mo, dy = x, y, z
-            elif order == 'MDY':
-                yr, mo, dy = z, x, y
+
+    def _atom(w):
+        """(kind, value) of one number word: u unit, t teen, x tens, o ordinal, h hundred, k thousand, m double/triple."""
+        if w in UNITS:
+            return 'u', UNITS.index(w)
+        if w in TEENS:
+            return 't', 10 + TEENS.index(w)
+        if w in TENS:
+            return 'x', 10 * TENS.index(w)
+        if w in ORD_UNITS:
+            return 'o', ORD_UNITS.index(w)
+        if w in ORD_TEENS:
+            return 'o', 10 + ORD_TEENS.index(w)
+        if w in ORD_TENS:
+            return 'o', 10 * ORD_TENS.index(w)
+        if w == 'hundred':
+            return 'h', 100
+        if w == 'thousand':
+            return 'k', 1000
+        if w in ('double', 'triple'):
+            return 'm', 2 if w == 'double' else 3
+        return None, 0
+
+    def _small(at, i):
+        """A number below 100 at at[i]: (value, kind, next index). kind: d one digit, 2 two digits, o ordinal."""
+        k, v = at[i]
+        if k == 'x':
+            if i + 1 < len(at) and at[i + 1][0] == 'u' and at[i + 1][1] > 0:
+                return v + at[i + 1][1], '2', i + 2
+            if i + 1 < len(at) and at[i + 1][0] == 'o' and 0 < at[i + 1][1] < 10:
+                return v + at[i + 1][1], 'o', i + 2
+            return v, '2', i + 1
+        if k == 't':
+            return v, '2', i + 1
+        if k == 'o':
+            return v, 'o', i + 1
+        return v, 'd', i + 1
+
+    def _convert(ws):
+        """Number words of one run -> list of (digit string, kind)."""
+        at = [_atom(w) if w not in ('oh', 'o') else ('z', 0) for w in ws if w != 'and']
+        out = []
+        i = 0
+        while i < len(at):
+            k, v = at[i]
+            if k == 'm':
+                if i + 1 < len(at) and at[i + 1][0] in ('u', 'z'):
+                    out += [(str(at[i + 1][1]), 'd')] * v
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if k == 'z':
+                if out and out[-1][1] == '2' and i + 1 < len(at) and at[i + 1][0] == 'u':
+                    out.append(('0' + str(at[i + 1][1]), 'z'))
+                    i += 2
+                else:
+                    out.append(('0', 'd'))
+                    i += 1
+                continue
+            if k in ('h', 'k'):
+                i += 1
+                continue
+            n, kind, i = _small(at, i)
+            if kind != 'o' and i < len(at) and at[i][0] in ('h', 'k'):
+                total = 0
+                while True:
+                    if i < len(at) and at[i][0] == 'h':
+                        n, i = n * 100, i + 1
+                    if i < len(at) and at[i][0] == 'k':
+                        total, n, i = total + n * 1000, 0, i + 1
+                        if i < len(at) and at[i][0] in ('u', 't', 'x', 'o'):
+                            n, kind, i = _small(at, i)
+                            if kind != 'o' and i < len(at) and at[i][0] == 'h':
+                                continue
+                        break
+                    if i < len(at) and at[i][0] in ('u', 't', 'x', 'o'):
+                        m, kind, i = _small(at, i)
+                        n += m
+                    break
+                out.append((str(total + n), 'o' if kind == 'o' else 'n'))
+                continue
+            out.append((str(n), kind))
+        # spoken pairs, right to left: "nineteen eighty-eight" -> 1988, "forty-four ten" -> 4410, "nineteen oh four" -> 1904
+        j = len(out) - 1
+        while j >= 1:
+            if out[j][1] in ('2', 'z') and out[j - 1][1] == '2':
+                out[j - 1:j + 1] = [(out[j - 1][0] + out[j][0], 'n')]
+                j -= 2
             else:
-                yr, mo, dy = z, y, x
-            if len(yr) == 4 and 1 <= int(mo) <= 12 and 1 <= int(dy) <= 31:
-                return '%s-%02d-%02d' % (yr, int(mo), int(dy))
-        return a
-    def _date_ok(a, v):
-        """A date is incomplete only without a 4-digit year (a lone year, or a year with only a month, is a part)."""
-        if re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-            return True
-        if not re.search(r'(?<!\d)\d{4}(?!\d)', a):
-            return False
-        rest = re.sub(r'(?<!\d)\d{4}(?!\d)', ' ', a, count=1)
-        if re.search(r'\d', rest):
-            return True
-        words = [w for w in re.findall(r'[a-z]+', rest.lower()) if w not in FILLER]
-        return len(words) >= 2 or (len(words) == 1 and not _month(words[0]))
+                j -= 1
+        return out
+
+    def _words(text):
+        """Number words to digits ("nineteen eighty-eight" -> 1988, "fourteenth" -> 14). Never raises."""
+        tk = re.findall(r'[A-Za-z]+|\d+|[^A-Za-z\d]+', text)
+        low = [t.lower() for t in tk]
+        isw = [t.isalpha() for t in tk]
+
+        def nb(i, step):
+            j = i + step
+            while 0 <= j < len(tk) and not isw[j] and not tk[j].isdigit():
+                if tk[j].strip(' -') != '':
+                    return None
+                j += step
+            return j if 0 <= j < len(tk) and isw[j] else None
+
+        def num(i):
+            w = low[i]
+            if w in ('first', 'second'):
+                n1, p1 = nb(i, 1), nb(i, -1)
+                if p1 is not None and low[p1] == 'the':
+                    p1 = nb(p1, -1)
+                return (n1 is not None and (low[n1] == 'of' or _month(low[n1]) > 0)) or (p1 is not None and _month(low[p1]) > 0)
+            return _atom(w)[0] is not None
+
+        isn = [isw[i] and num(i) for i in range(len(tk))]
+        for i in range(len(tk)):
+            if isw[i] and low[i] in ('oh', 'o', 'and'):
+                n1, p1 = nb(i, 1), nb(i, -1)
+                isn[i] = n1 is not None and p1 is not None and isn[n1] and isn[p1] if low[i] == 'and' else \
+                    ((n1 is not None and isn[n1]) or (p1 is not None and isn[p1]))
+        out = []
+        i = 0
+        while i < len(tk):
+            if not isn[i]:
+                out.append(tk[i])
+                i += 1
+                continue
+            run = [low[i]]
+            j = i + 1
+            while True:
+                n1 = nb(j - 1, 1)
+                if n1 is None or not isn[n1]:
+                    break
+                run.append(low[n1])
+                j = n1 + 1
+            if run[-1] == 'and':
+                run.pop()
+            out.append(' '.join(s for s, k in _convert(run)))
+            i = j
+        return ''.join(out)
+
+    def _dtoks(s):
+        out = []
+        for m in re.finditer(r'[A-Za-z]+\.?|\d+', s):
+            t = m.group(0)
+            if t.isdigit():
+                out.append(('N', t))
+            elif _month(t):
+                out.append(('M', _month(t)))
+        return out
+
+    def _ymd(y, mo, d):
+        try:
+            return datetime.date(int(y), int(mo), int(d)).isoformat()
+        except Exception:
+            return None
+
+    def _triple(ts, order):
+        """ISO date, 'RAW' (a whole numeric date whose order does not fit, e.g. a swapped day and month), or None."""
+        ms = [v for k, v in ts if k == 'M']
+        ns = [v for k, v in ts if k == 'N']
+        if len(ms) == 1 and len(ns) == 2:
+            ys = [x for x in ns if len(x) == 4]
+            ds = [x for x in ns if len(x) <= 2]
+            if len(ys) == 1 and len(ds) == 1:
+                return _ymd(ys[0], ms[0], ds[0])
+            return None
+        if ms or len(ns) != 3:
+            return None
+        x, y, z = ns
+        if len(x) == 4 and len(y) <= 2 and len(z) <= 2:
+            return _ymd(x, y, z)
+        if len(z) != 4 or len(x) > 2 or len(y) > 2:
+            return None
+        r = _ymd(z, x, y) if order == 'MDY' else _ymd(z, y, x)
+        if r:
+            return r
+        return 'RAW' if (_ymd(z, y, x) or _ymd(z, x, y)) else None
+
+    def _date(a, order, alone):
+        segs = [s for s in re.split(FIX, a, flags=re.I) if _dtoks(s)]
+        if not segs or (len(segs) > 1 and not alone):
+            return a, False
+        ts = _dtoks(segs[-1])
+        if not ts or len(ts) % 3 or (len(ts) > 3 and not alone):
+            return a, False
+        r = None
+        for k in range(0, len(ts), 3):
+            # several whole dates in one answer: each must be a date, the last one counts
+            r = _triple(ts[k:k + 3], order)
+            if r is None:
+                return a, False
+        if r == 'RAW':
+            # a whole numeric date in the wrong order goes to the bank as said (it answers with a non-counting hint)
+            return a, alone and len(segs) == 1 and len(ts) == 3
+        return r, True
+
     def _digits(a, n, alone):
-        dg = ''.join(ch for ch in a if ch.isdigit())
-        if alone and n and len(dg) > n:
-            # explicit self-correction inside one answer: the value after the last correction word counts
-            parts = re.split(FIX, a, flags=re.I)
-            if len(parts) > 1:
-                dg = ''.join(ch for ch in parts[-1] if ch.isdigit())
-        if n:
-            return dg, len(dg) == n
-        return dg, bool(dg)
+        segs = [s for s in re.split(FIX, a, flags=re.I) if re.search(r'\d', s)]
+        if not segs or (len(segs) > 1 and not alone):
+            return '', False
+        runs = re.findall(r'\d+', segs[-1])
+        if alone and n:
+            full = [r for r in runs if len(r) == n]
+            if len(full) >= 2:
+                return full[-1], True
+        dg = ''.join(runs)
+        return dg, (len(dg) == n if n else bool(dg))
+
     def _norm(a, q, alone):
         """(normalised answer, complete?) for one answer text."""
         fm = q.get('format')
         if fm == 'date':
-            v = _date(a, q.get('date_order') or 'DMY')
-            return v, _date_ok(a, v)
+            return _date(a, q.get('date_order') or 'DMY', alone)
         if fm == 'digits':
             return _digits(a, int(q.get('length') or 0), alone)
         if fm == 'year':
@@ -449,6 +623,7 @@ try:
         if fm == 'postcode':
             return a.upper().replace(' ', ''), True
         return a, True
+
     vars['id_incomplete'] = 'no'
     b = config.get('body')
     if isinstance(b, dict):
@@ -457,29 +632,35 @@ try:
         a = str(b.get('answer') if b.get('answer') is not None else '').strip()
         part = str(vars.get('id_partial') or '').strip()
         vars['id_partial_seen'] = part
-        # a part collected for another question, or already used in a checked call, is stale: never combine it
-        if part and (part == str(vars.get('id_partial_spent') or '') or str(vars.get('id_partial_field') or fld) != fld):
+        # combine only parts the extraction tied to THIS question and that no checked call has used yet
+        if part and (part == str(vars.get('id_partial_spent') or '') or str(vars.get('id_partial_field') or '') != fld):
             part = ''
         if q and a:
-            cands = [(a, True)]
-            if part:
-                # this answer is already one of the recorded pieces: try the parts on their own, never append it twice
-                if re.search(r'(?<![0-9A-Za-z])' + re.escape(a) + r'(?![0-9A-Za-z])', part, flags=re.I):
-                    cands.append((part, False))
-                else:
-                    cands.append((part + ' ' + a, False))
-            v, ok = a, False
-            for c, alone in cands:
-                v2, ok2 = _norm(c, q, alone)
-                if ok2:
-                    v, ok = v2, True
-                    break
+            ok = False
+            v = a
+            try:
+                conv = q.get('format') in ('date', 'digits', 'year')
+                a2 = _words(a) if conv else a
+                p2 = _words(part) if conv and part else part
+                cands = [(a2, True)]
+                if p2:
+                    if re.search(r'(?<![0-9A-Za-z])' + re.escape(a2) + r'(?![0-9A-Za-z])', p2, flags=re.I):
+                        # this answer is already one of the recorded pieces: try the parts on their own
+                        cands.append((p2, False))
+                    elif not re.search(FIX, p2 + ' ' + a2, flags=re.I):
+                        cands += [(p2 + ' ' + a2, False), (a2 + ' ' + p2, False)]
+                for c, alone in cands:
+                    v2, ok2 = _norm(c, q, alone)
+                    if ok2:
+                        v, ok = v2, True
+                        break
+            except Exception:
+                ok = False
             if ok:
                 b['answer'] = v
             else:
                 # a partial answer must not reach the bank as an answer (a short digit string counts as wrong)
                 vars['id_incomplete'] = 'yes'
-                vars['id_partial_field'] = fld
                 b['field'] = 'incomplete_answer'
                 b['answer'] = ''
 except Exception:
@@ -508,9 +689,10 @@ try:
                                     UNREADABLE + '), keep the part already given, and then call verify_identity once with the whole answer.')
         elif technical:
             d['what_to_do_next'] = 'The security service had a technical problem and nothing was checked. Say so in one short sentence and call verify_identity again with the same answer.'
-        else:
-            # the bank checked this answer: the parts collected so far are used up, never combine them into the next answer
+        if not incomplete:
+            # any result but INCOMPLETE ends this answer: the parts collected so far are used up, never combine them again
             vars['id_partial_spent'] = str(vars.get('id_partial_seen') or '')
+            vars['id_partial'] = ''
             vars['id_partial_field'] = ''
         if incomplete or technical:
             pass
@@ -1184,6 +1366,11 @@ HOW TO GET A PROMISE
                 "description": ("The parts of the answer to the security question currently being asked, as said so far across the customer's "
                                 "messages, combined in the order said (e.g. \"14 March\" then \"1988\" gives \"14 March 1988\"; \"44\" then \"10\" gives \"4410\"). "
                                 "After a self-correction keep only the corrected value. Empty when a new question is asked."),
+            }, {
+                "name": "id_partial_field", "type": "string", "min_confidence": 0.6,
+                "enum_values": [x["field"] for x in qs],
+                "description": ("Which security question the parts in id_partial answer: the question the agent asked most recently "
+                                "(%s)." % "; ".join("%s: %s" % (x["field"], q(x["ask"])) for x in qs)),
             }] + self.seen_vars("identity"),
             "max_node_turns": 20, "max_turn_transition": declined,
             "transitions": [
