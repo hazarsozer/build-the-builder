@@ -335,6 +335,21 @@ def test_second_extraction_gets_bounded_wait_and_its_disk_spec_is_kept(monkeypat
     assert any(k == "extract_interrupted" for k, _ in trace.events)
 
 
+def test_second_wait_default_is_bounded_by_the_phase_cap(monkeypatch):
+    assert ex.SECOND_WAIT_S == 90 and ex.PHASE_S == 270    # ruling: gate data showed a 58 s gap
+    monkeypatch.setattr(ex, "PHASE_S", 0.5)                 # the 90 s wait never outlasts the phase
+
+    def script(kind, cwd, prompt, n, c):
+        write(cwd, "facts.json", FACTS)
+        write(cwd, "spec.json", A)
+        if kind == "extract-b":
+            c.delay = 30
+    t0 = time.monotonic()
+    spec, errs, info, _ = run(script, [], use_oracle=False)
+    assert time.monotonic() - t0 < 5
+    assert errs == [] and info["failures"]["b"] == "cancelled (time budget)"
+
+
 def test_phase_deadline_cuts_everything_and_skips_settle():
     b = _human_queue(A, "support")
 
