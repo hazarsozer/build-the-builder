@@ -169,6 +169,27 @@ def test_seed_from_public_case(bank):
     assert bank.raw("/v1/practice/sessions", {"case": "PUB-99"}) == (404, {"ok": False, "error": "unknown practice case"})
 
 
+def test_conformance_replay_and_diff():
+    sys.path.insert(0, str(ROOT / "tools"))
+    import conformance
+    srv = server.serve(0, OPENAPI)
+    try:
+        b = srv.bank
+        cid = b.session({"case": "PUB-10"})[1]["variables"]["customer_id"]
+        for tool, args in [("verify_identity", {"field": "date_of_birth", "answer": "1989-02-23"}), ("verify_identity", {"field": "phone_last4", "answer": "9904"}),
+                           ("create_promise", {"product_id": "p1", "amount": 365, "date": "2026-10-16"}),
+                           ("create_promise", {"product_id": "p1", "amount": 365, "date": "2026-10-16"}), ("close_call", {"outcome": "promise"})]:
+            b.tool(tool, {"customer_id": cid, **args})
+        led = b.ledger(cid)[1]
+        assert conformance.replay("PUB-10", led["calls"], b) == []
+        led["calls"][2]["status"] = 200            # a recorded answer the bank would not give again
+        assert [m[0] for m in conformance.replay("PUB-10", led["calls"], b)] == [3]
+        other = dict(led, outcome="no_promise", promises=[])
+        assert set(conformance.diff(conformance.scored(led), conformance.scored(other))) == {"outcome", "promises"}
+    finally:
+        srv.shutdown()
+
+
 def test_tunnel_parses_url():
     from bank import tunnel
     line = "2026-10-10T12:00:00Z INF |  https://abc-def-ghi.trycloudflare.com                                  |"
