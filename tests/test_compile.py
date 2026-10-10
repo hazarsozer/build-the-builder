@@ -23,7 +23,8 @@ def test_structure():
 
 def test_no_brief_constants_in_compiler_source():
     src = open("builder/compile.py").read() + open("builder/nodes.py").read()
-    for s in ["2026-10-26", "minimum_payment", "restructuring", "Freya Bank", "date_of_birth", "phone_last4"]:
+    for s in ["2026-10-26", "minimum_payment", "restructuring", "Freya Bank", "date_of_birth", "phone_last4",
+              "collections", "credit card", "Freya", "hardship", "2026-"]:
         assert s not in src
 
 
@@ -233,3 +234,75 @@ def test_close_node_farewell_fills_vars():
     v = {}
     exec(_code(w["nodes"]["close_refused"]), {"vars": v})
     assert "  " not in v["farewell"] and " ," not in v["farewell"] and " ." not in v["farewell"]
+
+
+# ---------------------------------------------------------------- fix round 1
+
+def _neg_enum_desc(w):
+    return w["nodes"]["negotiate"]["extraction_schema"][0]
+
+
+def test_any_stage_excludes_third_party():
+    w = wf()
+    assert "transfer_general" not in [t["target_node"] for t in w["nodes"]["third_party"]["transitions"]]
+    assert "human" not in w["nodes"]["third_party"]["extraction_schema"][0]["enum_values"]
+    s = copy.deepcopy(A)
+    [e for e in s["events"] if e["id"] == "human"][0]["stages"] = ["any", "third_party"]
+    assert "transfer_general" in [t["target_node"] for t in C(s, OA)["nodes"]["third_party"]["transitions"]]
+
+
+def test_banned_offer_overlapping_transfer_trigger_is_not_excluded_from_it():
+    e = _neg_enum_desc(wf())
+    desc = e["description"]
+    restr = desc.split("restructuring:")[1].split(" human:")[0]
+    assert "instalment" not in restr.split("Saying")[1]
+    disc = desc.split("discount_request:")[1]
+    assert "instalment" not in disc and "discount" in disc
+    assert "instalment" not in wf()["nodes"]["negotiate"]["task_message"].split("If asked for")[1].split("\n")[0]
+
+
+def test_counted_event_is_a_tool_call_transition():
+    n = wf()["nodes"]["negotiate"]
+    assert "not_talk" not in n["extraction_schema"][0]["enum_values"]
+    tc = [t for t in n["transitions"] if t.get("is_tool_call") and t["target_node"] == "close_not_talk"]
+    assert tc and "second time" in tc[0]["description"]
+    assert "transition_to_close_not_talk" in n["task_message"]
+    assert "paid" in n["extraction_schema"][0]["enum_values"]
+
+
+def test_identity_formats_year_and_postcode():
+    s = copy.deepcopy(A)
+    s["identity"]["questions"] = [
+        {"field": "postcode", "ask": "What is your postcode?", "format": "postcode"},
+        {"field": "birth_year", "ask": "What year were you born?", "format": "year"}]
+    oa = copy.deepcopy(OA)
+    oa["paths"]["/verify_identity"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["field"]["enum"] = ["postcode", "birth_year"]
+    w = C(s, oa)
+    n = w["nodes"]["identity"]
+    tool = n["tools"][0]
+    consts = [l for l in tool["post_process_code"].split("\n") if l.startswith(("UNREADABLE", "NEXT_Q"))]
+    descs = [p.get("description", "") for p in tool["function"]["parameters"]["properties"]["body"]["properties"].values()]
+    blob = json.dumps([n["task_message"], n["on_enter"]["text"], consts, descs])
+    assert "None" not in blob
+    assert "postcode, letter by letter" in blob and "four-digit year" in blob
+
+
+def test_extra_rules_naming_other_tools_are_dropped():
+    s = copy.deepcopy(A)
+    s["extra_rules"] += [{"stage": "identity", "text": "After both questions pass, call get_account."},
+                         {"stage": "any", "text": "Every call ends with exactly one close_call."},
+                         {"stage": "negotiate", "text": "Call create_promise once per product."}]
+    w = C(s, OA)
+    assert "get_account" not in w["nodes"]["identity"]["task_message"]
+    assert "close_call" not in w["system_prompt"]
+    assert "Call create_promise once per product." in w["nodes"]["negotiate"]["task_message"]
+
+
+def test_negotiate_prompt_size():
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4000
+
+
+def test_reference_specs_still_valid():
+    from builder.validate import validate
+    for f in ("specs/reference/spec-a.json", "specs/reference/spec-b.json"):
+        assert validate(json.load(open(f)), OA) == [], f

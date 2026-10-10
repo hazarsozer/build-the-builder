@@ -138,6 +138,15 @@ def lint(workflow, spec):
                     seen.add(p)
                     q.append(p)
         errs += ["node %s cannot reach goodbye" % k for k in nodes if k not in seen]
+    start = workflow.get("initial_node")
+    if start in nodes:
+        seen, q = {start}, deque([start])
+        while q:
+            for t in _targets(nodes[q.popleft()]):
+                if t in nodes and t not in seen:
+                    seen.add(t)
+                    q.append(t)
+        errs += ["node %s is unreachable from %s" % (k, start) for k in nodes if k not in seen]
 
     # 4. close nodes: farewell ends with goodbye; outcome/reason known
     enum = []

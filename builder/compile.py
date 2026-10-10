@@ -1,4 +1,4 @@
-"""Compile a policy spec + the bank's openapi into a Freya workflow.
+"""Compile a policy spec + the bank's openapi into a workflow for the voice platform.
 
     compile(spec, openapi, base_url=None) -> workflow dict
 
@@ -25,6 +25,13 @@ from builder.nodes import (all_of, always, api_tool, body_enum, close_node, code
                            goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
+# "any" means the customer's own stages; a third party is only covered when a spec names it.
+ANY_STAGES = ["opening", "identity", "negotiate"]
+# Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
+STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
+               "negotiate": {"create_promise"}, "any": set()}
+TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
+_STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event"}
 # Runtime names usable in spec sentences -> the workflow variable that holds them.
 ALIAS = {"past_due": "past_due_text", "days_late": "days_late_text", "floor": "floor_text",
@@ -61,7 +68,7 @@ _PH = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def tpl(s):
-    """Spec sentence -> Freya text: {name} becomes {{var}}; amount/date become plain words."""
+    """Spec sentence -> platform text: {name} becomes {{var}}; amount/date become plain words."""
     def rep(m):
         k = m.group(1)
         if k in PROSE:
@@ -103,7 +110,17 @@ def subj(who, trigger):
 
 def stages_of(ev):
     st = ev.get("stages") or []
-    return list(STAGES) if "any" in st else [s for s in st if s in STAGES]
+    out = [s for s in STAGES if s in st or ("any" in st and s in ANY_STAGES)]
+    return out
+
+
+def _words(text):
+    """Content words, singular, for overlap checks."""
+    out = set()
+    for w in re.findall(r"[a-z]+", (text or "").lower()):
+        if len(w) >= 4 and w not in _STOP:
+            out.add(w[:-1] if w.endswith("s") else w)
+    return out
 
 
 def rules_for(items, stage, key="stage"):
@@ -550,6 +567,20 @@ class _Compiler:
             skip.add(self.fail_ev)
         return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip]
 
+    def banned_for(self, stage):
+        """Banned offers minus those that share a content word with a transfer event's trigger in this stage
+        (e.g. "instalment plan" vs a plan/instalments transfer), so asking for them routes to the transfer."""
+        trig = set()
+        for e in self.stage_events(stage):
+            if e["action"] in TRANSFER_ACTIONS:
+                trig |= _words(e["trigger"])
+        return [b for b in self.s["negotiation"].get("banned_offers") or [] if not (_words(b) & trig)]
+
+    def counted_close(self, stage, ev):
+        """A close event that must happen N>1 times: extraction cannot count, so the dialogue model calls it."""
+        return (stage == "negotiate" and ev["action"] in ("close", "note_and_continue")
+                and (ev.get("times") or 1) > 1)
+
     def fallback_close(self, stage, prefer):
         for p in prefer:
             if self.has(p):
@@ -615,10 +646,16 @@ class _Compiler:
         """(enum values, description parts, transitions) for the events of a conversation stage."""
         values, desc, trans = [], [], []
         who = "the customer" if stage == "negotiate" else "the person"
-        banned = self.s["negotiation"].get("banned_offers") or []
+        banned = self.banned_for(stage)
         for ev in self.stage_events(stage):
             eid, act, trig = ev["id"], ev["action"], ev["trigger"]
             times = ev.get("times") or 1
+            if self.counted_close(stage, ev):
+                nth = "" if ("second" in trig or "twice" in trig) else " (for the %s time)" % ORD.get(times, str(times))
+                trans.append({"target_node": self.close_key(eid), "is_tool_call": True,
+                              "description": "Call this when the customer %s%s. The goodbye is spoken automatically." % (trig, nth),
+                              "condition": {"operator": "matches_intent", "description": "The customer %s%s" % (trig, nth)}})
+                continue
             extra = (" It must be the %s time; an earlier time is NOT %s." % (ORD.get(times, str(times)), eid)
                      if times > 1 and "second" not in trig and "twice" not in trig else "")
             if act == "insist_once_then_transfer":
@@ -638,8 +675,8 @@ class _Compiler:
                 trans.append(go(self.close_key(eid), eid + ": transfer declined", all_of(eq(EXTRACT_VAR[stage], eid + "_declined"), eq(eid + "_seen", "yes"))))
             elif act == "transfer":
                 values.append(eid)
-                not_it = ("Saying they cannot pay, that the amount is too much, or asking for %s is NOT %s."
-                          % (join_or(with_article(b) for b in banned), eid)) if stage == "negotiate" else ""
+                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s."
+                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid)) if stage == "negotiate" else ""
                 desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, trig, extra, not_it)) if subj(who, trig) != trig else ("%s: %s.%s %s" % (eid, trig, extra, not_it)))
                 t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
@@ -667,8 +704,11 @@ class _Compiler:
                     ("say %s" % q(tpl(ev["say"])) + ("" if ev["say"].rstrip()[-1:] in ".?!" else ".")) if ev.get("say") else "ask once whether you can help first.",
                     ins or "Transfer only if they insist."))
             elif ev["action"] == "offer_transfer_else_close":
-                extra = " This comes before persuasion: make no persuasion attempt." if ev.get("overrides_persuasion") else ""
+                extra = (" This comes before persuasion: make no persuasion attempt."
+                         if ev.get("overrides_persuasion") and "persuasion" not in ins else "")
                 lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s" % (subj("the customer", ev["trigger"]), ins, extra))
+            elif self.counted_close(stage, ev):
+                lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.close_key(ev["id"]), (" " + ins) if ins else ""))
             elif ins:
                 lines.append("If %s: %s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins))
         return lines
@@ -678,7 +718,17 @@ class _Compiler:
                 for r in rules_for(self.s.get("say_rules", []), stage, key="stages")]
 
     def extra(self, stage):
-        return [tpl(r["text"]) for r in rules_for(self.s.get("extra_rules", []), stage)]
+        """Extra rules of a stage, minus any that names a tool the stage's model does not have
+        (close_call and engine-run calls such as get_account are never the model's to call)."""
+        tools = {p.strip("/") for p in self.oa.get("paths", {})}
+        mine = STAGE_TOOLS.get(stage, set())
+        out = []
+        for r in rules_for(self.s.get("extra_rules", []), stage):
+            named = {t for t in tools if re.search(r"\b%s\b" % re.escape(t), r["text"])}
+            if named - mine:
+                continue
+            out.append(tpl(r["text"]))
+        return out
 
     # ---- prompts
     def system_prompt(self):
@@ -700,7 +750,7 @@ class _Compiler:
             lines.append('- Never ask "how much can you pay?".')
         ex = self.extra("any")
         if ex:
-            lines.append("Rules from the brief (steps that are not one of your tools, such as closing the call, run automatically):")
+            lines.append("Rules from the brief:")
             lines += ["- " + l for l in ex]
         return "\n".join(lines)
 
@@ -759,9 +809,36 @@ class _Compiler:
                   "YMD": ('"1979/11/02" -> 1979-11-02', "year, then month, then day")}[order]
             return ('field %s with the answer as YYYY-MM-DD. Convert spoken dates yourself (e.g. "14 March 1988" -> 1988-03-14). '
                     "A date given only as numbers is %s (%s)" % (qq["field"], ex[1], ex[0]))
-        if f == "digits":
-            return "field %s with exactly %s digits" % (qq["field"], NUM.get(qq.get("length"), str(qq.get("length"))))
+        if f in ("digits", "year", "postcode") and (f != "digits" or qq.get("length")):
+            return "field %s with %s" % (qq["field"], self.format_short(qq) if f != "digits"
+                                         else "exactly %s digits" % NUM.get(qq["length"], str(qq["length"])))
         return "field %s with the answer as the customer said it" % qq["field"]
+
+    @staticmethod
+    def format_words(x):
+        f = x.get("format")
+        if f == "date":
+            return "a date as day, month as a word, year"
+        if f == "digits":
+            return ("the %s digits" % NUM.get(x["length"], str(x["length"]))) if x.get("length") else "the digits"
+        if f == "year":
+            return "the four-digit year"
+        if f == "postcode":
+            return "the postcode, letter by letter"
+        return "the answer"
+
+    @staticmethod
+    def format_short(x):
+        f = x.get("format")
+        if f == "date":
+            return "YYYY-MM-DD"
+        if f == "digits":
+            return ("%s digits" % x["length"]) if x.get("length") else "digits only"
+        if f == "year":
+            return "a four-digit year"
+        if f == "postcode":
+            return "the postcode in capitals without spaces"
+        return "as said"
 
     def identity_task(self):
         idn = self.s["identity"]
@@ -779,7 +856,7 @@ class _Compiler:
             % q(idn["decline_explanation"]),
         ]
         lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
-        lines.append(bullet_block("Rules from the brief (steps that are not one of your tools run automatically):", self.extra("identity")))
+        lines.append(bullet_block("Rules from the brief:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
 
     def negotiate_task(self):
@@ -839,12 +916,12 @@ HOW TO GET A PROMISE
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
         other = self.event_guidance("negotiate")
-        if banned:
-            other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
+        if self.banned_for("negotiate"):
+            other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
         other.append("A question you cannot answer from these facts: say you do not have that information.")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
-        t += "\n" + bullet_block("RULES FROM THE BRIEF (steps that are not one of your tools run automatically)", self.extra("negotiate"))
+        t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
         return t.rstrip()
 
     # ---- nodes
@@ -924,9 +1001,7 @@ HOW TO GET A PROMISE
         else:
             enter = ("Thank you. For your security I need to ask you %s questions. First, %s"
                      % (NUM.get(n, str(n)), first[:1].lower() + first[1:]))
-        fmt_words = {"date": "a date as day, month as a word, year", "text": "the answer as said"}
-        unreadable = "; ".join("for %s: %s" % (q(x["ask"]), fmt_words.get(x["format"], "the %s digits" % NUM.get(x.get("length"), x.get("length"))))
-                               for x in qs)
+        unreadable = "; ".join("for %s: %s" % (q(x["ask"]), self.format_words(x)) for x in qs)
         next_q = " ".join("If it was the answer to %s, now ask: %s" % (q(qs[i]["ask"]), q(qs[i + 1]["ask"])) for i in range(n - 1))
         if not next_q:
             next_q = "Say only: Thank you."
@@ -934,7 +1009,7 @@ HOW TO GET A PROMISE
         post = ("import json\n" + _const("HINTS", idn.get("non_counting_hints") or {}) + "UNREADABLE = %r\nNEXT_Q = %r\nNOT_YET = %r\n"
                 % (unreadable, next_q, not_yet) + VERIFY_POST)
         pre = "import json\n" + _const("FORMATS", {x["field"]: {k: v for k, v in x.items() if k in ("format", "length", "date_order")} for x in qs}) + VERIFY_PRE
-        answer_desc = "; ".join("%s: %s" % (x["field"], {"date": "YYYY-MM-DD", "digits": "%s digits" % x.get("length")}.get(x["format"], "as said")) for x in qs)
+        answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
         declined = self.fallback_close("identity", ["declined"])
         return {
@@ -980,7 +1055,7 @@ HOW TO GET A PROMISE
 
     def negotiate_node(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
-        banned = neg.get("banned_offers") or []
+        banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else [])
         sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else."]

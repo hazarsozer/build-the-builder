@@ -1,4 +1,4 @@
-"""Freya workflow building blocks: tools, code nodes, conditions, transfer and close nodes.
+"""Workflow building blocks: tools, code nodes, conditions, transfer and close nodes.
 
 Generic: nothing here knows a bank brief. Platform rules followed (docs/workflow-format.md,
 docs/tools-and-code.md): no `{{`/`}}` inside code, no top-level `and`, booleans tested as

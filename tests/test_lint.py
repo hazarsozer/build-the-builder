@@ -44,3 +44,12 @@ def test_lint_flags_unknown_reason():
     code = w["nodes"]["close_dispute"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
     code["default"] = code["default"].replace("'dispute'", "'made_up'")
     assert any("made_up" in e for e in lint(w, s))
+
+
+def test_lint_flags_unreachable_node():
+    w = C(A, OA)
+    w["nodes"]["island"] = {"name": "island", "node_type": "code", "passthrough": True,
+                            "passthrough_default_transition": "goodbye", "on_enter": {"type": "silent"},
+                            "transitions": [{"target_node": "goodbye", "description": "always", "condition": {"operator": "always"}}]}
+    errs = lint(w, A)
+    assert any("island" in e and "unreachable" in e for e in errs)
