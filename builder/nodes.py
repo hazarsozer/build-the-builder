@@ -126,8 +126,8 @@ def go(target, desc, condition):
     return {"target_node": target, "description": desc, "condition": condition}
 
 
-def transfer_node(name, queue, close, base_url, openapi):
-    tool = api_tool("transfer_to_agent", base_url, openapi, {"queue": {"default": queue}}, ["queue"], retries=1)
+def transfer_node(name, queue, close, base_url, openapi, tool=None):
+    tool = tool or api_tool("transfer_to_agent", base_url, openapi, {"queue": {"default": queue}}, ["queue"], retries=1)
     return {
         "name": name, "node_type": "api_request", "passthrough": True, "passthrough_default_transition": close,
         "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True,

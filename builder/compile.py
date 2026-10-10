@@ -23,7 +23,7 @@ from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
 from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
-from builder.nodes import (all_of, always, api_tool, body_enum, close_node, code_node, cond_any, eq, go,
+from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node, cond_any, eq, go,
                            goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
@@ -32,6 +32,10 @@ ANY_STAGES = ["opening", "identity", "negotiate"]
 # Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
 STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
                "negotiate": {"create_promise"}, "any": set()}
+STAGE_TOOLS_ALL = set().union(*STAGE_TOOLS.values())
+PROMISE_FIELDS = ("product_id", "amount", "date")
+# Call variables every brief so far has; any other spec.call_variables entry is declared in test_variables.
+STANDARD_VARS = ("customer_id", "first_name", "last_name", "title", "now")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
@@ -245,9 +249,9 @@ def pick_band(days_late):
 def product_facts(p):
     ptype = str(p.get('type') or '')
     cfg = PRODUCTS.get(ptype) or dict(words=ptype.replace('_', ' '), floor_field='')
-    past_due = float(p.get('past_due'))
-    days_late = int(float(p.get('days_late') or 0))
-    words = fill(cfg['words'], p, dict())
+    past_due = amount_of(p, cfg)
+    days_late = days_of(p, cfg)
+    words = fill(cfg['words'], p, dict(past_due=fmt(past_due), days_late=str(days_late)))
     ff = cfg.get('floor_field') or ''
     floor = float(p.get(ff)) if p.get(ff) not in (None, '') else past_due
     if floor > past_due:
@@ -331,7 +335,8 @@ def weekday_text():
 
 
 try:
-    products = [p for p in find_products() if p.get('past_due') not in (None, '')]
+    products = [p for p in find_products()
+                if pfield(p, PRODUCTS.get(str(p.get('type') or '')), 'amount_field', 'past_due') not in (None, '')]
     if not products:
         raise ValueError('no product')
     facts = [product_facts(p) for p in products]
@@ -586,14 +591,12 @@ try:
         if not segs or (len(segs) > 1 and not alone):
             return a, False
         ts = _dtoks(segs[-1])
-        if not ts or len(ts) % 3 or (len(ts) > 3 and not alone):
+        if not ts or len(ts) != 3:
+            # several dates without a correction word between them: ask again, never guess which one counts
             return a, False
-        r = None
-        for k in range(0, len(ts), 3):
-            # several whole dates in one answer: each must be a date, the last one counts
-            r = _triple(ts[k:k + 3], order)
-            if r is None:
-                return a, False
+        r = _triple(ts, order)
+        if r is None:
+            return a, False
         if r == 'RAW':
             # a whole numeric date in the wrong order goes to the bank as said (it answers with a non-counting hint)
             return a, alone and len(segs) == 1 and len(ts) == 3
@@ -603,13 +606,17 @@ try:
         segs = [s for s in re.split(FIX, a, flags=re.I) if re.search(r'\d', s)]
         if not segs or (len(segs) > 1 and not alone):
             return '', False
-        runs = re.findall(r'\d+', segs[-1])
-        if alone and n:
-            full = [r for r in runs if len(r) == n]
-            if len(full) >= 2:
-                return full[-1], True
-        dg = ''.join(runs)
+        # two plain values ("4410 and 5521") join to too many digits: incomplete, never the last one
+        dg = ''.join(re.findall(r'\d+', segs[-1]))
         return dg, (len(dg) == n if n else bool(dg))
+
+    def _year(a, alone):
+        y, ok = _digits(a, 4, alone)
+        if not ok:
+            return y, False
+        m = re.match(r'\d{4}', str(vars.get('now') or ''))
+        cur = int(m.group(0)) if m else datetime.date.today().year
+        return y, 1900 <= int(y) <= cur
 
     def _norm(a, q, alone):
         """(normalised answer, complete?) for one answer text."""
@@ -619,7 +626,7 @@ try:
         if fm == 'digits':
             return _digits(a, int(q.get('length') or 0), alone)
         if fm == 'year':
-            return _digits(a, 4, alone)
+            return _year(a, alone)
         if fm == 'postcode':
             return a.upper().replace(' ', ''), True
         return a, True
@@ -640,15 +647,20 @@ try:
             v = a
             try:
                 conv = q.get('format') in ('date', 'digits', 'year')
+                numeric = q.get('format') in ('digits', 'year')
                 a2 = _words(a) if conv else a
                 p2 = _words(part) if conv and part else part
+                if numeric and p2 and not re.fullmatch(r'[\d\s,.\-]+', p2):
+                    # a digits answer combines only with digit parts (a stale "14 March" must not become 1410)
+                    p2 = ''
                 cands = [(a2, True)]
                 if p2:
                     if re.search(r'(?<![0-9A-Za-z])' + re.escape(a2) + r'(?![0-9A-Za-z])', p2, flags=re.I):
                         # this answer is already one of the recorded pieces: try the parts on their own
                         cands.append((p2, False))
                     elif not re.search(FIX, p2 + ' ' + a2, flags=re.I):
-                        cands += [(p2 + ' ' + a2, False), (a2 + ' ' + p2, False)]
+                        # digits join in the order said; a date's typed parts may come in either order
+                        cands += [(p2 + ' ' + a2, False)] + ([] if numeric else [(a2 + ' ' + p2, False)])
                 for c, alone in cands:
                     v2, ok2 = _norm(c, q, alone)
                     if ok2:
@@ -700,6 +712,8 @@ try:
             d['what_to_do_next'] = 'All answers are verified. Say only: Thank you.'
         elif hint and hint in HINTS:
             d['what_to_do_next'] = 'This is NOT a wrong answer (' + str(hint).replace('_', ' ') + '). ' + HINTS[hint] + ' Then call verify_identity again.'
+        elif str(left) == '0' and d.get('verified') is not True:
+            d['what_to_do_next'] = 'That was the last wrong answer allowed. The check has ended. Do not ask anything else.'
         elif d.get('ok') is False:
             d['what_to_do_next'] = 'The answer could not be read. This is NOT a wrong answer. Ask the customer to repeat it (' + UNREADABLE + '). Then call verify_identity again.'
         elif d.get('verified') is True:
@@ -773,6 +787,82 @@ except Exception:
     pass
 '''
 
+# spec.responses: the brief's openapi names some response fields differently; copy each back to the name the
+# hooks read (RESP is {canonical: brief name}) before any other post-hook logic runs.
+ALIAS_POST = r'''
+try:
+    if isinstance(result, dict) and isinstance(result.get('data'), dict):
+        for rk, rv in RESP.items():
+            if rv != rk and rv in result['data']:
+                result['data'][rk] = result['data'][rv]
+except Exception:
+    pass
+'''
+
+# Extra request fields (spec.tool_fields / openapi-required fields the compiler has no slot for): take the value from
+# its source variable when it has one, map a near-miss onto the enum, else use the spec default. EXTRA is
+# {field: {enum, default, src}}.
+EXTRA_PRE = r'''
+import re
+
+def _xmatch(ok, v):
+    """The one enum value the customer's words name ("the mobile app" -> app), or None."""
+    words = lambda x: ' '.join(re.findall(r'[a-z0-9]+', str(x).lower()))
+    key = words(v)
+    hit = [x for x in ok if words(x) == key]
+    if not hit:
+        hit = [x for x in ok if words(x) and re.search(r'\b' + re.escape(words(x)) + r'\b', key)]
+    if not hit and len(key) >= 3:
+        hit = [x for x in ok if re.search(r'\b' + re.escape(key) + r'\b', words(x))]
+    if not hit:
+        kt = set(key.split())
+        hit = [x for x in ok if kt & set(t for t in words(x).split() if len(t) >= 3)]
+    return hit[0] if len(hit) == 1 else None
+
+
+try:
+    vars['extra_note'] = ''
+    eb = config.get('body')
+    if isinstance(eb, dict):
+        notes = []
+        for ef, es in EXTRA.items():
+            ev = eb.get(ef)
+            if es.get('src'):
+                sv = vars.get(es['src'])
+                if sv not in (None, ''):
+                    ev = sv
+            if isinstance(ev, str):
+                ev = ev.strip()
+                if ev.startswith('{') or ev.lower() in ('none', 'null'):
+                    ev = None
+            ok = es.get('enum') or []
+            said = ev
+            if ok and ev not in (None, '') and ev not in ok:
+                ev = _xmatch(ok, ev)
+            if ev in (None, ''):
+                ev = es.get('default')
+            if ev is None:
+                eb.pop(ef, None)
+            else:
+                eb[ef] = ev
+                if ev != said:
+                    notes.append(ef.replace('_', ' ') + ' was sent as ' + str(ev))
+        if notes:
+            vars['extra_note'] = ' Note: ' + '; '.join(notes) + '. Tell the customer this value and use it from now on.'
+except Exception:
+    pass
+'''
+
+# Model tools with extra fields: after the tool's own post-hook, tell the model which value was sent.
+EXTRA_POST = r'''
+try:
+    if isinstance(result, dict) and isinstance(result.get('data'), dict) and vars.get('extra_note'):
+        result['data']['what_to_do_next'] = str(result['data'].get('what_to_do_next') or '') + str(vars.get('extra_note'))
+        vars['extra_note'] = ''
+except Exception:
+    pass
+'''
+
 CLOSE_PRE = r'''
 try:
     b = config.get('body')
@@ -802,8 +892,91 @@ class _Compiler:
         self.multi = Multi(self) if multi_enabled(spec) else None
 
     # ---- helpers
-    def tool(self, name, props, required, **kw):
-        return api_tool(name, self.base, self.oa, props, required, **kw)
+    def tool(self, name, props, required, source=None, model=None, **kw):
+        """An api_call tool. Request fields the call site does not fill (openapi-required, or named in
+        spec.tool_fields) are added: a fixed spec value is baked; otherwise the model fills them (model tools) or
+        they come from the variable `source % field` (engine nodes), else from the spec default."""
+        if kw.get("path") not in (None, name):
+            return api_tool(name, self.base, self.oa, props, required, **kw)
+        if model is None:
+            model = source is None and name in STAGE_TOOLS_ALL
+        extra, req, hook = self.extra_props(name, props, source, model)
+        if hook:
+            kw["pre"] = "import json\n" + _const("EXTRA", hook) + EXTRA_PRE + (kw.get("pre") or "")
+            if model and any(h.get("src") is None for h in hook.values()):
+                kw["post"] = (kw.get("post") or "") + EXTRA_POST
+        resp = {k: v for k, v in ((self.s.get("responses") or {}).get(name) or {}).items() if k != v}
+        if resp:
+            kw["post"] = "import json\n" + _const("RESP", resp) + ALIAS_POST + (kw.get("post") or "")
+        return api_tool(name, self.base, self.oa, dict(props, **extra), list(required) + req, **kw)
+
+    def resp_vars(self, tool, canon, prefix=None):
+        """Response variables a transition tests: <prefix>_response.data.<canon>, plus the brief's alias name."""
+        prefix = prefix or tool
+        out = ["%s_response.data.%s" % (prefix, canon)]
+        alias = ((self.s.get("responses") or {}).get(tool) or {}).get(canon)
+        if alias and alias != canon:
+            out.append("%s_response.data.%s" % (prefix, alias))
+        return out
+
+    def extra_fields(self, name, known=()):
+        """[(field, openapi property, spec guidance)] the call site leaves out but the tool needs."""
+        try:
+            sc = body_schema(self.oa, name)
+        except (KeyError, TypeError):
+            return []
+        tf = self.s.get("tool_fields") or {}
+        props = sc.get("properties") or {}
+        need = set(sc.get("required") or [])
+        out = []
+        for f, p in props.items():
+            if f == "customer_id" or f in known:
+                continue
+            g = tf.get(name + "." + f)
+            if f in need or g is not None:
+                out.append((f, p, g or {}))
+        return out
+
+    def extra_desc(self, f, p, g):
+        bits = [g.get("instruction") or "", p.get("description") or ""]
+        said = " ".join(bits)
+        if p.get("enum") and not all(re.search(r"\b%s\b" % re.escape(str(x)), said) for x in p["enum"]):
+            bits.append("One of: %s." % ", ".join(str(x) for x in p["enum"]))
+        if g.get("default") is not None:
+            bits.append("If the customer gives none of these, use %s." % g["default"])
+        return " ".join(b.strip() for b in bits if b and b.strip())
+
+    def extra_props(self, name, known, source, model):
+        """(extra body props, extra required names, EXTRA hook config or None)."""
+        props, req, hook = {}, [], {}
+        try:
+            need = set(body_schema(self.oa, name).get("required") or [])
+        except (KeyError, TypeError):
+            need = set()
+        for f, p, g in self.extra_fields(name, known):
+            if g.get("value") is not None:
+                props[f] = {"default": g["value"]}
+            elif source is not None:
+                var = source % f
+                props[f] = {"default": "{{" + var + "}}"}
+                hook[f] = {"enum": p.get("enum") or [], "default": g.get("default"), "src": var}
+            elif model:
+                props[f] = {"default": "{{" + f + "}}", "description": self.extra_desc(f, p, g)}
+                hook[f] = {"enum": p.get("enum") or [], "default": g.get("default"), "src": None}
+            elif g.get("default") is not None:
+                props[f] = {"default": g["default"]}
+            else:
+                continue
+            if f in need:
+                req.append(f)
+        return props, req, hook or None
+
+    def model_extras(self, name, known):
+        """Model-filled extra fields of a tool: [(field, description)] (fixed values are not the model's)."""
+        return [(f, self.extra_desc(f, p, g)) for f, p, g in self.extra_fields(name, known) if g.get("value") is None]
+
+    def extra_lines(self, name, known):
+        return ["%s also needs %s: %s" % (name, f, d) for f, d in self.model_extras(name, known)]
 
     def has(self, ev_id):
         return ev_id in self.events
@@ -841,7 +1014,8 @@ class _Compiler:
             if name in self.transfers.values():
                 name = "transfer_" + queue + "_" + ev_id
             self.transfers[key] = name
-            self.nodes[name] = transfer_node(name, queue, close, self.base, self.oa)
+            self.nodes[name] = transfer_node(name, queue, close, self.base, self.oa,
+                                             tool=self.tool("transfer_to_agent", {"queue": {"default": queue}}, ["queue"], retries=1))
         return self.transfers[key]
 
     def stage_events(self, stage):
@@ -1123,6 +1297,7 @@ class _Compiler:
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
         ]
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
+        lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
         lines.append(bullet_block("Rules from the brief:", self.extra("third_party")))
         lines.append("Never call schedule_callback with a time outside the window.")
         return "\n".join(l for l in lines if l)
@@ -1186,6 +1361,7 @@ class _Compiler:
             % q(idn["decline_explanation"]),
         ]
         lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
+        lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
         lines.append(bullet_block("Rules from the brief:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
 
@@ -1246,8 +1422,11 @@ HOW TO GET A PROMISE
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
             first_ask, nbd, aft, vague, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+        for line in self.extra_lines("create_promise", PROMISE_FIELDS):
+            t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
+        t = self.said_already(t)
         other = self.event_guidance("negotiate")
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
@@ -1304,7 +1483,7 @@ HOW TO GET A PROMISE
         tr = []
         if self.has("callback"):
             tr.append(go(self.close_key("callback"), "Callback booked",
-                         cond_any(eq("cb_status", "booked"), *is_true("schedule_callback_response.data.ok")["conditions"])))
+                         cond_any(eq("cb_status", "booked"), *is_true(*self.resp_vars("schedule_callback", "ok"))["conditions"])))
         return {
             "name": "third_party", "node_type": "conversation",
             "task_message": self.third_party_task(),
@@ -1374,8 +1553,8 @@ HOW TO GET A PROMISE
             }] + self.seen_vars("identity"),
             "max_node_turns": 20, "max_turn_transition": declined,
             "transitions": [
-                go("load_account", "All answers verified", is_true("id_all", "verify_identity_response.data.all_verified")),
-                go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), eq("verify_identity_response.data.wrong_answers_left", "0"))),
+                go("load_account", "All answers verified", is_true("id_all", *self.resp_vars("verify_identity", "all_verified"))),
+                go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), *[eq(x, "0") for x in self.resp_vars("verify_identity", "wrong_answers_left")])),
             ] + trans,
         }
 
@@ -1411,7 +1590,7 @@ HOW TO GET A PROMISE
         tr = []
         if self.has("promise_recorded"):
             tr.append(go(self.close_key("promise_recorded"), "Promise recorded",
-                         cond_any(eq("promise_status", "recorded"), *is_true("create_promise_response.data.ok")["conditions"])))
+                         cond_any(eq("promise_status", "recorded"), *is_true(*self.resp_vars("create_promise", "ok"))["conditions"])))
         if retries >= 1:
             tr.append(go("retry_promise", "First promise call failed with an HTTP error", all_of(
                 eq("create_promise_failure_count", "1"), eq("create_promise_response.status", "error"))))
@@ -1425,7 +1604,7 @@ HOW TO GET A PROMISE
                        "condition": {"operator": "matches_intent", "description": "Customer: " + ev["trigger"]}})
         return {
             "name": "negotiate", "node_type": "conversation",
-            "on_enter": {"type": "tts", "text": "Thank you, you are verified. {{debt_statement_text}} " + tpl(neg["first_ask"])},
+            "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_task(),
             "tools": [self.tool("create_promise", {
@@ -1443,6 +1622,16 @@ HOW TO GET A PROMISE
             "max_node_turns": 40, "max_turn_transition": self.fallback_close("negotiate", ["refused"]),
             "transitions": tr,
         }
+
+    def verified_lead(self):
+        """Spoken by the engine as identity passes: the thanks, then negotiation.post_verify_sentence word for word."""
+        pvs = self.s["negotiation"].get("post_verify_sentence")
+        return "Thank you, you are verified. " + (tpl(pvs) + " " if pvs else "")
+
+    def said_already(self, t):
+        """The task's "You have already said" quote includes the post-verification sentence."""
+        pvs = self.s["negotiation"].get("post_verify_sentence")
+        return t.replace('You have already said: "', 'You have already said: "' + tpl(pvs) + ' ', 1) if pvs else t
 
     def mentioned(self):
         suffix = (self.s["negotiation"].get("floor_offer") or {}).get("sentence_suffix")
@@ -1498,8 +1687,11 @@ HOW TO RUN THE CALL
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             mentioned=self.mentioned(),
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
+        for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
+            t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
+        t = self.said_already(t)
         other = self.event_guidance("negotiate")
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
@@ -1519,7 +1711,7 @@ HOW TO RUN THE CALL
               go("wrap_done", "Every product settled, nothing to confirm", cond_any(eq(multi_mod.PHASE, "done")))] + trans
         return {
             "name": "negotiate", "node_type": "conversation",
-            "on_enter": {"type": "tts", "text": "Thank you, you are verified. {{debt_statement_text}} {{first_ask_text}}"},
+            "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} {{first_ask_text}}"},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_multi_task(),
             "tools": [self.multi.set_tool()],
@@ -1541,14 +1733,14 @@ HOW TO RUN THE CALL
             "product_id": {"default": "{{product_id}}"},
             "amount": {"default": "{{create_promise_args.promise_amount}}"},
             "date": {"default": "{{create_promise_args.promise_date}}"},
-        }, ["amount", "date"], pre=RETRY_PRE)
+        }, ["amount", "date"], source="create_promise_args.%s", pre=RETRY_PRE)
         return {
             "name": "retry_promise", "node_type": "api_request", "passthrough": True, "passthrough_default_transition": fail,
             "on_enter": {"type": "tts", "text": "I am sorry, there was a technical problem on our side. Let me try that once more."},
             "disable_inactivity_monitor": True,
             "pre_actions": [rp],
             "response_mapping": [{"path": "data.ok", "variable": "retry_ok"}],
-            "transitions": [go(ok, "Retry worked", is_true("retry_ok", "retry_promise_response.data.ok")), always(fail)],
+            "transitions": [go(ok, "Retry worked", is_true("retry_ok", *self.resp_vars("create_promise", "ok", "retry_promise"))), always(fail)],
         }
 
     def close_call_tool(self):
@@ -1585,6 +1777,11 @@ HOW TO RUN THE CALL
         n["goodbye"] = goodbye_node()
         prune_unreachable(n, "setup")
         test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
+        # call variables beyond the usual ones (e.g. a company name): declared with an empty default, so a call
+        # that does not pass one never speaks a raw placeholder
+        for name in self.s.get("call_variables", []):
+            if name not in STANDARD_VARS and name not in test_vars:
+                test_vars[name] = ""
         return {
             "initial_node": "setup",
             "system_prompt": self.system_prompt(),

@@ -79,7 +79,7 @@ def fixed_sentences(spec):
     """Every sentence the spec says word for word. Placeholders like {last_name} are kept."""
     o, i, n, c = spec["opening"], spec["identity"], spec["negotiation"], spec["confirmation"]
     s = [o["first_sentence"], o["confirm_question"]] + [q["ask"] for q in i["questions"]]
-    s += [i["decline_explanation"], i["failed_advice"], n["debt_statement"], n["first_ask"], n["floor_offer"].get("sentence_suffix"),
+    s += [i["decline_explanation"], i["failed_advice"], n.get("post_verify_sentence"), n["debt_statement"], n["first_ask"], n["floor_offer"].get("sentence_suffix"),
           n.get("debt_statement_per_product"), n.get("first_ask_all")]
     s += [e.get("say") for e in spec["events"]] + [r["say"] for r in spec["say_rules"]]
     s += [c["question"], c["success_sentence"], c.get("change_note")] + list(spec["third_party"]["fixed_sentences"].values())
@@ -95,11 +95,19 @@ def _ladder(spec): return max(reversed(spec["bands"]), key=lambda b: len(b["atte
 
 
 def _floor(spec, p): return float(p[spec["products"][p["type"]]["floor_field"]])
+def _pcfg(spec, p): return spec["products"].get(p.get("type")) or {}
+def _amt(spec, p): return D.amount_of(p, _pcfg(spec, p))          # products.<type>.amount_field, default past_due
+def _late(spec, p): return D.days_of(p, _pcfg(spec, p))           # products.<type>.days_late_field, default days_late
+def _amount_field(spec, ptype): return spec["products"][ptype].get("amount_field") or "past_due"
+def _days_field(spec, ptype): return spec["products"][ptype].get("days_late_field") or "days_late"
 
 
 def _words(spec, p):
     w = spec["products"].get(p["type"], {}).get("words", p["type"].replace("_", " "))
-    return re.sub(r"\{(\w+)\}", lambda m: str(p.get(m[1], m[0])), w)
+    extra = {}
+    if spec["products"].get(p["type"]) and D.pfield(p, _pcfg(spec, p), "amount_field", "past_due") not in (None, ""):
+        extra = {"past_due": _money(_amt(spec, p)), "days_late": str(_late(spec, p))}
+    return re.sub(r"\{(\w+)\}", lambda m: extra.get(m[1], str(p.get(m[1], m[0]))), w)
 
 
 # ---- generated customer data ------------------------------------------------------------------------------------
@@ -142,11 +150,19 @@ def _identity(spec, openapi, rng):
     return {q["field"]: _answer(q, kinds.get(q["field"]), rng) for q in qs}
 
 
+def _extra_var(name, rng):
+    """A plausible value for a call variable the brief adds (e.g. company_name): a name, or the words of its name."""
+    if "name" in name:
+        org = re.search(r"company|business|firm|employer|organi[sz]ation|shop|store", name)
+        return rng.choice(LAST) + (" Ltd" if org else "")
+    return name.replace("_", " ").strip().title() or "X"
+
+
 def _variables(spec, rng, now):
     title = rng.choice(["Mr", "Ms"])
     v = {"first_name": rng.choice(FIRST[title]), "last_name": rng.choice(LAST), "title": title, "now": now}
     for name in spec["call_variables"]:
-        if name not in v and name != "customer_id": v[name] = rng.choice(LAST) if "name" in name else "x"
+        if name not in v and name != "customer_id": v[name] = _extra_var(name, rng)
     return v
 
 
@@ -156,10 +172,10 @@ def _product(spec, rng, band, ptype=None):
     past_due = float(rng.randint(16, 500) * 5)
     p = {"type": ptype}
     for name in re.findall(r"\{(\w+)\}", spec["products"][ptype]["words"]):
-        if name in ("past_due", "days_late", "floor", "type"): continue
+        if name in ("past_due", "days_late", "floor", "type", _amount_field(spec, ptype), _days_field(spec, ptype)): continue
         p[name] = "".join(rng.choice("0123456789") for _ in range(4)) if re.search(r"last4|digits|number", name) else "X"
-    p["past_due"] = past_due
-    p["days_late"] = rng.randint(lo, min(hi, lo + 15))
+    p[_amount_field(spec, ptype)] = past_due
+    p[_days_field(spec, ptype)] = rng.randint(lo, min(hi, lo + 15))
     p[spec["products"][ptype]["floor_field"]] = round(past_due * rng.choice([0.25, 0.3, 0.4]), 2)
     return p
 
@@ -186,8 +202,8 @@ def _multi_expected(spec, products, results):
     Inline stand-in for Task 5's dates.close_reason; swap it for the lib function when that lands."""
     mp = spec["multi_product"]
     order = list(products)
-    if mp["order"] == "highest_past_due": order.sort(key=lambda p: -float(p.get("past_due", 0)))
-    elif mp["order"] == "most_days_late": order.sort(key=lambda p: -int(p.get("days_late", 0)))
+    if mp["order"] == "highest_past_due": order.sort(key=lambda p: -_amt(spec, p))
+    elif mp["order"] == "most_days_late": order.sort(key=lambda p: -_late(spec, p))
     promises, notes = [], []
     for p in order:
         r = results[p["product_id"]]
@@ -197,12 +213,14 @@ def _multi_expected(spec, products, results):
             e = _event(spec, r)
             reason = e.get("per_product_note") if e else r
             if mp["notes"]["enabled"] and reason in mp["notes"]["reasons"]: notes.append({"product_id": p["product_id"], "reason": reason})
+    paid = mp["notes"].get("paid_note_reason") or "paid"
+    rmap = mp["notes"].get("close_reason_map") or {}
     if promises: outcome, reason = _row(spec, "promise_recorded") or ("promise", None)
-    elif notes and all(n["reason"] == "paid" for n in notes) and len(notes) == len(order): outcome, reason = mp["all_paid_outcome"], None
+    elif notes and all(n["reason"] == paid for n in notes) and len(notes) == len(order): outcome, reason = mp["all_paid_outcome"], None
     else:
-        non_paid = [n for n in notes if n["reason"] != "paid"] or notes
+        non_paid = [n for n in notes if n["reason"] != paid] or notes
         pick = notes[-1] if mp["no_promise_reason"] == "last_note" else (non_paid[0] if non_paid else None)
-        outcome, reason = _note_row(spec, pick["reason"]) if pick else ("no_promise", None)
+        outcome, reason = _note_row(spec, rmap.get(pick["reason"], pick["reason"])) if pick else ("no_promise", None)
     return _exp(outcome, reason, promises, notes)
 
 
@@ -226,7 +244,7 @@ class Ctx:
         types = list(self.spec["products"])
         return [_product(self.spec, self.rng, band, types[i % len(types)] if n > 1 else None) for i in range(n)]
 
-    def deadline(self, p): return D.deadline(self.today, _band(self.spec, p["days_late"])["deadline"], self.cal)
+    def deadline(self, p): return D.deadline(self.today, _band(self.spec, _late(self.spec, p))["deadline"], self.cal)
 
     def promise_day(self, p, kind="today"):
         dl = self.deadline(p)
@@ -252,7 +270,7 @@ def s_happy_full_today(c, **o):
     when = "today" if d == c.today else f"on {_day(d)}"
     return dict(family="Happy path", level="easy", title=f"Confirms identity and pays the full amount {when}", products=[p],
                 script=f"Confirms {c.p['he']} is {c.name}. Answers the security questions correctly. Says {c.p['he']} can pay the full amount {when}. Confirms at the read-back.",
-                expected=_exp(*(_row(c.spec, "promise_recorded") or ("promise", None)), [_promise(p, p["past_due"], d)]),
+                expected=_exp(*(_row(c.spec, "promise_recorded") or ("promise", None)), [_promise(p, _amt(c.spec, p), d)]),
                 checks=["all security questions passed before get_account", "create_promise called exactly once",
                         c.say(c.spec["confirmation"]["success_sentence"]) + " after the promise"])
 
@@ -261,7 +279,7 @@ def s_floor_after_too_much(c, **o):
     band = _ladder(c.spec)
     if not band["attempts"] or c.spec["negotiation"]["floor_offer"]["times"] < 1: return None
     p = c.products(band)[0]
-    b = _band(c.spec, p["days_late"])
+    b = _band(c.spec, _late(c.spec, p))
     if not b["attempts"]: return None
     floor = _floor(c.spec, p)
     d = D.attempt_date(c.today, b["attempts"][0]["date"], c.deadline(p), c.cal)
@@ -294,7 +312,7 @@ def s_non_business_day(c, day=None, prefer="holiday", **o):
         word = "next" if rule == "next_business_day" else "previous"
         return dict(family="Dates", level="hard", title=f"Names a non-business day, takes the {word} business day", products=[p],
                     script=f"Verified. Cannot pay today, but says {c.p['he']} can pay the full amount on {D.WD[named.weekday()]} {named.day} {D.MON[named.month - 1]}. Accepts the {word} business day when it is offered.",
-                    expected=_exp(*(_row(c.spec, "promise_recorded") or ("promise", None)), [_promise(p, p["past_due"], target)]),
+                    expected=_exp(*(_row(c.spec, "promise_recorded") or ("promise", None)), [_promise(p, _amt(c.spec, p), target)]),
                     checks=[f"the agent does not accept {_day(named)} and offers {_day(target)}", f"promise recorded for {_day(target)}, inside the deadline"])
     return None
 
@@ -306,14 +324,14 @@ def s_after_deadline(c, **o):
     named = D.snap_forward(dl + datetime.timedelta(days=14), c.cal)
     return dict(family="Dates", level="medium", title="Wants a date after the deadline", products=[p],
                 script=f"Verified. Says {c.p['his']} salary arrives on {named.day} {D.MON[named.month - 1]} and {c.p['he']} can pay then. Accepts the latest possible date when it is offered.",
-                expected=_exp(*(_row(c.spec, "promise_recorded") or ("promise", None)), [_promise(p, p["past_due"], dl)]),
+                expected=_exp(*(_row(c.spec, "promise_recorded") or ("promise", None)), [_promise(p, _amt(c.spec, p), dl)]),
                 checks=["the customer's own date is not counted as a refusal", f"promise date is the deadline, {_day(dl)}"])
 
 
 def s_late_refusal(c, **o):
     if not _event(c.spec, "refused"): return None
     p = c.products(_ladder(c.spec))[0]
-    k = len(_band(c.spec, p["days_late"])["attempts"])
+    k = len(_band(c.spec, _late(c.spec, p))["attempts"])
     checks = [f"exactly {k} persuasion attempt{'s' if k != 1 else ''}, then the agent stops", "no promise recorded"]
     if c.spec["negotiation"]["banned_offers"]: checks.append("never offers " + ", ".join(c.spec["negotiation"]["banned_offers"]))
     return dict(family="Refusal", level="medium", title=f"Refuses every offer ({k} attempts)", products=[p],
@@ -401,7 +419,7 @@ def s_multi_product(c, plan=None, day=None, **o):
         w = _words(c.spec, p)
         if what == "promise":
             d = datetime.date.fromisoformat(day) if day else min(D.next_bd(c.today, c.cal), c.deadline(p))
-            results[p["product_id"]] = ("promise", round(float(p["past_due"]), 2), d.isoformat())
+            results[p["product_id"]] = ("promise", round(float(_amt(c.spec, p)), 2), d.isoformat())
             lines.append(f"Will pay the {w} in full {_when(c, d)}.")
         elif what == "paid":
             results[p["product_id"]] = "paid"; lines.append(f"Says the {w} was already paid this morning.")
@@ -525,7 +543,11 @@ def build(spec, openapi, scenario, now, products=None, identity=None, variables=
     if wrong: case["wrong_answers"] = [wrong[0], list(wrong[1])]
     case["fixed"] = fixed_sentences(spec)
     case["seed"] = {"variables": dict(c.variables), "identity": dict(c.identity), "products": [dict(p) for p in got["products"]],
-                    "faults": faults, "reasons": reasons_table(spec)}
+                    "faults": faults, "reasons": reasons_table(spec),
+                    "identity_policy": {"max_wrong": spec["identity"]["max_wrong"], "scope": spec["identity"]["wrong_scope"]}}
+    aliases = {tool: {k: v for k, v in m.items() if k != v} for tool, m in (spec.get("responses") or {}).items()}
+    aliases = {tool: m for tool, m in aliases.items() if m}
+    if aliases: case["seed"]["response_aliases"] = aliases
     return case
 
 

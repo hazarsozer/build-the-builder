@@ -123,6 +123,23 @@ def speak(d):
     return WD[d.weekday()] + ' ' + str(d.day) + ' ' + MON[d.month - 1] + ' ' + str(d.year) + ' (' + d.isoformat() + ')'
 
 
+def pfield(p, cfg, key, default):
+    """A product's value for a mapped field (products.<type>.amount_field / days_late_field), else the default name."""
+    name = (cfg or dict()).get(key) or default
+    v = p.get(name)
+    if v in (None, '') and name != default:
+        v = p.get(default)
+    return v
+
+
+def amount_of(p, cfg):
+    return float(pfield(p, cfg, 'amount_field', 'past_due'))
+
+
+def days_of(p, cfg):
+    return int(float(pfield(p, cfg, 'days_late_field', 'days_late') or 0))
+
+
 def band_for(days_late, bands):
     for b in bands:
         if b['days_late'][0] <= days_late <= b['days_late'][1]:
@@ -136,13 +153,13 @@ def plan_products(products, today, bands, cal, product_cfg=None):
     """Per-product facts: product_id, band, deadline, floor, full, attempts [(amount_kind, date)]."""
     out = []
     for i, p in enumerate(products):
-        full = float(p.get('past_due'))
         cfg = (product_cfg or dict()).get(str(p.get('type') or '')) or dict()
+        full = amount_of(p, cfg)
         ff = cfg.get('floor_field') or 'floor'
         floor = float(p.get(ff)) if p.get(ff) not in (None, '') else full
         if floor > full:
             floor = full
-        band = band_for(int(float(p.get('days_late') or 0)), bands)
+        band = band_for(days_of(p, cfg), bands)
         dl = deadline(today, band['deadline'], cal)
         attempts = [(a['amount'], attempt_date(today, a['date'], dl, cal)) for a in band['attempts']]
         out.append(dict(product_id=str(p.get('product_id') or ('p' + str(i + 1))), band=band['name'],
@@ -161,23 +178,27 @@ def apply_shared_date(plans, d):
     return out
 
 
-def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None):
+def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None, reason_map=None, paid='paid'):
     """(outcome, reason) of a several-product call.
 
     notes: [(product_id, reason)] in product order; promises: number recorded; transferred: the
-    transfer's reason or None. A transfer wins, then any recorded promise, then the notes."""
+    transfer's reason or None. A transfer wins, then any recorded promise, then the notes.
+    reason_map: note reason -> close reason (multi_product.notes.close_reason_map); paid: the note
+    reason that means "already paid" (multi_product.notes.paid_note_reason)."""
+    m = reason_map or dict()
+    paid = paid or 'paid'
     if transferred:
         return ('transferred', transferred)
     if promises and promises > 0:
         return ('promise', None)
     reasons = [r for _, r in notes]
-    if reasons and all(r == 'paid' for r in reasons) and all_paid:
+    if reasons and all(r == paid for r in reasons) and all_paid:
         return (all_paid, None)
     if rule == 'last_note' and reasons:
-        return ('no_promise', reasons[-1])
+        return ('no_promise', m.get(reasons[-1], reasons[-1]))
     for r in reasons:
-        if r != 'paid':
-            return ('no_promise', r)
+        if r != paid:
+            return ('no_promise', m.get(r, r))
     if fallback:
         return (fallback[0], fallback[1])
-    return ('no_promise', reasons[0] if reasons else None)
+    return ('no_promise', m.get(reasons[0], reasons[0]) if reasons else None)

@@ -299,6 +299,7 @@ def test_extra_rules_naming_other_tools_are_dropped():
 
 
 def test_negotiate_prompt_size():
+    # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
     assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4000
 
 

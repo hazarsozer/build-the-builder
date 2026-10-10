@@ -25,6 +25,7 @@ SLOTS = 3          # products per call the engine can record / note (the brief a
 SET_TOOL = "set_product"
 SET_MODE = "code"  # "code" (code_exec tool, nothing in the bank ledger) or "api" (get_account route + pre-hook)
 PHASE = "mp_phase"
+PROMISE_FIELDS = ("product_id", "amount", "date")
 
 
 def _const(name, value):
@@ -128,6 +129,33 @@ def _targets(st, ref, open_only):
     return [], False
 
 
+def _xmatch(ok, v):
+    """The one enum value the customer's words name ("the mobile app" -> app), or None."""
+    words = lambda x: ' '.join(re.findall(r'[a-z0-9]+', str(x).lower()))
+    key = words(v)
+    hit = [x for x in ok if words(x) == key]
+    if not hit:
+        hit = [x for x in ok if words(x) and re.search(r'\b' + re.escape(words(x)) + r'\b', key)]
+    if not hit and len(key) >= 3:
+        hit = [x for x in ok if re.search(r'\b' + re.escape(key) + r'\b', words(x))]
+    if not hit:
+        kt = set(key.split())
+        hit = [x for x in ok if kt & set(t for t in words(x).split() if len(t) >= 3)]
+    return hit[0] if len(hit) == 1 else None
+
+
+def _xval(es, v):
+    """An extra create_promise field: the enum value the words name, else the spec default."""
+    if isinstance(v, str):
+        v = v.strip()
+    ok = es.get('enum') or []
+    if ok and v not in (None, '') and v not in ok:
+        v = _xmatch(ok, v)
+    if v in (None, ''):
+        v = es.get('default')
+    return v
+
+
 def _readback(st):
     parts = []
     for q in st['order']:
@@ -135,6 +163,9 @@ def _readback(st):
         if P['status'] != 'agreed':
             continue
         s = fmt(P['amount']) + ' for your ' + P['words'] + ' on ' + _say(P['date'])
+        for xf, xv in sorted((P.get('extra') or dict()).items()):
+            if xv not in (None, ''):
+                s += ', ' + xf.replace('_', ' ') + ' ' + str(xv).replace('_', ' ')
         if P.get('capped'):
             s += ', because that is the latest date I can accept for it'
         parts.append(s)
@@ -218,9 +249,16 @@ def _agree(st, b, today):
         new[q] = (round(amt, 2), dd, capped)
     if errs:
         return None, 'NOT accepted, nothing changed: ' + '; '.join(errs) + '.'
+    extra = dict()
+    said = []
+    for xf, es in (CFG.get('extra') or dict()).items():
+        extra[xf] = _xval(es, b.get(xf))
+        if extra[xf] is not None and extra[xf] != b.get(xf):
+            said.append(xf.replace('_', ' ') + ' noted as ' + str(extra[xf]))
     for q, v in new.items():
-        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2])
-    return st, 'Noted for now (nothing is registered before the confirmation).'
+        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra)
+    note = (' Note: ' + '; '.join(said) + '. Tell the customer this value.') if said else ''
+    return st, 'Noted for now (nothing is registered before the confirmation).' + note
 
 
 def _refuse(st, b):
@@ -334,6 +372,9 @@ for i in range(1, SLOTS + 1):
         vars['rec' + str(i) + '_pid'] = ags[i - 1]
         vars['rec' + str(i) + '_amount'] = P['amount']
         vars['rec' + str(i) + '_date'] = P['date']
+        for xf in EXTRA_F:
+            xv = (P.get('extra') or dict()).get(xf)
+            vars['rec' + str(i) + '_' + xf] = '' if xv is None else xv
         vars['rec_has_' + str(i)] = 'yes'
     else:
         vars['rec' + str(i) + '_pid'] = ''
@@ -407,7 +448,7 @@ for q in (st.get('ga') or order):
         r = stt
     if NOTES_ON and r in REASONS:
         notes.append((q, r))
-outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK)
+outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK, REASON_MAP, PAID_NOTE)
 key = str(outcome) + '|' + str(reason or '')
 vars['mp_close'] = CLOSE_BY.get(key, CLOSE_BY.get('*'))
 for i in range(1, SLOTS + 1):
@@ -446,6 +487,8 @@ class Multi:
         notes = self.mp.get("notes") or {}
         self.notes_on = bool(notes.get("enabled"))
         self.reasons = list(notes.get("reasons") or [])
+        self.reason_map = dict(notes.get("close_reason_map") or {})
+        self.paid_note = notes.get("paid_note_reason") or "paid"
         ev = self.s["events"]
         self.fail_ev = c.fail_ev
         # outcomes the model reports per product: note_and_continue events of negotiate (not the service failure)
@@ -483,7 +526,7 @@ class Multi:
         keys = ["promise|"]
         if self.mp.get("all_paid_outcome"):
             keys.append("%s|" % self.mp["all_paid_outcome"])
-        keys += ["no_promise|" + r for r in self.reasons]
+        keys += ["no_promise|" + self.reason_map.get(r, r) for r in self.reasons]
         out = []
         for k in keys:
             if k in by and by[k] not in out:
@@ -512,7 +555,15 @@ class Multi:
         cfg = {"confirm": conf["question"], "nbd": neg.get("non_business_day", "next_business_day"),
                "after": neg.get("after_deadline", "offer_deadline"), "below": neg.get("below_floor", "offer_floor_once"),
                "cap": self.mp.get("shared_date_after_deadline", "cap_to_product_deadline_and_say_so") != "reject",
-               "notes": [o for o in outcomes if o not in ("agreed", "refused", "review")], "say": say}
+               "notes": [o for o in outcomes if o not in ("agreed", "refused", "review")], "say": say, "extra": {}}
+        xprops = {}
+        for f, p, g in self.c.extra_fields("create_promise", PROMISE_FIELDS):
+            if g.get("value") is not None:
+                continue
+            cfg["extra"][f] = {"enum": p.get("enum") or [], "default": g.get("default")}
+            xprops[f] = {"type": "string", "description": "For agreed: " + self.c.extra_desc(f, p, g)}
+            if p.get("enum"):
+                xprops[f]["enum"] = list(p["enum"])
         head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
@@ -523,6 +574,7 @@ class Multi:
             "date": {"type": "string", "description": "For agreed: the payment date, YYYY-MM-DD."},
             "attempts_made": {"type": "number", "description": "For refused: how many persuasion attempts of this product's plan you made."},
         }
+        props.update(xprops)
         desc = ("Report a settled product. CALL it every time a product is settled (agreed, refused, "
                 + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
         if mode == "api":
@@ -551,7 +603,7 @@ class Multi:
         fe = c.events.get(self.fail_ev) or {}
         by = self.close_by()
         targets = self.wrap_targets()
-        fb = fallback or ("no_promise", self.refused_note)
+        fb = fallback or ("no_promise", self.reason_map.get(self.refused_note, self.refused_note))
         fb_key = "%s|%s" % (fb[0], fb[1] or "")
         by_used = {k: v for k, v in by.items() if v in targets}
         by_used["*"] = by.get(fb_key) if by.get(fb_key) in targets else (targets[-1] if targets else "close_account_error")
@@ -569,6 +621,7 @@ class Multi:
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
+                _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
                 _const("FALLBACK", list(fb)) + _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
                 "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or "") + WRAP_CODE)
         first = "note_1" if self.notes_on else "finish"
@@ -603,7 +656,9 @@ class Multi:
     def build(self, nodes):
         c = self.c
         # records
-        nodes["record_plan"] = code_node("record_plan", "SLOTS = %d\n" % SLOTS + RECORD_PLAN, "wrap_recorded",
+        extra_f = [f for f, _ in c.model_extras("create_promise", PROMISE_FIELDS)]
+        nodes["record_plan"] = code_node("record_plan", "import json\n" + _const("EXTRA_F", extra_f) + "SLOTS = %d\n" % SLOTS + RECORD_PLAN,
+                                         "wrap_recorded",
                                          [go("record_1", "A promise to record", cond_any(eq("rec_has_1", "yes")))])
         for i in range(1, SLOTS + 1):
             s = str(i)
@@ -616,7 +671,7 @@ class Multi:
                     "product_id": {"default": "{{rec%s_pid}}" % s},
                     "amount": {"default": "{{rec%s_amount}}" % s},
                     "date": {"default": "{{rec%s_date}}" % s},
-                }, ["product_id", "amount", "date"], pre=pre, post=post)
+                }, ["product_id", "amount", "date"], source="rec" + s + "_%s", pre=pre, post=post)
             ok = [eq("rec%s_status" % s, "recorded"), eq("rec%s_ok" % s, "true"), eq("rec%s_ok" % s, "True")]
             tr = []
             if nxt:

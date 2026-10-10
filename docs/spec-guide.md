@@ -37,7 +37,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
   - each item: when `format` is digits, also required: `length`
 - `identity.questions[].field` (required): string. The verify_identity `field` enum value.
 - `identity.questions[].ask` (required): string. The question, said word for word.
-- `identity.questions[].format` (required): one of `date`, `digits`, `text`. date: send as YYYY-MM-DD. digits: exactly `length` digits. text: as said.
+- `identity.questions[].format` (required): one of `date`, `digits`, `year`, `text`. date: send as YYYY-MM-DD. digits: exactly `length` digits. year: a four-digit year from 1900 to the current year. text: as said.
 - `identity.questions[].date_order` (optional): one of `DMY`, `MDY`, `YMD`. How to read a date given only as numbers (DMY = day, month, year).
 - `identity.questions[].length` (optional): integer, min 1. Number of digits for format digits.
 - `identity.max_wrong` (required): integer, min 1. Wrong answers that end the check.
@@ -52,6 +52,8 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `products` (required): map of name -> object. Keyed by get_account product `type`. Every openapi product type needs an entry.
 - `products.<name>.words` (required): string. How the product is said, may use product fields, e.g. "<product noun> ending {<id_field>}".
 - `products.<name>.floor_field` (required): string. The get_account product field that holds the floor (lowest acceptable amount).
+- `products.<name>.amount_field` (optional): string. The get_account product field that holds the full overdue amount. Default when absent: past_due. Sentences still say {past_due}.
+- `products.<name>.days_late_field` (optional): string. The get_account product field that holds how many days the payment is late. Default when absent: days_late. Sentences still say {days_late}.
 - `bands` (required): list of object. days_late ranges, contiguous with no gap or overlap. Each sets the deadline rule and the persuasion attempts.
 - `bands[].name` (required): string. The band's name from the brief.
 - `bands[].days_late` (required): list of integer, min 0. [min, max], both included.
@@ -83,6 +85,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `negotiation.banned_offers` (required): list of string. Things never offered.
 - `negotiation.debt_statement_per_product` (optional): string. Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. Absent: use debt_statement for each.
 - `negotiation.first_ask_all` (optional): string. Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used.
+- `negotiation.post_verify_sentence` (optional): string. Optional: a sentence the brief requires word for word right after identity is verified and before anything about the account (before debt_statement). Absent: none.
 - `events` (required): list of object. Customer situations that change the call's course. Known ids map to fixed graph branches (promise_recorded, paid, dispute, restructuring, human, hardship, refused, service_error, failed, declined, callback, no_callback, wrong_number, deceased, unclear, not_talk); other ids become generic intent branches.
   - each item: when `action` is ['transfer', 'insist_once_then_transfer', 'offer_transfer_else_close'], also required: `queue`
   - each item: when `action` is offer_transfer_else_close, also required: `else_outcome`, `else_reason`
@@ -120,6 +123,8 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `multi_product.notes.reasons` (required): list of string. Allowed add_note reasons (subset of the openapi enum).
 - `multi_product.notes.on_transfer` (required): one of `none`, `before`, `after`. none: no notes at all on a call that is transferred (before or after it).
 - `multi_product.notes.timing` (optional): one of `immediate`, `at_close`. When add_note is called. immediate: as soon as a product ends without a promise. at_close: notes are collected and written only just before a non-transfer close_call, so a later transfer leaves no notes. Default when absent: immediate.
+- `multi_product.notes.close_reason_map` (optional): map of name -> string. Optional: add_note reason -> close_call reason, when the brief's close reasons differ from its note reasons. A note reason not listed closes with the same name.
+- `multi_product.notes.paid_note_reason` (optional): string. Optional: the add_note reason that means the product is already paid. Default when absent: paid.
 - `multi_product.no_promise_reason` (required): one of `first_non_paid_note`, `last_note`, `fixed`. first_non_paid_note: with no promise, close no_promise with the reason of the first product (in order) whose note is not paid.
 - `multi_product.all_paid_outcome` (required): string or null. close_call outcome when every product is noted paid and no promise was recorded.
 - `closing` (required): object. How every call ends.
@@ -129,6 +134,11 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `outcomes[].reason` (required): string or null. close_call reason; null only for promise and paid.
 - `outcomes[].event` (required): string. events[].id that produces this row.
 - `unused_outcomes` (optional): list of string. Optional: openapi close_call outcomes the brief never uses.
+- `tool_fields` (optional): map of name -> object. Optional: request fields of an openapi tool that the compiler has no slot for, keyed "<tool>.<field>" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it.
+- `tool_fields.<name>.instruction` (optional): string. How the agent gets the value from the customer (when to ask, what to do when the answer fits no allowed value). Not said verbatim.
+- `tool_fields.<name>.default` (optional): string or number or boolean or null. Value sent when the customer gives none that fits (an openapi enum value when the field has an enum), or null.
+- `tool_fields.<name>.value` (optional): string or number or boolean. A fixed value the brief sets for every call: sent as is, never asked.
+- `responses` (optional): map of name -> map of name -> string. Optional: response fields the openapi names differently from the names the compiler reads, keyed by tool. The compiler reads verify_identity ok, verified, wrong_answers_left, all_verified, hint, error; create_promise ok, error; get_account ok, products, error; schedule_callback ok, error. Map each one whose meaning appears under another name, e.g. {"verify_identity": {"verified": "<the field that says the answer matched>"}}. Leave out names that are unchanged.
 - `extra_rules` (required): list of object. Escape hatch: brief rules no structured field expresses, injected into the prompt of the given stage.
 - `extra_rules[].stage` (required): one of `opening`, `third_party`, `identity`, `negotiate`, `any`. Call stage: opening (before the person is confirmed), third_party (someone else answered), identity (security questions), negotiate (after verification: debt, promise, confirmation), any (every stage).
 - `extra_rules[].text` (required): string. 

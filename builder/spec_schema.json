@@ -360,9 +360,10 @@
                 "enum": [
                   "date",
                   "digits",
+                  "year",
                   "text"
                 ],
-                "description": "date: send as YYYY-MM-DD. digits: exactly `length` digits. text: as said."
+                "description": "date: send as YYYY-MM-DD. digits: exactly `length` digits. year: a four-digit year from 1900 to the current year. text: as said."
               },
               "date_order": {
                 "enum": [
@@ -494,6 +495,14 @@
           "floor_field": {
             "$ref": "#/$defs/str",
             "description": "The get_account product field that holds the floor (lowest acceptable amount)."
+          },
+          "amount_field": {
+            "$ref": "#/$defs/str",
+            "description": "The get_account product field that holds the full overdue amount. Default when absent: past_due. Sentences still say {past_due}."
+          },
+          "days_late_field": {
+            "$ref": "#/$defs/str",
+            "description": "The get_account product field that holds how many days the payment is late. Default when absent: days_late. Sentences still say {days_late}."
           }
         }
       },
@@ -659,6 +668,10 @@
         "first_ask_all": {
           "$ref": "#/$defs/str",
           "description": "Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used."
+        },
+        "post_verify_sentence": {
+          "$ref": "#/$defs/str",
+          "description": "Optional: a sentence the brief requires word for word right after identity is verified and before anything about the account (before debt_statement). Absent: none."
         }
       },
       "description": "Stating the debt and getting a promise."
@@ -922,6 +935,17 @@
                 "at_close"
               ],
               "description": "When add_note is called. immediate: as soon as a product ends without a promise. at_close: notes are collected and written only just before a non-transfer close_call, so a later transfer leaves no notes. Default when absent: immediate."
+            },
+            "close_reason_map": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "Optional: add_note reason -> close_call reason, when the brief's close reasons differ from its note reasons. A note reason not listed closes with the same name."
+            },
+            "paid_note_reason": {
+              "$ref": "#/$defs/str",
+              "description": "Optional: the add_note reason that means the product is already paid. Default when absent: paid."
             }
           },
           "description": "add_note policy for products that end without a promise."
@@ -989,6 +1013,54 @@
         "$ref": "#/$defs/str"
       },
       "description": "Optional: openapi close_call outcomes the brief never uses."
+    },
+    "tool_fields": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z_][a-z0-9_]*[.][A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "instruction": {
+            "$ref": "#/$defs/str",
+            "description": "How the agent gets the value from the customer (when to ask, what to do when the answer fits no allowed value). Not said verbatim."
+          },
+          "default": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ],
+            "description": "Value sent when the customer gives none that fits (an openapi enum value when the field has an enum), or null."
+          },
+          "value": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ],
+            "description": "A fixed value the brief sets for every call: sent as is, never asked."
+          }
+        }
+      },
+      "description": "Optional: request fields of an openapi tool that the compiler has no slot for, keyed \"<tool>.<field>\" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it."
+    },
+    "responses": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z_][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/str"
+        },
+        "description": "Name the compiler reads -> the name in this openapi's 200 response schema."
+      },
+      "description": "Optional: response fields the openapi names differently from the names the compiler reads, keyed by tool. The compiler reads verify_identity ok, verified, wrong_answers_left, all_verified, hint, error; create_promise ok, error; get_account ok, products, error; schedule_callback ok, error. Map each one whose meaning appears under another name, e.g. {\"verify_identity\": {\"verified\": \"<the field that says the answer matched>\"}}. Leave out names that are unchanged."
     },
     "extra_rules": {
       "type": "array",

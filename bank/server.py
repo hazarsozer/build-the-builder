@@ -10,8 +10,14 @@ Routes (no key needed, unlike the official practice routes):
 
 Seed: {"variables": {first_name, last_name, title, now}, "identity": {field: answer}, "products": [{...}],
        "faults": {"create_promise": [1, 2]},   # 1-based call numbers of that tool that return HTTP 500
-       "reasons": {"no_promise": ["refused", ...], "promise": []}}   # close_call table from the brief; optional
+       "reasons": {"no_promise": ["refused", ...], "promise": []},   # close_call table from the brief; optional
+       "identity_policy": {"max_wrong": 3, "scope": "total" | "per_question"},   # optional, default 3 in total
+       "hints": {"<hint>": {"when": "swapped_date" | "prefix"}},   # optional, default {"day_month_swapped": swapped_date}
+       "response_aliases": {"<tool>": {"<our key>": "<key the brief's openapi uses>"}}}   # optional
 Without "reasons", close_call accepts any non-empty reason, and none for promise/paid.
+Each hint is given once per call and is not a wrong answer: swapped_date when a date answer has day and month swapped,
+prefix when a text or digits answer is only the start of the right one. create_promise also takes the request fields the
+openapi adds beyond product_id/amount/date (checked for required and enum) and stores them on the promise.
 Limits (a tunnel exposes this): body <= 64 KiB (else 413), 2000 sessions (oldest activity evicted), 500 calls per session.
 
 Every response body, error text and the order of checks below was copied from probes of the official mock on
@@ -31,6 +37,7 @@ MAX_BODY = 64 * 1024
 MAX_SESSIONS = 2000
 MAX_CALLS = 500
 WRONG_ANSWERS = 3
+DEFAULT_HINTS = {"day_month_swapped": {"when": "swapped_date"}}
 NOT_A_DATE = "answer is not a date. Send it as YYYY-MM-DD."
 FAULT = {"ok": False, "error": "service unavailable, nothing was recorded"}
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
@@ -67,6 +74,11 @@ def field_kinds(openapi, identity):
         elif "digit" in said or (not said and re.search(r"last4|digits|number|year", f)): kinds[f] = "digits"
         else: kinds[f] = "text"
     return kinds
+
+
+def request_schema(openapi, tool):
+    try: return openapi["paths"]["/" + tool]["post"]["requestBody"]["content"]["application/json"]["schema"] or {}
+    except (KeyError, TypeError): return {}
 
 
 def enum(openapi, tool, prop):
@@ -120,12 +132,17 @@ class Bank:
         identity = dict(seed.get("identity") or {})
         products = [{"product_id": f"p{i}", **{k: num(v) for k, v in p.items()}} for i, p in enumerate(seed.get("products") or [], 1)]
         reasons = seed.get("reasons")
+        policy = seed.get("identity_policy") if isinstance(seed.get("identity_policy"), dict) else {}
+        hints = seed.get("hints") if isinstance(seed.get("hints"), dict) else DEFAULT_HINTS
+        aliases = seed.get("response_aliases") if isinstance(seed.get("response_aliases"), dict) else {}
         with self.lock:
             while len(self.sessions) >= MAX_SESSIONS:       # evict the session with the oldest last activity
                 del self.sessions[min(self.sessions, key=lambda k: self.sessions[k]["seq"])]
             self.seq += 1
             self.sessions[cid] = {"case": case, "reasons": dict(reasons) if isinstance(reasons, dict) else None, "seq": self.seq, "variables": variables, "identity": identity, "kinds": field_kinds(self.openapi, identity),
                                   "products": products, "faults": {t: set(ns) for t, ns in (seed.get("faults") or {}).items()},
+                                  "max_wrong": int(policy.get("max_wrong") or WRONG_ANSWERS), "scope": policy.get("scope") or "total",
+                                  "hints": dict(hints), "hints_used": [], "aliases": dict(aliases), "wrong_by": {},
                                   "tool_calls": {}, "verified": {}, "wrong": 0, "hinted": False, "promises": [], "notes": [],
                                   "callbacks": [], "transfers": [], "outcome": None, "reason": None, "failures": {}, "calls": [],
                                   "closed": False, "last_at": int(time.time() * 1000)}
@@ -151,7 +168,10 @@ class Bank:
             s["failures"].setdefault(tool, 0)
             if s["closed"]: status, result = 200, {"ok": False, "error": "the call is already closed"}
             elif n in s["faults"].get(tool, ()): status, result = 500, dict(FAULT); s["failures"][tool] += 1
-            else: status, result = 200, getattr(self, "t_" + tool, self.t_unknown)(s, args)
+            else:
+                status, result = 200, getattr(self, "t_" + tool, self.t_unknown)(s, args)
+                ren = s["aliases"].get(tool) or {}
+                if ren: result = {ren.get(k, k): v for k, v in result.items()}
             s["calls"].append({"n": len(s["calls"]) + 1, "tool": tool, "args": args, "status": status, "result": result})
             s["last_at"] = int(time.time() * 1000)
             return status, json.loads(json.dumps(result))
@@ -165,24 +185,36 @@ class Bank:
         field, answer = a.get("field"), a.get("answer")
         allowed = list(dict.fromkeys(self.fields + list(s["identity"])))
         if field not in allowed: return {"ok": False, "error": "field must be " + say_or(allowed)}
-        left = lambda: WRONG_ANSWERS - s["wrong"]
+        per = s["scope"] == "per_question"
+        left = lambda: s["max_wrong"] - (s["wrong_by"].get(field, 0) if per else s["wrong"])
+        over = any(n >= s["max_wrong"] for n in s["wrong_by"].values()) if per else s["wrong"] >= s["max_wrong"]
         if s["verified"].get(field): return {"ok": True, "verified": True, "wrong_answers_left": left()}
-        if left() <= 0: return {"ok": False, "verified": False, "wrong_answers_left": 0, "error": "identity check is over"}
+        if over: return {"ok": False, "verified": False, "wrong_answers_left": 0, "error": "identity check is over"}
         truth, kind = str(s["identity"].get(field, "")), s["kinds"].get(field, "text")
+        rule = lambda when: next((h for h, r in s["hints"].items() if isinstance(r, dict) and r.get("when") == when
+                                  and h not in s["hints_used"]), None)
+        def hinted(h):
+            s["hinted"] = True; s["hints_used"].append(h)
+            return {"ok": True, "verified": False, "wrong_answers_left": left(), "hint": h}
         if kind == "date":
             got, want = parse_date(answer), parse_date(truth)
             if got is None: return {"ok": False, "error": NOT_A_DATE}
             if got == want: ok = True
-            elif not s["hinted"] and want and (got[0], got[2], got[1]) == want:
-                s["hinted"] = True
-                return {"ok": True, "verified": False, "wrong_answers_left": left(), "hint": "day_month_swapped"}
+            elif want and (got[0], got[2], got[1]) == want and rule("swapped_date"): return hinted(rule("swapped_date"))
             else: ok = False
         elif kind == "digits":
-            ok = re.sub(r"[\s,.\-]", "", str(answer if answer is not None else "")) == truth
+            got = re.sub(r"[\s,.\-]", "", str(answer if answer is not None else ""))
+            ok = got == truth
         else:
-            ok = re.sub(r"\s", "", str(answer if answer is not None else "")).lower() == re.sub(r"\s", "", truth).lower()
+            got = re.sub(r"\s", "", str(answer if answer is not None else "")).lower()
+            ok = got == re.sub(r"\s", "", truth).lower()
+        if not ok and kind != "date" and got and rule("prefix"):
+            want = re.sub(r"[\s,.\-]", "", truth).lower()
+            if want.startswith(got.lower()) and len(got) < len(want): return hinted(rule("prefix"))
         if ok: s["verified"][field] = True
-        else: s["wrong"] += 1
+        else:
+            s["wrong"] += 1
+            s["wrong_by"][field] = s["wrong_by"].get(field, 0) + 1
         return {"ok": True, "verified": ok, "wrong_answers_left": left(), "all_verified": self.all_verified(s)}
 
     def t_get_account(self, s, a):
@@ -196,9 +228,16 @@ class Bank:
         amount = jsnum(a.get("amount"))
         if amount is None or amount <= 0: return {"ok": False, "error": "amount must be a positive number"}
         if not isinstance(a.get("date"), str) or not ISO_DATE.match(a["date"]): return {"ok": False, "error": "date must be YYYY-MM-DD"}
+        schema = request_schema(self.openapi, "create_promise")
+        extra_f = [f for f in schema.get("properties") or {} if f not in ("customer_id", "product_id", "amount", "date")]
+        for f in extra_f:
+            spec = schema["properties"][f] or {}
+            if f in (schema.get("required") or []) and a.get(f) in (None, ""): return {"ok": False, "error": f + " is required"}
+            if spec.get("enum") and f in a and a[f] not in spec["enum"]: return {"ok": False, "error": f + " must be " + say_or(spec["enum"])}
+        extra = {f: a[f] for f in extra_f if f in a}
         if any(p["product_id"] == product["product_id"] for p in s["promises"]): return {"ok": False, "error": "this product already has a promise"}
         pid = f"pr{len(s['promises']) + 1}"
-        s["promises"].append({"promise_id": pid, "product_id": product["product_id"], "type": product.get("type"), "amount": num(amount), "date": a["date"]})
+        s["promises"].append({"promise_id": pid, "product_id": product["product_id"], "type": product.get("type"), "amount": num(amount), "date": a["date"], **extra})
         return {"ok": True, "promise_id": pid}
 
     def t_add_note(self, s, a):
