@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freya-builder/spec_schema.json",
+  "title": "Freya collections policy spec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bank_name", "assistant_identity", "address_as", "call_variables", "opening", "third_party",
+               "identity", "calendar", "products", "bands", "negotiation", "events", "say_rules", "confirmation",
+               "multi_product", "closing", "outcomes", "extra_rules", "custom_code", "examples", "conflicts", "sources"],
+  "$defs": {
+    "str": {"type": "string", "minLength": 1},
+    "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "hhmm": {"type": "string", "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"},
+    "stage": {"enum": ["opening", "third_party", "identity", "negotiate", "any"]},
+    "nullable_str": {"type": ["string", "null"]},
+    "source_ref": {
+      "oneOf": [{"$ref": "#/$defs/str"}, {"type": "array", "items": {"$ref": "#/$defs/str"}, "minItems": 1}]
+    },
+    "deadline_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule"],
+      "properties": {
+        "rule": {"enum": ["nth_business_day", "calendar_days", "end_of_month", "end_of_next_month",
+                          "fixed_weekday_after_n_weeks"]},
+        "n": {"type": "integer", "minimum": 0},
+        "weekday": {"type": "integer", "minimum": 0, "maximum": 6},
+        "weeks": {"type": "integer", "minimum": 0},
+        "snap": {"enum": ["back", "forward", null]}
+      },
+      "allOf": [
+        {"if": {"properties": {"rule": {"enum": ["nth_business_day", "calendar_days"]}}},
+         "then": {"required": ["n"]}},
+        {"if": {"properties": {"rule": {"const": "fixed_weekday_after_n_weeks"}}},
+         "then": {"required": ["weekday", "weeks"]}}
+      ]
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "date"],
+      "properties": {
+        "amount": {"enum": ["current", "full", "floor"]},
+        "date": {"enum": ["today", "last_business_day_of_week", "deadline", "next_business_day"]}
+      }
+    }
+  },
+  "properties": {
+    "bank_name": {"$ref": "#/$defs/str"},
+    "assistant_identity": {"$ref": "#/$defs/str"},
+    "address_as": {"$ref": "#/$defs/str"},
+    "call_variables": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                       "minItems": 1, "uniqueItems": true},
+    "opening": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["first_sentence", "confirm_question", "confirm_accept", "confirm_reject", "max_asks",
+                   "banned_before_verify"],
+      "properties": {
+        "first_sentence": {"$ref": "#/$defs/str"},
+        "confirm_question": {"$ref": "#/$defs/str"},
+        "confirm_accept": {"type": "array", "items": {"$ref": "#/$defs/str"}, "minItems": 1},
+        "confirm_reject": {"type": "array", "items": {"$ref": "#/$defs/str"}},
+        "max_asks": {"type": "integer", "minimum": 1},
+        "banned_before_verify": {"type": "array", "items": {"$ref": "#/$defs/str"}}
+      }
+    },
+    "third_party": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["say_nothing_beyond_opening", "callback", "window_retries", "fixed_sentences"],
+      "properties": {
+        "say_nothing_beyond_opening": {"type": "boolean"},
+        "callback": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["days", "from", "to", "after_now"],
+          "properties": {
+            "days": {"type": "array", "minItems": 1,
+                     "items": {"enum": ["today", "next_business_day", "next_day", "any_business_day"]}},
+            "from": {"$ref": "#/$defs/hhmm"},
+            "to": {"$ref": "#/$defs/hhmm"},
+            "inclusive": {"type": "boolean"},
+            "after_now": {"type": "boolean"}
+          }
+        },
+        "window_retries": {"type": "integer", "minimum": 0},
+        "fixed_sentences": {"type": "object", "additionalProperties": {"$ref": "#/$defs/str"}}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questions", "max_wrong", "wrong_scope", "non_counting_hints", "decline_explanation",
+                   "decline_limit", "failed_advice"],
+      "properties": {
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "ask", "format"],
+            "properties": {
+              "field": {"$ref": "#/$defs/str"},
+              "ask": {"$ref": "#/$defs/str"},
+              "format": {"enum": ["date", "digits", "text"]},
+              "date_order": {"enum": ["DMY", "MDY", "YMD"]},
+              "length": {"type": "integer", "minimum": 1}
+            },
+            "allOf": [
+              {"if": {"properties": {"format": {"const": "date"}}}, "then": {"required": ["date_order"]}},
+              {"if": {"properties": {"format": {"const": "digits"}}}, "then": {"required": ["length"]}}
+            ]
+          }
+        },
+        "max_wrong": {"type": "integer", "minimum": 1},
+        "wrong_scope": {"enum": ["total", "per_question"]},
+        "non_counting_hints": {"type": "object", "additionalProperties": {"$ref": "#/$defs/str"}},
+        "decline_explanation": {"$ref": "#/$defs/str"},
+        "decline_limit": {"type": "integer", "minimum": 1},
+        "failed_advice": {"$ref": "#/$defs/str"}
+      }
+    },
+    "calendar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weekdays", "holidays"],
+      "properties": {
+        "weekdays": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 6},
+                     "minItems": 1, "uniqueItems": true},
+        "holidays": {"type": "array", "items": {"$ref": "#/$defs/date"}, "uniqueItems": true}
+      }
+    },
+    "products": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["words", "floor_field"],
+        "properties": {
+          "words": {"$ref": "#/$defs/str"},
+          "floor_field": {"$ref": "#/$defs/str"}
+        }
+      }
+    },
+    "bands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "days_late", "deadline", "attempts"],
+        "properties": {
+          "name": {"$ref": "#/$defs/str"},
+          "days_late": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+          "deadline": {"$ref": "#/$defs/deadline_rule"},
+          "attempts": {"type": "array", "items": {"$ref": "#/$defs/attempt"}}
+        }
+      }
+    },
+    "negotiation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["debt_statement", "first_ask", "floor_offer", "below_floor", "vague_date", "weekday_words",
+                   "non_business_day", "after_deadline", "never_ask_how_much", "banned_offers"],
+      "properties": {
+        "debt_statement": {"$ref": "#/$defs/str"},
+        "first_ask": {"$ref": "#/$defs/str"},
+        "floor_offer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["times", "sentence_suffix"],
+          "properties": {
+            "times": {"type": "integer", "minimum": 0},
+            "sentence_suffix": {"type": ["string", "null"]}
+          }
+        },
+        "below_floor": {"enum": ["offer_floor_once", "reject", "accept"]},
+        "vague_date": {"enum": ["ask_once_then_deadline", "propose_deadline", "ask_until_exact"]},
+        "weekday_words": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["next", "this"],
+          "properties": {
+            "next": {"enum": ["following_week", "next_occurrence"]},
+            "this": {"enum": ["current_week", "next_occurrence"]}
+          }
+        },
+        "non_business_day": {"enum": ["next_business_day", "previous_business_day", "reject"]},
+        "after_deadline": {"enum": ["offer_deadline", "reject"]},
+        "never_ask_how_much": {"type": "boolean"},
+        "banned_offers": {"type": "array", "items": {"$ref": "#/$defs/str"}}
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "trigger", "stages", "say", "action", "outcome", "reason"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "trigger": {"$ref": "#/$defs/str"},
+          "stages": {"type": "array", "items": {"$ref": "#/$defs/stage"}, "minItems": 1, "uniqueItems": true},
+          "say": {"$ref": "#/$defs/nullable_str"},
+          "instruction": {"$ref": "#/$defs/nullable_str"},
+          "action": {"enum": ["close", "transfer", "insist_once_then_transfer", "offer_transfer_else_close",
+                              "note_and_continue"]},
+          "queue": {"$ref": "#/$defs/str"},
+          "outcome": {"$ref": "#/$defs/nullable_str"},
+          "reason": {"$ref": "#/$defs/nullable_str"},
+          "else_outcome": {"$ref": "#/$defs/nullable_str"},
+          "else_reason": {"$ref": "#/$defs/nullable_str"},
+          "times": {"type": "integer", "minimum": 1},
+          "overrides_persuasion": {"type": "boolean"},
+          "per_product_note": {"$ref": "#/$defs/nullable_str"}
+        },
+        "allOf": [
+          {"if": {"properties": {"action": {"enum": ["transfer", "insist_once_then_transfer",
+                                                     "offer_transfer_else_close"]}}},
+           "then": {"required": ["queue"]}},
+          {"if": {"properties": {"action": {"const": "offer_transfer_else_close"}}},
+           "then": {"required": ["else_outcome", "else_reason"]}}
+        ]
+      }
+    },
+    "say_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trigger", "say"],
+        "properties": {
+          "trigger": {"$ref": "#/$defs/str"},
+          "say": {"$ref": "#/$defs/str"},
+          "stages": {"type": "array", "items": {"$ref": "#/$defs/stage"}, "minItems": 1}
+        }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question", "retries", "success_sentence", "failure_event", "change_note"],
+      "properties": {
+        "question": {"$ref": "#/$defs/str"},
+        "retries": {"type": "integer", "minimum": 0},
+        "success_sentence": {"$ref": "#/$defs/str"},
+        "failure_event": {"$ref": "#/$defs/str"},
+        "change_note": {"$ref": "#/$defs/nullable_str"}
+      }
+    },
+    "multi_product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order", "ask_all_today_first", "single_readback", "shared_date_after_deadline", "notes",
+                   "no_promise_reason", "all_paid_outcome"],
+      "properties": {
+        "order": {"enum": ["get_account", "highest_past_due", "most_days_late"]},
+        "ask_all_today_first": {"type": "boolean"},
+        "single_readback": {"type": "boolean"},
+        "shared_date_after_deadline": {"enum": ["cap_to_product_deadline_and_say_so", "reject"]},
+        "notes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "reasons", "on_transfer"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "reasons": {"type": "array", "items": {"$ref": "#/$defs/str"}, "uniqueItems": true},
+            "on_transfer": {"enum": ["none", "before", "after"]}
+          }
+        },
+        "no_promise_reason": {"enum": ["first_non_paid_note", "last_note", "fixed"]},
+        "all_paid_outcome": {"$ref": "#/$defs/nullable_str"}
+      }
+    },
+    "closing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thank_and_goodbye"],
+      "properties": {"thank_and_goodbye": {"type": "boolean"}}
+    },
+    "outcomes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["outcome", "reason", "event"],
+        "properties": {
+          "outcome": {"$ref": "#/$defs/str"},
+          "reason": {"$ref": "#/$defs/nullable_str"},
+          "event": {"$ref": "#/$defs/str"}
+        }
+      }
+    },
+    "unused_outcomes": {"type": "array", "items": {"$ref": "#/$defs/str"}},
+    "extra_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "text"],
+        "properties": {
+          "stage": {"$ref": "#/$defs/stage"},
+          "text": {"$ref": "#/$defs/str"}
+        }
+      }
+    },
+    "custom_code": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "inputs", "outputs", "body"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+          "inputs": {"type": "array", "items": {"type": "string"}},
+          "outputs": {"type": "array", "items": {"type": "string"}},
+          "body": {"$ref": "#/$defs/str"}
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "today", "days_late", "expect"],
+        "properties": {
+          "kind": {"enum": ["deadline", "attempt"]},
+          "today": {"$ref": "#/$defs/date"},
+          "days_late": {"type": "integer", "minimum": 0},
+          "attempt_index": {"type": "integer", "minimum": 1},
+          "expect": {"$ref": "#/$defs/date"},
+          "source": {"$ref": "#/$defs/str"}
+        },
+        "if": {"properties": {"kind": {"const": "attempt"}}},
+        "then": {"required": ["attempt_index"]}
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "kept", "overridden"],
+        "properties": {
+          "field": {"$ref": "#/$defs/str"},
+          "kept": {"$ref": "#/$defs/str"},
+          "overridden": {"$ref": "#/$defs/str"},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "quote", "maps_to"],
+        "properties": {
+          "id": {"$ref": "#/$defs/str"},
+          "quote": {"$ref": "#/$defs/str"},
+          "maps_to": {"type": "string"}
+        }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/source_ref"}
+    }
+  }
+}
