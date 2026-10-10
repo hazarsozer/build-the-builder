@@ -18,10 +18,11 @@ Steps (design spec §4 and the Task 8 rulings):
 
 Hard stop: at --budget-min minus FINAL_RESERVE_S, whatever is running is abandoned and the best spec so far goes to
 the final step. Every phase is wrapped: once a spec exists, a crash anywhere still ends in a saved, exported agent.
-No spec at all: exit 2 with a `no_spec` trace event.
+No spec at all: exit 2 with a `no_spec` trace event. No openapi: exit 2 with a `no_openapi` trace event (the openapi is
+--openapi, else openapi.json next to the briefs, else the single OpenAPI .json among the briefs; never a default).
 
 Trace: traces/<UTC time>-<slot>.jsonl (every line through redact.scrub) plus a .md summary of the same events.
-Exit code: 0 when the workflow was exported, 1 when a spec existed but the final step failed, 2 with no spec.
+Exit code: 0 when the workflow was exported, 1 when a spec existed but the final step failed, 2 with no spec or no openapi.
 """
 import argparse
 import datetime
@@ -117,16 +118,30 @@ def run_fix(*a, **kw):
 
 # ---------------------------------------------------------------------------------------------------------- inputs
 
+class OpenapiNotFound(Exception):
+    """No single OpenAPI document was found next to the briefs and --openapi was not given."""
+
+
 def resolve_openapi(briefs, override):
-    """--openapi, else the openapi.json next to the brief files, else tools/openapi.json."""
+    """--openapi; else the openapi.json next to the brief files; else the one OpenAPI document (a .json with
+    `openapi` and `paths`) among the brief arguments and the brief folders. None or several: OpenapiNotFound.
+    Never a silent default: another brief's API would build a wrong agent."""
     if override:
         return Path(override)
-    for b in briefs:
-        p = Path(b)
-        cand = (p if p.is_dir() else p.parent) / "openapi.json"
-        if cand.exists():
-            return cand
-    return ROOT / "tools" / "openapi.json"
+    dirs = list(dict.fromkeys((p if p.is_dir() else p.parent).resolve() for p in map(Path, briefs)))
+    for d in dirs:
+        if (d / "openapi.json").is_file():
+            return d / "openapi.json"
+    cands = [Path(b).resolve() for b in briefs if sdk.is_openapi_file(b)]
+    cands += [x.resolve() for d in dirs if d.is_dir() for x in sorted(d.glob("*.json")) if sdk.is_openapi_file(x)]
+    cands = list(dict.fromkeys(cands))
+    if len(cands) == 1:
+        return cands[0]
+    if not cands:
+        raise OpenapiNotFound("no OpenAPI document (a .json with `openapi` and `paths`) next to the briefs in %s; "
+                              "pass --openapi PATH" % ", ".join(map(str, dirs)))
+    raise OpenapiNotFound("several OpenAPI documents next to the briefs (%s); pass --openapi PATH"
+                          % ", ".join(map(str, cands)))
 
 
 def slug_for(briefs):
@@ -281,12 +296,22 @@ class Build:
 
     def _run(self):
         a = self.a
-        oa_path = resolve_openapi(self.briefs, a.openapi)
-        openapi = json.loads(Path(oa_path).read_text())
-        self.openapi = openapi
+        oa_path, oa_error = None, None
+        try:
+            oa_path = resolve_openapi(self.briefs, a.openapi)
+            openapi = json.loads(Path(oa_path).read_text())
+            if not isinstance(openapi, dict) or "paths" not in openapi:
+                raise OpenapiNotFound("%s is not an OpenAPI document (no `paths`)" % oa_path)
+        except (OpenapiNotFound, OSError, ValueError) as e:
+            oa_error = e
         self.ev("start", briefs=self.briefs, slot=self.slot, git_commit=git_commit(), model=sdk.model_name(),
-                openapi=str(oa_path), budget_min=a.budget_min, selftest=not a.no_selftest, now=a.now,
-                out_dir=str(self.out_dir), argv=sys.argv[1:])
+                openapi=str(oa_path) if oa_path else None, budget_min=a.budget_min, selftest=not a.no_selftest,
+                now=a.now, out_dir=str(self.out_dir), argv=sys.argv[1:])
+        if oa_error is not None:
+            self.ev("no_openapi", error=_err(oa_error))
+            self.log("no openapi: %s" % _err(oa_error))
+            return 2
+        self.openapi = openapi
         self.log("build %s: %s" % (self.slot, ", ".join(self.briefs)))
         if not a.no_selftest:
             self._start_bank()
@@ -568,7 +593,8 @@ def parse_args(argv=None):
     ap = argparse.ArgumentParser(prog="python -m builder.main", description=__doc__.split("\n")[0])
     ap.add_argument("briefs", nargs="+", help="brief files or directories")
     ap.add_argument("--slot", help="Freya slot name (default: a slug of the first brief's name)")
-    ap.add_argument("--openapi", help="openapi.json when none sits next to the briefs")
+    ap.add_argument("--openapi", help="the bank's OpenAPI file (default: openapi.json next to the briefs, else the only OpenAPI .json "
+                    "there; none or several is an error)")
     ap.add_argument("--no-selftest", action="store_true", help="skip the bank, the tunnel and the self-test")
     ap.add_argument("--budget-min", type=float, default=27.0, help="hard stop, minutes (default 27)")
     ap.add_argument("--now", help="call variable `now` for self-test cases (ISO, e.g. 2026-10-14T11:00)")

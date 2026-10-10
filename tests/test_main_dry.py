@@ -42,6 +42,7 @@ def env(tmp_path, monkeypatch):
     briefs = tmp_path / "in"
     briefs.mkdir()
     shutil.copy(ROOT / "briefs/brief-a.md", briefs / "brief-a.md")
+    shutil.copy(ROOT / "tools/openapi.json", briefs / "openapi.json")
     f.brief = briefs / "brief-a.md"
     f.spec = A
 
@@ -471,13 +472,50 @@ def test_trace_has_no_secret(env, monkeypatch):
 
 # ------------------------------------------------------------------------------------------------ helpers
 
-def test_openapi_order_flag_then_brief_dir_then_tools(tmp_path):
+def test_openapi_order_flag_then_brief_dir_then_single_doc(tmp_path):
     (tmp_path / "b.md").write_text("x")
-    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == ROOT / "tools/openapi.json"
-    (tmp_path / "openapi.json").write_text("{}")
-    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == tmp_path / "openapi.json"
-    assert M.resolve_openapi([str(tmp_path)], None) == tmp_path / "openapi.json"
+    (tmp_path / "cases.json").write_text(json.dumps([{"id": 1}]))              # JSON, not OpenAPI: ignored
+    with pytest.raises(M.OpenapiNotFound, match="no OpenAPI"):
+        M.resolve_openapi([str(tmp_path / "b.md")], None)                     # never a silent tools/openapi.json
+    (tmp_path / "bank-api.json").write_text(json.dumps(OA))
+    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == (tmp_path / "bank-api.json").resolve()
+    assert M.resolve_openapi([str(tmp_path)], None) == (tmp_path / "bank-api.json").resolve()
+    (tmp_path / "other-api.json").write_text(json.dumps(OA))
+    with pytest.raises(M.OpenapiNotFound, match="several"):
+        M.resolve_openapi([str(tmp_path / "b.md")], None)
+    (tmp_path / "openapi.json").write_text(json.dumps(OA))
+    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == (tmp_path / "openapi.json").resolve()
+    assert M.resolve_openapi([str(tmp_path)], None) == (tmp_path / "openapi.json").resolve()
     assert M.resolve_openapi([str(tmp_path / "b.md")], "/x/other.json") == Path("/x/other.json")
+    assert M.resolve_openapi([str(ROOT / "briefs/brief-a.md")], None).resolve() == (ROOT / "tools/openapi.json").resolve()
+
+
+def test_openapi_doc_is_never_a_brief(tmp_path):
+    from builder import sdk
+    (tmp_path / "b.md").write_text("x")
+    (tmp_path / "bank-api.json").write_text(json.dumps(OA))
+    (tmp_path / "cases.json").write_text("[]")
+    assert [p.name for p in sdk.expand_briefs([str(tmp_path)])] == ["b.md", "cases.json"]
+    assert [p.name for p in sdk.expand_briefs([str(tmp_path / "b.md"), str(tmp_path / "bank-api.json")])] == ["b.md"]
+
+
+def test_no_openapi_exits_2_with_trace_event(env):
+    (env.brief.parent / "openapi.json").unlink()
+    assert run_main(env, "--no-selftest") == 2
+    rows = trace_rows(env)
+    assert rows[0]["kind"] == "start" and rows[0]["openapi"] is None
+    assert any(r["kind"] == "no_openapi" and "--openapi" in r["error"] for r in rows)
+    assert rows[-1]["kind"] == "end" and rows[-1]["exit_code"] == 2
+    assert not env.saved and not env.exported
+
+
+def test_openapi_flag_wins_and_odd_name_is_found(env):
+    (env.brief.parent / "openapi.json").rename(env.brief.parent / "bank.openapi.json")
+    assert run_main(env, "--no-selftest") == 0
+    assert trace_rows(env)[0]["openapi"].endswith("bank.openapi.json")
+    shutil.rmtree(env.traces)
+    assert run_main(env, "--no-selftest", "--openapi", str(ROOT / "tools/openapi.json")) == 0
+    assert trace_rows(env)[0]["openapi"] == str(ROOT / "tools/openapi.json")
 
 
 def test_slug():

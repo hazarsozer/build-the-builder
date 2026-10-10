@@ -60,16 +60,28 @@ class SessionError(RuntimeError):
 
 # ------------------------------------------------------------------ files
 
+def is_openapi_file(path):
+    """True when path is a .json file holding an OpenAPI document (a JSON object with `openapi` and `paths`)."""
+    p = Path(path)
+    if p.suffix.lower() != ".json" or not p.is_file():
+        return False
+    try:
+        doc = json.loads(p.read_text(errors="replace"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(doc, dict) and "openapi" in doc and "paths" in doc
+
+
 def expand_briefs(brief_paths):
     """Brief files in order; a directory contributes its files (sorted), except openapi.json,
-    hidden files and secret files (env.sh, .env*)."""
+    hidden files and secret files (env.sh, .env*). An OpenAPI document under any name is never a brief."""
     out = []
     for p in brief_paths:
         p = Path(p)
         if p.is_dir():
             out += sorted(x for x in p.iterdir() if x.is_file() and x.name != "openapi.json"
-                          and not x.name.startswith(".") and not _secret_file(x.name))
-        elif not _secret_file(p.name):
+                          and not x.name.startswith(".") and not _secret_file(x.name) and not is_openapi_file(x))
+        elif not _secret_file(p.name) and not is_openapi_file(p):
             out.append(p)
     return out
 
