@@ -140,8 +140,9 @@ def test_slot_flag_and_budget_passed_to_extract(env):
 
 
 def test_selftest_all_pass_skips_round_two(env, monkeypatch):
-    def run(agent_id, cases, bank, styles=None, store=None):
+    def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy=None):
         env.selftest_calls.append((agent_id, list(cases), bank))
+        on_created("sim-1")
         return selftest_result(cases)
     monkeypatch.setattr(selftest, "run", run)
     called = []
@@ -160,6 +161,8 @@ def test_selftest_all_pass_skips_round_two(env, monkeypatch):
     assert r1["passed"] == 11 and r1["total"] == 11 and r1["failing"] == []
     assert [r["url_kind"] for r in rows if r["kind"] == "saved"] == ["tunnel", "official"]
     assert "fix_round" not in kinds(env)
+    [st] = [r for r in rows if r["kind"] == "simulation_started"]
+    assert st["simulation_id"] == "sim-1" and st["round"] == 1
 
 
 def test_notes_enabled_asks_for_eleven(env, monkeypatch):
@@ -171,14 +174,14 @@ def test_notes_enabled_asks_for_eleven(env, monkeypatch):
         seen.append((n, seed, now))
         return real(spec, openapi, now, n=n, seed=seed)
     monkeypatch.setattr(M.cases, "generate", gen)
-    monkeypatch.setattr(selftest, "run", lambda a, c, b, styles=None, store=None: selftest_result(c))
+    monkeypatch.setattr(selftest, "run", lambda a, c, b, **k: selftest_result(c))
     assert run_main(env, "--now", "2026-10-14T11:00") == 0
     assert seen == [(11, 0, "2026-10-14T11:00")]
 
 
 def test_failures_run_fix_round_and_keep_best(env, monkeypatch):
-    def run(agent_id, cases, bank, styles=None, store=None):
-        env.selftest_calls.append(1)
+    def run(agent_id, cases, bank, **k):
+        env.selftest_calls.append([c["id"] for c in cases])
         fail = [cases[0]["id"], cases[1]["id"]] if len(env.selftest_calls) == 1 else []
         return selftest_result(cases, fail)
     monkeypatch.setattr(selftest, "run", run)
@@ -199,10 +202,13 @@ def test_failures_run_fix_round_and_keep_best(env, monkeypatch):
     assert fr["changes"] == [{"path": "bank_name", "quote": "q", "why": "SELF-01"}]
     assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == "Fixed Bank"
     assert [s for s, _ in env.saved] == ["brief-a-selftest", "brief-a-selftest", "brief-a"]
+    assert env.selftest_calls[1] == env.selftest_calls[0]          # round 2 reruns round 1's cases (no extra here)
+    best = [r for r in rows if r["kind"] == "best_spec"][0]
+    assert best["comparable"] == 11 and best["round1_passed"] == 9 and best["round2_passed"] == 11
 
 
 def test_worse_round_two_keeps_round_one_spec(env, monkeypatch):
-    def run(agent_id, cases, bank, styles=None, store=None):
+    def run(agent_id, cases, bank, **k):
         env.selftest_calls.append(1)
         n = 1 if len(env.selftest_calls) == 1 else 3
         return selftest_result(cases, [c["id"] for c in cases[:n]])
@@ -213,6 +219,108 @@ def test_worse_round_two_keeps_round_one_spec(env, monkeypatch):
                                                               "discarded": [], "errors": 0}))
     assert run_main(env) == 0
     assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+
+
+def _fix_to(monkeypatch, fixed, path="x.y"):
+    monkeypatch.setattr(M, "run_fix", lambda *a, **k: (fixed, {"changes": [{"path": path, "quote": "q"}],
+                                                              "discarded": [], "errors": 0}))
+
+
+def test_tie_keeps_round_one(env, monkeypatch):
+    monkeypatch.setattr(selftest, "run", lambda a, cases, b, **k: selftest_result(cases, [cases[0]["id"]]))
+    fixed = copy.deepcopy(A)
+    fixed["bank_name"] = "Tie Bank"
+    _fix_to(monkeypatch, fixed)
+    assert run_main(env) == 0
+    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+
+
+def test_round2_cases_compare_only_identical_expectations():
+    c1 = [{"id": "SELF-01", "scenario": "a", "expected": {"o": 1}}, {"id": "SELF-02", "scenario": "b", "expected": {"o": 2}},
+          {"id": "SELF-03", "scenario": "c", "expected": {"o": 3}}]
+    c2 = [{"id": "SELF-01", "scenario": "a", "expected": {"o": 1}}, {"id": "SELF-02", "scenario": "b", "expected": {"o": 9}},
+          {"id": "SELF-03", "scenario": "d", "expected": {"o": 4}}]
+    run, comparable, extra = M.round2_cases(c1, c2)
+    assert comparable == {"SELF-01"}
+    assert [c["id"] for c in run] == ["SELF-01", "SELF-02", "SELF-03", "SELF-R2-01", "SELF-R2-02"]
+    assert [c["scenario"] for c in extra] == ["b", "d"]
+    assert c2[1]["id"] == "SELF-02"                                   # inputs not mutated
+
+
+def test_extra_round2_cases_run_but_not_compared(env, monkeypatch):
+    calls = []
+
+    def run(agent_id, cases, bank, **k):
+        calls.append([c["id"] for c in cases])
+        if len(calls) == 1:
+            return selftest_result(cases, [cases[0]["id"]])
+        return selftest_result(cases, [c["id"] for c in cases if c["id"].startswith("SELF-R2")])
+    monkeypatch.setattr(selftest, "run", run)
+    fixed = copy.deepcopy(A)
+    fixed["negotiation"]["floor_offer"]["times"] = 2
+    _fix_to(monkeypatch, fixed, "negotiation.floor_offer.times")
+    monkeypatch.setattr(M, "round2_cases", lambda c1, c2: (
+        list(c1) + [dict(c2[0], id="SELF-R2-01")], {c["id"] for c in c1[1:]}, [dict(c2[0], id="SELF-R2-01")]))
+    assert run_main(env) == 0
+    rows = trace_rows(env)
+    best = [r for r in rows if r["kind"] == "best_spec"][0]
+    assert calls[1] == calls[0] + ["SELF-R2-01"]
+    # SELF-R2-01 failed in round 2, SELF-01 failed in round 1; neither is comparable: 10 vs 10 -> tie -> round 1
+    assert (best["comparable"], best["round1_passed"], best["round2_passed"]) == (10, 10, 10)
+    assert best["label"] == "extract"
+
+
+def test_budget_stop_marks_orphan_simulation(env, monkeypatch):
+    monkeypatch.setattr(M, "FINAL_RESERVE_S", 0.5)
+
+    def slow(agent_id, cases, bank, on_created=None, **k):
+        on_created("sim-orphan")
+        time.sleep(8)
+    monkeypatch.setattr(selftest, "run", slow)
+    assert run_main(env, "--budget-min", "0.05") == 0
+    rows = trace_rows(env)
+    assert [r["id"] for r in rows if r["kind"] == "orphan_simulation"] == ["sim-orphan"]
+    assert (env.out / "brief-a.workflow.json").exists()
+
+
+def test_busy_workspace_skips_selftest(env, monkeypatch):
+    def busy(agent_id, cases, bank, on_busy=None, **k):
+        for w in (0, 30, 60, 90, 120, 150, 180):
+            on_busy(w)
+        raise AssertionError("on_busy should have stopped the wait")
+    monkeypatch.setattr(selftest, "run", busy)
+    assert run_main(env) == 0
+    ks = kinds(env)
+    assert ks.count("workspace_busy") == 1 and "selftest_skipped" in ks
+    assert (env.out / "brief-a.workflow.json").exists()
+
+
+def test_lint_errors_in_best_spec_fall_back_to_extracted(env, monkeypatch):
+    calls = []
+
+    def run(agent_id, cases, bank, **k):
+        calls.append(1)
+        return selftest_result(cases, [cases[0]["id"]] if len(calls) == 1 else [])
+    monkeypatch.setattr(selftest, "run", run)
+    fixed = copy.deepcopy(A)
+    fixed["bank_name"] = "Linty Bank"
+    _fix_to(monkeypatch, fixed)
+    real = M.lint
+    monkeypatch.setattr(M, "lint", lambda wf, spec: real(wf, spec) + (["bad node"] if spec["bank_name"] == "Linty Bank" else []))
+    assert run_main(env) == 0
+    rows = trace_rows(env)
+    assert [r["label"] for r in rows if r["kind"] == "best_spec"] == ["fix1"]
+    assert any(r["kind"] == "final_spec_switch" for r in rows)
+    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+
+
+def test_hanging_save_is_bounded(env, monkeypatch):
+    monkeypatch.setattr(M, "FREYA_CALL_S", 0.5)
+    monkeypatch.setattr(freya, "save_workflow", lambda *a, **k: time.sleep(8))
+    t0 = time.monotonic()
+    assert run_main(env, "--no-selftest") == 1
+    assert time.monotonic() - t0 < 5
+    assert any(r["kind"] == "phase_failed" and r["phase"] == "final" for r in trace_rows(env))
 
 
 def test_selftest_crash_still_exports(env, monkeypatch):
@@ -281,12 +389,13 @@ def test_trace_has_no_secret(env, monkeypatch):
 
 # ------------------------------------------------------------------------------------------------ helpers
 
-def test_openapi_next_to_brief_wins(tmp_path):
+def test_openapi_order_flag_then_brief_dir_then_tools(tmp_path):
     (tmp_path / "b.md").write_text("x")
     assert M.resolve_openapi([str(tmp_path / "b.md")], None) == ROOT / "tools/openapi.json"
     (tmp_path / "openapi.json").write_text("{}")
     assert M.resolve_openapi([str(tmp_path / "b.md")], None) == tmp_path / "openapi.json"
     assert M.resolve_openapi([str(tmp_path)], None) == tmp_path / "openapi.json"
+    assert M.resolve_openapi([str(tmp_path / "b.md")], "/x/other.json") == Path("/x/other.json")
 
 
 def test_slug():

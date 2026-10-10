@@ -54,12 +54,18 @@ EXTRACT_MAX_S = 360          # extraction budget (design §4: <= 6 min)
 FINAL_RESERVE_S = 150        # kept back for the final compile, save and export
 ROUND2_MIN_S = 12 * 60       # fix round + round 2 only with more than this left (after the reserve)
 TUNNEL_WAIT_S = 120          # once the spec exists, wait at most this long for the tunnel
+BUSY_MAX_S = 180             # a busy workspace (another team simulation) longer than this skips the self-test
+FREYA_CALL_S = 180           # one save_workflow / export_workflow call
 STYLES = [None, "talkative", "pieces", "corrects", "asks_back", "in_words"]   # tools/run_cases.STYLES, mixed
 SEED = 0
 
 
 class BudgetStop(Exception):
     """The time budget ran out while a phase was running."""
+
+
+class WorkspaceBusy(Exception):
+    """Another simulation kept the Freya workspace busy for more than BUSY_MAX_S."""
 
 
 class Bg:
@@ -110,14 +116,14 @@ def run_fix(*a, **kw):
 # ---------------------------------------------------------------------------------------------------------- inputs
 
 def resolve_openapi(briefs, override):
-    """The openapi.json next to the brief files, else --openapi, else tools/openapi.json."""
+    """--openapi, else the openapi.json next to the brief files, else tools/openapi.json."""
+    if override:
+        return Path(override)
     for b in briefs:
         p = Path(b)
         cand = (p if p.is_dir() else p.parent) / "openapi.json"
         if cand.exists():
             return cand
-    if override:
-        return Path(override)
     return ROOT / "tools" / "openapi.json"
 
 
@@ -154,6 +160,30 @@ def git_commit():
         return sha + ("-dirty" if dirty else "") if sha else "unknown"
     except Exception:
         return "unknown"
+
+
+def _expected_key(c):
+    return json.dumps(c.get("expected"), sort_keys=True, default=str)
+
+
+def round2_cases(cs1, cs2):
+    """Round 2 runs every round-1 case again (same seed, same customers) plus the round-2 cases whose expected result
+    differs from round 1's case for the same scenario (new ids SELF-R2-nn). Returns (cases to run, ids of round-1
+    cases whose expected result is identical in both rounds -- the only ones compared, extra cases)."""
+    by1 = {}
+    for c in cs1:
+        by1.setdefault(c.get("scenario"), c)
+    by2 = {}
+    for c in cs2:
+        by2.setdefault(c.get("scenario"), c)
+    comparable = {c["id"] for c in cs1
+                  if c.get("scenario") in by2 and _expected_key(by2[c.get("scenario")]) == _expected_key(c)}
+    extra = []
+    for c in cs2:
+        c1 = by1.get(c.get("scenario"))
+        if c1 is None or _expected_key(c1) != _expected_key(c):
+            extra.append(dict(c, id="SELF-R2-%02d" % (len(extra) + 1)))
+    return list(cs1) + extra, comparable, extra
 
 
 def _notes_on(spec):
@@ -250,6 +280,8 @@ class Build:
             except BudgetStop:
                 self.ev("budget_stop", phase="selftest", seconds_left=round(self.left(), 1))
                 self.log("budget reached: stopping the self-test, keeping the best spec")
+            except WorkspaceBusy as e:
+                self.ev("selftest_skipped", why="workspace busy: %s" % e)
             except Exception as e:
                 self.failed("selftest", e)
         return self._final_with_fallback()
@@ -320,14 +352,44 @@ class Build:
                 first=[scrub(p)[:300] for p in errs[:5]])
         return wf
 
+    def _save(self, slot, wf):
+        return bounded(lambda: freya.save_workflow(slot, wf, state_file=str(STATE_FILE)),
+                       min(FREYA_CALL_S, max(5.0, self.left())))
+
     def _round(self, k, spec, cs, url):
         wf = self._compile_lint(spec, url + "/v1", "selftest%d" % k)
-        saved = freya.save_workflow(self.slot + "-selftest", wf, state_file=str(STATE_FILE))
+        saved = self._save(self.slot + "-selftest", wf)
         self.ev("saved", slot=self.slot + "-selftest", workflow_id=saved["workflow_id"], agent_id=saved["agent_id"],
                 url_kind="tunnel", round=k)
         self.log("round %d: %d cases on agent %s" % (k, len(cs), saved["agent_id"]))
         t = time.monotonic()
-        res = bounded(lambda: selftest.run(saved["agent_id"], cs, url, styles=STYLES), self.test_left())
+        sim = {"id": None, "abandoned": False}
+        lock = threading.Lock()
+
+        def on_created(sid):
+            with lock:
+                sim["id"] = sid
+                late = sim["abandoned"]
+            self.ev("simulation_started", round=k, simulation_id=sid, agent_id=saved["agent_id"], cases=len(cs))
+            if late:
+                self.ev("orphan_simulation", id=sid, round=k, late=True)
+
+        def on_busy(waited):
+            if waited == 0:
+                self.ev("workspace_busy", round=k)
+                self.log("workspace busy: another simulation is running")
+            if waited >= BUSY_MAX_S:
+                raise WorkspaceBusy("workspace busy for %d s" % waited)
+        try:
+            res = bounded(lambda: selftest.run(saved["agent_id"], cs, url, styles=STYLES, on_created=on_created,
+                                               on_busy=on_busy), self.test_left())
+        except BudgetStop:
+            with lock:
+                sim["abandoned"] = True
+                sid = sim["id"]
+            if sid:
+                self.ev("orphan_simulation", id=sid, round=k)
+            raise
         rows = res.get("rows") or []
         failing = [r["id"] for r in rows if not r.get("pass")]
         self.ev("selftest_round", round=k, passed=res["passed"], total=res["total"], failing=failing,
@@ -338,6 +400,7 @@ class Build:
                 simulation_id=res.get("simulation_id"), status=res.get("status"),
                 seconds=round(time.monotonic() - t, 1))
         self.rounds.append({"round": k, "passed": res["passed"], "total": res["total"]})
+        res["passed_ids"] = {r["id"] for r in rows if r.get("pass")}
         self.log("round %d: %d/%d passed" % (k, res["passed"], res["total"]))
         return res
 
@@ -380,13 +443,32 @@ class Build:
         verrs = validate(new, self.openapi)
         self.ev("spec_validated", stage="fix1", errors=len(verrs), first=[scrub(x)[:300] for x in verrs[:5]])
         cs2 = self._cases(new, now)
-        res2 = self._round(2, new, cs2, url)
-        if res2["passed"] >= res1["passed"]:
+        run2, comparable, extra = round2_cases(cs, cs2)
+        self.ev("round2_plan", rerun=len(cs), extra=[c["id"] + ":" + str(c.get("scenario")) for c in extra],
+                comparable=sorted(comparable))
+        res2 = self._round(2, new, run2, url)
+        p1 = len(comparable & res1["passed_ids"])
+        p2 = len(comparable & res2["passed_ids"])
+        if p2 > p1:
             self.best = (new, res2["passed"], "fix1")
-        self.ev("best_spec", label=self.best[2], passed=self.best[1])
+        self.ev("best_spec", label=self.best[2], passed=self.best[1], comparable=len(comparable),
+                round1_passed=p1, round2_passed=p2, rule="round 2 must pass more comparable cases; a tie keeps round 1")
 
     # -- final
+    def _lint_errors(self, spec):
+        try:
+            return [p for p in lint(comp.compile(spec, self.openapi), spec) if not p.startswith("warning:")]
+        except Exception as e:
+            return ["compile or lint crashed: " + _err(e)]
+
     def _final_with_fallback(self):
+        if self.extracted is not None and self.best[0] is not self.extracted:
+            best_errs = self._lint_errors(self.best[0])
+            if best_errs and not self._lint_errors(self.extracted):
+                self.ev("final_spec_switch", from_label=self.best[2], to_label="extract",
+                        why="the best spec has lint errors and the extracted spec has none",
+                        errors=[scrub(x)[:300] for x in best_errs[:5]])
+                self.best = (self.extracted, None, "extract (lint)")
         try:
             return self._final(self.best[0], self.best[2])
         except Exception as e:
@@ -411,12 +493,12 @@ class Build:
             raise RuntimeError("final workflow contains a trycloudflare URL; not saving it")
         if not host or host not in text:
             raise RuntimeError("final workflow does not contain the official host %r; not saving it" % host)
-        saved = freya.save_workflow(self.slot, wf, state_file=str(STATE_FILE))
+        saved = self._save(self.slot, wf)
         self.final.update(workflow_id=saved["workflow_id"], agent_id=saved["agent_id"])
         self.ev("saved", slot=self.slot, workflow_id=saved["workflow_id"], agent_id=saved["agent_id"],
                 url_kind="official", spec=label)
         path = self.out_dir / ("%s.workflow.json" % self.slot)
-        freya.export_workflow(saved["workflow_id"], str(path))
+        bounded(lambda: freya.export_workflow(saved["workflow_id"], str(path)), FREYA_CALL_S)
         self.final.update(exported=True, export=str(path))
         self.ev("export", path=str(path), spec_path=str(spec_path))
         print(json.dumps({"slot": self.slot, "workflow_id": saved["workflow_id"], "agent_id": saved["agent_id"],

@@ -84,8 +84,13 @@ def get_call(call_id):
 AGENT_LLM = {"provider": os.environ.get("FREYA_AGENT_PROVIDER", "experimental-5"), "model": os.environ.get("FREYA_AGENT_MODEL", "experimental-5")}
 SIM_LLM = {"provider": "google", "model": "gemini-3-flash-preview"}        # plays the customer and judges
 
-def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concurrency=int(os.environ.get("FREYA_SIM_CONCURRENCY", "5"))):
-    """Start a text simulation, wait for it, return (simulation_id, iteration_id)."""
+def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concurrency=int(os.environ.get("FREYA_SIM_CONCURRENCY", "5")), on_created=None, on_busy=None):
+    """Start a text simulation, wait for it, return (simulation_id, iteration_id).
+
+    Optional (builder additions, default behaviour unchanged): on_created(simulation_id) is called as soon as the
+    simulation exists; on_busy(waited_seconds) is called each time the workspace is busy, before the 30 s wait (it may
+    raise to stop waiting)."""
+    waited = 0
     while True:                      # a workspace runs one simulation at a time: wait for the running one instead of failing
         try:
             sim = api("POST", "/api/v2/simulations", {
@@ -96,8 +101,10 @@ def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concur
             break
         except RuntimeError as e:
             if "concurrent simulations" not in str(e): raise
-            print("another simulation is running in this workspace, waiting 30 s", flush=True); time.sleep(30)
+            if on_busy: on_busy(waited)
+            print("another simulation is running in this workspace, waiting 30 s", flush=True); time.sleep(30); waited += 30
     sim_id = (sim.get("simulation") or sim)["id"]
+    if on_created: on_created(sim_id)
     while True:
         time.sleep(10)
         s = api("GET", f"/api/v2/simulations/{sim_id}"); s = s.get("simulation") or s
