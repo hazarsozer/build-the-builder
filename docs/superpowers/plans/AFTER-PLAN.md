@@ -92,3 +92,29 @@ done
 - Run `bench/run.py ours` and `bench/run.py fallback` on the same 4 briefs, plus PUB-A and PUB-B at 3 reps.
 - Submit the builder with more passes; on a tie, the faster one.
 - Then freeze: tag `final-candidate`. From then on only crash fixes go in.
+
+## Hidden-brief hypothesis matrix (drives Task 9 corpus and extra cases)
+
+Evidence key: **K** = kit README/docs/code, **T** = kickoff transcript, **P** = τ^τ-bench paper, **I** = our inference.
+
+| # | Hypothesis about the hidden briefs | Evidence | Covered by | Status |
+|---|---|---|---|---|
+| H1 | One brief is raw material: a mail, a policy extract, a memo that changes the policy (possibly unlabelled), a code list, and decoy documents | K, P | bench/raw-a (memo changes a band); add **raw-decoy**: a decoy mail that uses policy words but decides nothing, plus an unlabelled later mail that overrides | todo |
+| H2 | Identity questions change: postcode, birth year, company number, founded year; two or three questions; a per-question wrong-answer limit | K (`run_cases.persona_for` knows these fields) | bench/ids; bench/sme | todo |
+| H3 | A business (SME) or insurance customer: product names, floor fields and words all change | T ("banking or insurance case"), K | bench/sme (business overdraft), **bench/insurance** (overdue premium, floor = minimum instalment, policy number spoken) | todo |
+| H4 | Tool fields and enums change: new or renamed close outcomes and reasons, transfer queues, add_note reasons, extra required fields | K ("fields and allowed values can change") | bench/outcomes; **bench/fields**: one tool takes an extra required enum field, e.g. create_promise.channel | todo |
+| H5 | A different calendar: other business weekdays, many holidays, deadlines as calendar days or end of month, snapped back | K | bench/calendar | todo |
+| H6 | More bands with different ladders (1/2/3 attempts), floor-first vs full-first | I | bench/bands3 | todo |
+| H7 | New situations with their own outcome (bankruptcy, legal, complaint, vulnerable customer, wants it in writing, debt sold) | I, K ("another outcome table") | bench/outcomes (bankruptcy → transfer legal); generic events tested in cases | partly |
+| H8 | Up to 3 products on every final customer, with mixed bands and deadlines and shared dates | K | PUB-B + spec-b cases; **3-product cases at several `now` values** | partly |
+| H9 | Customers "on several calendar days": Friday, before holidays, after hours, month end | K | AFTER-PLAN §3 | todo |
+| H10 | Human-like speech: pieces, corrections, talkative, asks back, numbers and dates in words | K | AFTER-PLAN §2 (all 5 styles × A, B) | todo |
+| H11 | Personas: angry, satisfied, scammer, prompt injection | T | injection case exists; **add angry/abusive** (stay calm, policy close) and **"is this a scam"** cases to the generic set | partly |
+| H12 | Tool failures beyond create_promise: get_account 500, verify_identity 500, schedule_callback failure, add_note failure | K (every tool documents a 500), I | faults in our bank: **add cases** for get_account and verify_identity failing once, then twice | todo |
+| H13 | A brief that allows something A forbids, e.g. a payment plan of two dates, more than one promise per product, a discount within limits | I | **bench/plan2**: allows a 2-part plan (two create_promise calls for one product) → check whether the schema can express it, or it goes to extra_rules | todo (schema risk) |
+| H14 | Required fixed sentences that differ: a legal disclosure in the opening, a mini-Miranda, a data-protection line | I, K ("judge checks wording") | bench/strict-wording | todo |
+| H15 | Response-field changes in the bank: e.g. `verified` renamed, wrong_answers_left absent | K, P | post-hook tolerance test (Task 4 test_hooks) + **bench/fields** with renamed response fields | partly |
+| H16 | The persona tests the third-party rules: a relative offers to pay or asks for the amount | K (PUB) | spec cases: third-party offers to pay | todo |
+| H17 | Judge literalism on new words: "guarantee", "I have noted", promising consequences | P, K | AFTER-PLAN §6 audit | todo |
+
+Rule: each "todo" becomes a corpus brief or a case-generator scenario. Each closes when the full builder passes it at 3 reps on our bank, or when the miss is logged with a ruling.
