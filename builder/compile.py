@@ -408,29 +408,46 @@ try:
             if len(yr) == 4 and 1 <= int(mo) <= 12 and 1 <= int(dy) <= 31:
                 return '%s-%02d-%02d' % (yr, int(mo), int(dy))
         return a
+    def _norm(a, q):
+        """(normalised answer, complete?) for one answer text."""
+        fm = q.get('format')
+        if fm == 'date':
+            v = _date(a, q.get('date_order') or 'DMY')
+            return v, bool(re.match(r'^\d{4}-\d{2}-\d{2}$', v))
+        if fm == 'digits':
+            dg = ''.join(ch for ch in a if ch.isdigit())
+            n = int(q.get('length') or 0)
+            if n and len(dg) >= n:
+                return dg[-n:], True
+            return dg or a, not n and bool(dg)
+        if fm == 'year':
+            m = re.search(r'\d{4}', a)
+            return (m.group(0), True) if m else (a, False)
+        if fm == 'postcode':
+            return a.upper().replace(' ', ''), True
+        return a, True
+    vars['id_incomplete'] = 'no'
     b = config.get('body')
     if isinstance(b, dict):
         q = FORMATS.get(str(b.get('field') or ''))
         a = str(b.get('answer') if b.get('answer') is not None else '').strip()
         if q and a:
-            fm = q.get('format')
-            if fm == 'date':
-                b['answer'] = _date(a, q.get('date_order') or 'DMY')
-            elif fm == 'digits':
-                dg = ''.join(ch for ch in a if ch.isdigit())
-                n = int(q.get('length') or 0)
-                if n and len(dg) >= n:
-                    b['answer'] = dg[-n:]
-                elif dg:
-                    b['answer'] = dg
-            elif fm == 'year':
-                m = re.search(r'\d{4}', a)
-                if m:
-                    b['answer'] = m.group(0)
-            elif fm == 'postcode':
-                b['answer'] = a.upper().replace(' ', '')
+            v, ok = _norm(a, q)
+            if not ok:
+                # parts said across turns: the extracted id_partial holds what was collected so far
+                part = str(vars.get('id_partial') or '').strip()
+                for cand in ([part + ' ' + a, a + ' ' + part] if part and part not in a else []):
+                    v2, ok2 = _norm(cand.strip(), q)
+                    if ok2:
+                        v, ok = v2, True
+                        break
+            if ok:
+                b['answer'] = v
             else:
-                b['answer'] = a
+                # a partial answer must not reach the bank as an answer (a short digit string counts as wrong)
+                vars['id_incomplete'] = 'yes'
+                b['field'] = 'incomplete_answer'
+                b['answer'] = ''
 except Exception:
     pass
 '''
@@ -445,7 +462,14 @@ try:
             result['data'] = d
         left = d.get('wrong_answers_left')
         hint = d.get('hint')
-        if str(result.get('status', 'success')) != 'success' or (d.get('ok') is None and d.get('verified') is None):
+        if str(vars.get('id_incomplete') or '') == 'yes':
+            vars['id_incomplete'] = 'no'
+            d.clear()
+            d['ok'] = False
+            d['counted'] = False
+            d['what_to_do_next'] = ('The answer is INCOMPLETE and was NOT checked. This is NOT a wrong answer. Ask only for the missing part (' +
+                                    UNREADABLE + '), keep the part already given, and then call verify_identity once with the whole answer.')
+        elif str(result.get('status', 'success')) != 'success' or (d.get('ok') is None and d.get('verified') is None):
             d['what_to_do_next'] = 'The security service had a technical problem and nothing was checked. Say so in one short sentence and call verify_identity again with the same answer.'
         elif d.get('all_verified') is True:
             d['what_to_do_next'] = 'All answers are verified. Say only: Thank you.'
@@ -868,6 +892,7 @@ class _Compiler:
         lines += [
             "Ask when %s can be reached." % self.addr,
             "Callback window: {{callback_rules}}",
+            "- Combine parts said across turns (a day, then a time) before acting.",
             '- If they give a day and time inside the window, call schedule_callback with date as YYYY-MM-DD and time as HH:MM (24 hour). "Tomorrow morning around eleven" means 11:00 on the next day.',
             "- If what they offer is outside the window, say you can only call back %s, and ask %s for another time. Do not schedule anything outside the window."
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
@@ -927,6 +952,9 @@ class _Compiler:
         lines.append("Call verify_identity once for every answer: " + "; or ".join(self.answer_format(x) for x in qs) + ".")
         lines += [
             "Follow the what_to_do_next of each result exactly. A wrong answer may be asked again.",
+            "If the customer gives only part of an answer (day and month without the year, some of the digits, half a postcode): ask only for the missing part, "
+            "combine the parts said across turns, and call verify_identity once with the complete combined answer. Never call it with a partial answer.",
+            'If the customer corrects themselves in the same message ("the 21st, sorry, I mean the 20th"): use the corrected value and call verify_identity once.',
             "Before all answers are verified: never say why you are calling. Never say %s, the product or an amount. "
             "Do not tell the customer how many wrong answers are left." % self.banned_words(),
             "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time."
@@ -983,7 +1011,7 @@ FACTS (computed, use them exactly)
 {{calendar_text}}
 
 HOW TO GET A PROMISE
-1. The customer names a date or an amount: that is never a refusal. Check it:
+1. The customer names a date or an amount (combine parts said across turns): never a refusal. Check it:
    - Date must be one of the dates you may accept. %s %s
    - %s
    - %s
@@ -1098,14 +1126,21 @@ HOW TO GET A PROMISE
             "task_message": self.identity_task(),
             "tools": [self.tool("verify_identity", {
                 "field": {"description": "Which question this answer is for: %s." % join_or([x["field"] for x in qs]), "default": "{{field}}"},
-                "answer": {"description": answer_desc + ".", "default": "{{answer}}"},
+                "answer": {"description": answer_desc + ". The COMPLETE answer: combine parts said across turns; after a self-correction use only the corrected value.",
+                           "default": "{{answer}}"},
             }, ["field", "answer"], description="Check one security answer. CALL it every time the customer answers a security question.",
                 retries=1, mapping=[{"path": "data.all_verified", "variable": "id_all"}, {"path": "data.wrong_answers_left", "variable": "id_left"}],
                 pre=pre, post=post)],
             "extraction_schema": [{
                 "name": "id_event", "type": "string", "min_confidence": 0.6,
                 "enum_values": ["continue"] + values,
-                "description": " ".join(desc + ["continue: anything else, including a first refusal."]),
+                "description": " ".join(desc + ["continue: anything else, including a first refusal. A partial answer (only part of a date, "
+                                                "some of the digits), \"give me a second\", a self-correction or a question back is continue, never a refusal."]),
+            }, {
+                "name": "id_partial", "type": "string", "min_confidence": 0.5,
+                "description": ("The parts of the answer to the security question currently being asked, as said so far across the customer's "
+                                "messages, combined in the order said (e.g. \"14 March\" then \"1988\" gives \"14 March 1988\"; \"44\" then \"10\" gives \"4410\"). "
+                                "After a self-correction keep only the corrected value. Empty when a new question is asked."),
             }] + self.seen_vars("identity"),
             "max_node_turns": 20, "max_turn_transition": declined,
             "transitions": [
@@ -1218,7 +1253,7 @@ PRODUCTS (computed, use them exactly; a product_id is for the tool only, never s
 HOW TO RUN THE CALL
 1. If the customer can pay everything today: call %(tool)s with product_id ALL, outcome agreed, amount full and today's date.
    If not, go through the products one by one, %(order)s. Do not ask about today again. Start each product at attempt 1 of its own persuasion plan; attempts are counted per product.
-2. For the product you are discussing, the customer names a date or an amount: that is never a refusal.
+2. For the product you are discussing, the customer names a date or an amount (combine parts said across turns, "four hundred... and twenty" = 420): never a refusal.
    - Date: a business day from today up to that product's deadline. %(nbd)s A date after its deadline: say the latest date you can accept for it is its deadline, and offer it.
    - %(vague)s
    - Amount: from the product's floor up to its full amount.

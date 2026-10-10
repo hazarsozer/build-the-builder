@@ -78,11 +78,68 @@ def test_verify_prehook_normalises_by_format():
     q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
     cases = [(q["date"], "02/11/1979", "1979-11-02"), (q["date"], "14 March 1988", "1988-03-14"),
              (q["date"], "March 14, 1988", "1988-03-14"), (q["date"], "1988-03-14", "1988-03-14"),
-             (q["digits"], "55 01 23 3 4 4 7", "3447"), (q["digits"], "4 4 7", "447")]
+             (q["digits"], "55 01 23 3 4 4 7", "3447")]
     for field, ans, want in cases:
         cfg = {"body": {"field": field, "answer": ans}}
         run(pre, None, {}, cfg)
         assert cfg["body"]["answer"] == want, (field, ans)
+
+
+def _verify(w, field, answer, v, result):
+    t = _tool(w, "verify_identity")
+    cfg = {"body": {"field": field, "answer": answer}}
+    run(t["pre_process_code"], None, v, cfg)
+    if cfg["body"]["field"] == "incomplete_answer":
+        result = {"status": "success", "data": {"ok": False, "error": "field must be ..."}}
+    run(t["post_process_code"], result, v)
+    return cfg["body"], result["data"]
+
+
+def test_p1_partial_answers_never_reach_the_bank_as_answers():
+    w = C(A, OA)
+    q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
+    ok = {"status": "success", "data": {"ok": True, "verified": False, "wrong_answers_left": 2}}
+    for field, ans in [(q["date"], "14 March"), (q["digits"], "44"), (q["digits"], "4 4 7")]:
+        v = {}
+        body, data = _verify(w, field, ans, v, dict(ok))
+        assert body["field"] == "incomplete_answer" and body["answer"] == "", ans
+        assert "INCOMPLETE" in data["what_to_do_next"] and "NOT a wrong answer" in data["what_to_do_next"]
+        assert data["counted"] is False and v["id_incomplete"] == "no"
+
+
+def test_p1_parts_are_combined_from_id_partial():
+    w = C(A, OA)
+    q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
+    body, _ = _verify(w, q["date"], "1988", {"id_partial": "14 March"}, {"status": "success", "data": {"ok": True}})
+    assert body == {"field": q["date"], "answer": "1988-03-14"}
+    body, _ = _verify(w, q["digits"], "10", {"id_partial": "44"}, {"status": "success", "data": {"ok": True}})
+    assert body["answer"] == "4410"
+    body, _ = _verify(w, q["digits"], "4410", {"id_partial": "99"}, {"status": "success", "data": {"ok": True}})
+    assert body["answer"] == "4410"
+
+
+def test_p3_self_correction_digits_keep_the_last_value():
+    w = C(A, OA)
+    q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
+    body, _ = _verify(w, q["digits"], "4401, sorry, I mean 4410", {}, {"status": "success", "data": {"ok": True}})
+    assert body["answer"] == "4410"
+
+
+def test_p1_p2_p3_prompt_and_extraction():
+    n = C(A, OA)["nodes"]["identity"]
+    assert "ask only for the missing part" in n["task_message"] and "corrected value" in n["task_message"]
+    ans = n["tools"][0]["function"]["parameters"]["properties"]["body"]["properties"]["answer"]["description"]
+    assert "combine parts said across turns" in ans and "corrected value" in ans
+    names = [x["name"] for x in n["extraction_schema"]]
+    assert "id_partial" in names
+    assert "A partial answer" in n["extraction_schema"][0]["description"] and "never a refusal" in n["extraction_schema"][0]["description"]
+
+
+def test_p4_combine_parts_in_negotiate_and_third_party():
+    for spec in (A, json.load(open("specs/reference/spec-b.json"))):
+        w = C(spec, OA)
+        assert "combine parts said across turns" in w["nodes"]["negotiate"]["task_message"]
+        assert "Combine parts said across turns" in w["nodes"]["third_party"]["task_message"]
 
 
 def test_verify_posthook_messages():
