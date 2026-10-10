@@ -21,6 +21,7 @@ import sys
 
 from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
+from builder.multi import Multi, enabled as multi_enabled
 from builder.nodes import (all_of, always, api_tool, body_enum, close_node, code_node, cond_any, eq, go,
                            goodbye_node, gt, is_true, py_json, transfer_node)
 
@@ -246,17 +247,22 @@ def product_facts(p):
     band = pick_band(days_late)
     dl = deadline(today, band['deadline'], CAL)
     attempts = []
+    prev = None
     for i, a in enumerate(band['attempts']):
         d = attempt_date(today, a['date'], dl, CAL)
-        if a['amount'] == 'floor':
-            amt = 'propose the floor amount ' + fmt(floor)
-        elif a['amount'] == 'full':
-            amt = 'propose the full amount ' + fmt(past_due)
-        else:
-            amt = ('propose the full amount ' + fmt(past_due) + ' (or the floor ' + fmt(floor) +
-                   ' if the customer already said the full amount is too much)')
         when = ('on the deadline, ' + speak(d)) if a['date'] == 'deadline' else ('on ' + speak(d))
-        attempts.append(dict(date=d, text='Attempt ' + str(i + 1) + ': ' + amt + ' ' + when + '.'))
+        if prev is not None and a['amount'] == prev:
+            txt = 'propose only the new date ' + when + ' for that same amount, without saying the figure again.'
+        elif a['amount'] == 'floor':
+            txt = ('propose the floor amount ' + fmt(floor) + ' ' + when + '. If the floor was already offered, propose only the date ' +
+                   'for that amount, without saying the figure again.')
+        elif a['amount'] == 'full':
+            txt = 'propose the full amount ' + fmt(past_due) + ' ' + when + '.'
+        else:
+            txt = ('propose the full amount ' + fmt(past_due) + ' ' + when + '. If the customer already said the full amount is too much, ' +
+                   'the floor ' + fmt(floor) + ' is already on the table: propose only the date for that amount, without saying the figure again.')
+        prev = a['amount']
+        attempts.append(dict(date=d, text='Attempt ' + str(i + 1) + ': ' + txt))
     n = len(attempts)
     plan = '\n'.join(a['text'] for a in attempts)
     plan += ('\nThis customer is in the ' + str(band['name']).upper() + ' band: ' + NUMS.get(str(n), str(n)) +
@@ -444,7 +450,7 @@ try:
         elif str(left) == '0':
             d['what_to_do_next'] = 'That was the last wrong answer allowed. The check has ended. Do not ask anything else.'
         else:
-            d['what_to_do_next'] = 'This answer does not match our records. Say so and ask the SAME question again. Wrong answers left: ' + str(left) + '.'
+            d['what_to_do_next'] = 'This answer does not match the details on file. Say so and ask the SAME question again. Wrong answers left: ' + str(left) + '.'
 except Exception:
     pass
 '''
@@ -536,6 +542,7 @@ class _Compiler:
         self.fail_ev = spec["confirmation"].get("failure_event") or ""
         self.nodes = {}
         self.transfers = {}   # (queue, close) -> node key
+        self.multi = Multi(self) if multi_enabled(spec) else None
 
     # ---- helpers
     def tool(self, name, props, required, **kw):
@@ -543,6 +550,25 @@ class _Compiler:
 
     def has(self, ev_id):
         return ev_id in self.events
+
+    @staticmethod
+    def stages_of(ev):
+        return stages_of(ev)
+
+    @staticmethod
+    def lead_in(eid):
+        return LEAD_IN.get(eid, "I understand.")
+
+    def end_target(self, stage, eid):
+        """Where a closing event goes: its close node, or (several products, negotiate) its wrap node."""
+        if self.multi and stage == "negotiate":
+            return "wrap_" + eid
+        return self.close_key(eid)
+
+    def stage_tools(self, stage):
+        if self.multi and stage == "negotiate":
+            return set()
+        return STAGE_TOOLS.get(stage, set())
 
     def close_key(self, ev_id):
         return "close_" + ev_id
@@ -565,7 +591,8 @@ class _Compiler:
         skip = set(STRUCTURAL.get(stage, set()))
         if stage == "negotiate":
             skip.add(self.fail_ev)
-        return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip]
+        return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip
+                and not (self.multi and stage == "negotiate" and e["action"] == "note_and_continue")]
 
     def banned_for(self, stage):
         """Banned offers minus those that share a content word with a transfer event's trigger in this stage
@@ -616,12 +643,13 @@ class _Compiler:
             if say and say not in parts:
                 parts.append(code_tpl(say))
         named = set(stages_of(ev)) <= {"negotiate"} and kind != "transfer"
-        if self.s.get("closing", {}).get("thank_and_goodbye", True) is not False:
-            parts.append("Thank you for your time, " + self.s["address_as"] + ". Goodbye." if named
-                         else "Thank you for your time. Goodbye.")
-        else:
-            parts.append("Goodbye.")
+        parts.append(self.thanks(named))
         return " ".join(parts)
+
+    def thanks(self, named):
+        if self.s.get("closing", {}).get("thank_and_goodbye", True) is not False:
+            return "Thank you for your time, " + self.s["address_as"] + ". Goodbye." if named else "Thank you for your time. Goodbye."
+        return "Goodbye."
 
     def build_closes(self):
         for ev in self.s["events"]:
@@ -652,17 +680,18 @@ class _Compiler:
             times = ev.get("times") or 1
             if self.counted_close(stage, ev):
                 nth = "" if ("second" in trig or "twice" in trig) else " (for the %s time)" % ORD.get(times, str(times))
-                trans.append({"target_node": self.close_key(eid), "is_tool_call": True,
+                trans.append({"target_node": self.end_target(stage, eid), "is_tool_call": True,
                               "description": "Call this when the customer %s%s. The goodbye is spoken automatically." % (trig, nth),
                               "condition": {"operator": "matches_intent", "description": "The customer %s%s" % (trig, nth)}})
                 continue
             extra = (" It must be the %s time; an earlier time is NOT %s." % (ORD.get(times, str(times)), eid)
                      if times > 1 and "second" not in trig and "twice" not in trig else "")
             if act == "insist_once_then_transfer":
-                values.append(eid)
-                desc.append("%s: %s, the agent already asked once whether it can help, and they insist again." % (eid, subj(who, trig)))
+                values += [eid + "_first_request", eid + "_insists"]
+                desc.append("%s_first_request: %s, and the agent has not yet answered such a request by asking whether it can help first." % (eid, subj(who, trig)))
+                desc.append("%s_insists: the agent already asked whether it can help first, and in this message %s again." % (eid, subj(who, trig)))
                 t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
-                trans.append(go(t, "Insists: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
+                trans.append(go(t, "Insists: " + eid, all_of(eq(EXTRACT_VAR[stage], eid + "_insists"), eq(eid + "_asked", "yes"))))
             elif act == "offer_transfer_else_close":
                 team = team_words(ev["queue"]).replace("our ", "the ")
                 values += [eid, eid + "_accepted", eid + "_declined"]
@@ -672,7 +701,7 @@ class _Compiler:
                             "This wins over every other value, even if the same message also asks for something else or says they cannot pay." % (eid, team))
                 t = self.transfer_to(ev["queue"], self.close_key(eid) + "_transfer", eid)
                 trans.append(go(t, eid + ": transfer accepted", all_of(eq(EXTRACT_VAR[stage], eid + "_accepted"), eq(eid + "_seen", "yes"))))
-                trans.append(go(self.close_key(eid), eid + ": transfer declined", all_of(eq(EXTRACT_VAR[stage], eid + "_declined"), eq(eid + "_seen", "yes"))))
+                trans.append(go(self.end_target(stage, eid), eid + ": transfer declined", all_of(eq(EXTRACT_VAR[stage], eid + "_declined"), eq(eid + "_seen", "yes"))))
             elif act == "transfer":
                 values.append(eid)
                 not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s."
@@ -683,12 +712,25 @@ class _Compiler:
             else:  # close, note_and_continue (single product: close)
                 values.append(eid)
                 desc.append("%s: %s.%s" % (eid, subj(who, trig), extra))
-                trans.append(go(self.close_key(eid), "Close: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
+                trans.append(go(self.end_target(stage, eid), "Close: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
+        desc.append(self.not_events(stage))
         return values, desc, trans
+
+    def not_events(self, stage):
+        """Say-rule triggers are answered in place: list them as NOT an event (a robot question once fired a transfer)."""
+        trig = [r["trigger"] for r in self.s.get("say_rules", [])
+                if stage in (r.get("stages") or ["any"]) or ("any" in (r.get("stages") or ["any"]) and stage in ANY_STAGES)]
+        if not trig:
+            return ""
+        default = "not_confirmed" if stage == "opening" else "continue"
+        return ("These are NOT any transfer or close event (value %s): the person %s." % (default, "; or ".join(trig)))
 
     def seen_vars(self, stage):
         out = []
         for ev in self.stage_events(stage):
+            if ev["action"] == "insist_once_then_transfer":
+                out.append({"name": ev["id"] + "_asked", "type": "string", "min_confidence": 0.6, "enum_values": ["yes", "no"],
+                            "description": "yes if, in an EARLIER message, the person %s and the agent replied by asking whether it can help first. Otherwise no." % ev["trigger"]})
             if ev["action"] == "offer_transfer_else_close":
                 out.append({"name": ev["id"] + "_seen", "type": "string", "min_confidence": 0.6, "enum_values": ["yes", "no"],
                             "description": "yes if anywhere in the conversation the customer %s. Otherwise no." % ev["trigger"]})
@@ -721,7 +763,7 @@ class _Compiler:
         """Extra rules of a stage, minus any that names a tool the stage's model does not have
         (close_call and engine-run calls such as get_account are never the model's to call)."""
         tools = {p.strip("/") for p in self.oa.get("paths", {})}
-        mine = STAGE_TOOLS.get(stage, set())
+        mine = self.stage_tools(stage)
         out = []
         for r in rules_for(self.s.get("extra_rules", []), stage):
             named = {t for t in tools if re.search(r"\b%s\b" % re.escape(t), r["text"])}
@@ -742,7 +784,8 @@ class _Compiler:
         ]
         if banned:
             lines.append("- Never offer %s, or any term not given in your instructions." % join_or([with_article(b) for b in banned]))
-        lines.append("- Never say that something is recorded, booked or done unless the tool result says so.")
+        lines.append("- Never say that something is recorded, booked or done unless the tool result says so. Until a tool result says a promise is recorded, "
+                     "never use the words 'record' or 'recorded' at all (not for the call, not for a date or an amount): say 'note down' or 'register'.")
         lines += ["- " + l for l in self.say_lines("any")]
         lines += ["- After every tool result, speak to the customer or call the next tool. Never end a turn with nothing. Call one tool per message.",
                   "- When a tool result contains what_to_do_next, follow it."]
@@ -862,16 +905,16 @@ class _Compiler:
     def negotiate_task(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
         banned = neg.get("banned_offers") or []
-        nbd = {"next_business_day": "A weekend day or holiday that is not after the deadline: offer the NEXT business day after it (the calendar names it), not the deadline.",
-               "previous_business_day": "A weekend day or holiday that is not after the deadline: offer the business day BEFORE it (the calendar names it), not the deadline.",
+        nbd = {"next_business_day": "A weekend day or holiday that is not after the deadline: offer the NEXT business day after it, not the deadline.",
+               "previous_business_day": "A weekend day or holiday that is not after the deadline: offer the business day BEFORE it, not the deadline.",
                "reject": "A weekend day or holiday: say it is not a business day and ask for a business day."}[neg.get("non_business_day", "next_business_day")]
-        aft = {"offer_deadline": "A date after the deadline: say the latest date you can record is the deadline ({{deadline_text}}) and offer it.",
-               "reject": "A date after the deadline: say it cannot be recorded and ask for a date on or before the deadline ({{deadline_text}})."}[neg.get("after_deadline", "offer_deadline")]
+        aft = {"offer_deadline": "A date after the deadline: say the latest date you can accept is the deadline ({{deadline_text}}) and offer it.",
+               "reject": "A date after the deadline: say it cannot be accepted and ask for a date on or before the deadline ({{deadline_text}})."}[neg.get("after_deadline", "offer_deadline")]
         vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes", "the week after next"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
                  "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
-        below = {"offer_floor_once": "Amount from the floor up to the full amount: accept it. Below the floor: say it cannot be recorded and offer the floor once.",
-                 "reject": "Amount from the floor up to the full amount: accept it. Below the floor: say it cannot be recorded.",
+        below = {"offer_floor_once": "Amount from the floor up to the full amount: accept it. Below the floor: say it cannot be accepted and offer the floor once.",
+                 "reject": "Amount from the floor up to the full amount: accept it. Below the floor: say it cannot be accepted.",
                  "accept": "Any amount above zero up to the full amount: accept it."}[neg.get("below_floor", "offer_floor_once")]
         fo = neg.get("floor_offer") or {}
         times = fo.get("times", 1)
@@ -883,7 +926,7 @@ class _Compiler:
         if neg.get("never_ask_how_much"):
             too_much += " Never ask how much they can pay; you propose every amount."
         refuse = ("A flat refusal or a non-answer (including \"no\" to paying today with no date and no amount, refusing the floor, refusing the deadline) "
-                  "uses one persuasion attempt from the persuasion plan. Make the next attempt in the plan. Never repeat an offer the customer already refused.")
+                  "uses one persuasion attempt of the plan. Make the next attempt in the plan. Never repeat an offer the customer already refused.")
         if self.has("refused"):
             refuse += " When all attempts in the plan are used and the customer still refuses, call transition_to_close_refused."
         first_ask = tpl(neg["first_ask"])
@@ -893,9 +936,9 @@ FACTS (computed, use them exactly)
 - Today: {{today_text}}. Current time {{now_time}}.
 - Product: {{product_words}}.
 - Full past-due amount: {{past_due_text}}.
-- Floor (lowest amount you may record): {{floor_text}}. Any amount from {{floor_text}} up to {{past_due_text}} (both included) can be accepted.
-- Deadline (latest date you may record): {{deadline_text}}.
-- Dates you may record (business days from today to the deadline): {{allowed_dates_text}}
+- Floor (lowest amount you may accept): {{floor_text}}.
+- Deadline (latest date you may accept): {{deadline_text}}.
+- Dates you may accept (business days from today to the deadline): {{allowed_dates_text}}
 - Persuasion plan:
 {{attempt_plan}}
 - Weekday words:
@@ -905,13 +948,14 @@ FACTS (computed, use them exactly)
 
 HOW TO GET A PROMISE
 1. The customer names a date or an amount: that is never a refusal. Check it:
-   - Date must be one of the dates you may record. %s %s
+   - Date must be one of the dates you may accept. %s %s
    - %s
    - %s
 2. %s
 3. %s
-4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. If they change the date or amount, check it again and read it back again.
-5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). Do not say it is recorded yourself; the result decides.""" % (
+   After an amount was offered or agreed, later proposals name only the new date ("that payment"). Never restate a figure already offered.
+4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
+5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
             first_ask, nbd, aft, vague, below, too_much, refuse, q(tpl(conf["question"])))
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
@@ -954,7 +998,7 @@ HOW TO GET A PROMISE
                     + desc +
                     ["not_confirmed: anything else that does not confirm (%s, a question, an unclear answer)." % reject,
                      "pending: no message yet."]),
-            }],
+            }] + self.seen_vars("opening"),
             "max_node_turns": max_asks + 1, "max_turn_transition": unclear,
             "transitions": [
                 go("identity", "Confirmed", cond_any(eq("line_status", "confirmed"))),
@@ -985,7 +1029,7 @@ HOW TO GET A PROMISE
                 "name": "tp_status", "type": "string", "min_confidence": 0.6,
                 "enum_values": ["continue"] + values,
                 "description": " ".join(desc + ["continue: anything else."]),
-            }],
+            }] + self.seen_vars("third_party"),
             "max_node_turns": 12, "max_turn_transition": no_cb,
             "transitions": tr + trans,
         }
@@ -1027,7 +1071,7 @@ HOW TO GET A PROMISE
                 "name": "id_event", "type": "string", "min_confidence": 0.6,
                 "enum_values": ["continue"] + values,
                 "description": " ".join(desc + ["continue: anything else, including a first refusal."]),
-            }],
+            }] + self.seen_vars("identity"),
             "max_node_turns": 20, "max_turn_transition": declined,
             "transitions": [
                 go("load_account", "All answers verified", is_true("id_all", "verify_identity_response.data.all_verified")),
@@ -1086,7 +1130,7 @@ HOW TO GET A PROMISE
             "tools": [self.tool("create_promise", {
                 "product_id": {"default": "{{product_id}}"},
                 "amount": {"description": "Promised amount, a number such as 420.00. From the floor up to the full past-due amount.", "default": "{{promise_amount}}"},
-                "date": {"description": "Promised payment date, YYYY-MM-DD, one of the dates you may record.", "default": "{{promise_date}}"},
+                "date": {"description": "Promised payment date, YYYY-MM-DD, one of the dates you may accept.", "default": "{{promise_date}}"},
             }, ["amount", "date"], description="Record the payment promise. CALL it only after the customer said yes to your read-back of product, amount and date.",
                 mapping=[{"path": "data.promise_status", "variable": "promise_status"}], post=PROMISE_POST.replace("RETRIES", str(int(retries))))],
             "extraction_schema": [{

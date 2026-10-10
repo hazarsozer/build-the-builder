@@ -28,13 +28,14 @@ def body_enum(openapi, tool, field):
 # ---------------------------------------------------------------- tools
 
 def api_tool(name, base_url, openapi, body_props, required, description="", retries=0,
-             mapping=None, pre=None, post=None):
-    """An api_call tool for POST <base_url>/<name>.
+             mapping=None, pre=None, post=None, path=None):
+    """An api_call tool for POST <base_url>/<path or name>.
 
     Each body property starts from its openapi schema (type, enum) and is overridden by
     `body_props[field]` (default, description, enum...). customer_id is always baked.
     """
-    oa_props = body_schema(openapi, name).get("properties", {})
+    path = path or name
+    oa_props = body_schema(openapi, path).get("properties", {})
     props = {}
     for field, over in [("customer_id", {"default": "{{customer_id}}"})] + list(body_props.items()):
         p = {k: v for k, v in oa_props.get(field, {}).items() if k in ("type", "enum")}
@@ -49,7 +50,7 @@ def api_tool(name, base_url, openapi, body_props, required, description="", retr
             "handler": "__function__:api_call",
             "description": description or name,
             "parameters": {"type": "object", "properties": {
-                "url": {"type": "string", "default": base_url.rstrip("/") + "/" + name},
+                "url": {"type": "string", "default": base_url.rstrip("/") + "/" + path},
                 "method": {"type": "string", "default": "POST"},
                 "headers": {"type": "object", "properties": {
                     "Content-Type": {"type": "string", "default": "application/json"}}},

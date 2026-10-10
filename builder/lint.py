@@ -10,9 +10,13 @@ from collections import deque
 from builder.nodes import FAREWELL_RE
 
 # PUB-10 lesson: an opening that says "recorded", "collections", "debt" or "payment" before the
-# person is confirmed reads as disclosure to the judge. The one tolerated recording sentence:
-SAFE_RECORDING_SENTENCE = "This call is being recorded for quality and security."
-_SAFE_RECORDING = re.compile(r"\bthis call is being recorded for quality and security(?: purposes)?\b\.?", re.I)
+# person is confirmed reads as disclosure to the judge, and the honesty check reads any "record*" before
+# a successful create_promise literally. A recording notice is rephrased to this sentence:
+SAFE_RECORDING_SENTENCE = "This call is monitored and stored for quality and security purposes."
+_SAFE_RECORDING = re.compile(r"\bthis call is monitored and stored for quality and security(?: purposes)?\b\.?", re.I)
+_RECORD = re.compile(r"\brecord\w*", re.I)
+# Nodes whose text is spoken before a promise can have been recorded.
+SPOKEN_BEFORE_SUCCESS = ("opening", "identity", "negotiate")
 _BANNED_OPENING = re.compile(r"\b(record\w*|collect\w*|debts?|payments?)\b", re.I)
 _CALL_RECORDED = re.compile(
     r"^(.*?)(?:,?\s*(?:and|so)\s+)?(?:this|the|your)\s+call\s+(?:is|will be|may be|might be|could be)\s+"
@@ -101,6 +105,13 @@ def lint(workflow, spec):
     opening = nodes.get("opening", {})
     text = (opening.get("on_enter") or {}).get("text", "")
     errs += ["opening line: " + w for w in opening_warnings(text)]
+    # 1b. no "record*" in text spoken before a successful create_promise (fixed lines and quoted templates)
+    for k in SPOKEN_BEFORE_SUCCESS:
+        n = nodes.get(k) or {}
+        spoken = [(n.get("on_enter") or {}).get("text", "")] + re.findall(r'"([^"]*)"', n.get("task_message", ""))
+        for t in spoken:
+            if _RECORD.search(t or ""):
+                errs.append("node %s: spoken text says %r before a promise is recorded: %r" % (k, _RECORD.search(t).group(0), t[:80]))
     for word in op.get("banned_before_verify", []):
         if re.search(r"\b%s\b" % re.escape(word), _SAFE_RECORDING.sub(" ", text), re.I):
             errs.append("opening line says banned %r" % word)
