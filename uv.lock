@@ -43,6 +43,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
+    { name = "jsonschema" },
 ]
 
 [package.dev-dependencies]
@@ -51,7 +52,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "claude-agent-sdk", specifier = ">=0.2.165" }]
+requires-dist = [
+    { name = "claude-agent-sdk", specifier = ">=0.2.165" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]
