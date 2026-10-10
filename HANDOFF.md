@@ -71,3 +71,6 @@ Reuse slots. The workspace limit is 200 workflows.
   - "Are you a robot?" must never transfer the call.
   - Never restate an amount already offered.
 - The organisers' mock bank seeds only the 13 PUB case IDs. Self-tests for any other brief run on our mock (`bank/`) through a Cloudflare quick tunnel. The exported workflow must use openapi `servers[0]`, never the tunnel URL.
+
+## Status at usage limit (Sat ~late evening)
+See ledger tail. Next: (1) read results/pubours-t5r5-*.log → merge Task 5 if ≥ gate; (2) Opus review Task 8 (named risks in ledger) → merge; (3) dispatch Task 7b generalisation (field mapping, required tool fields, response aliases, note→close map, disclosure slot, Task 5 residual PIN rule) + bank generalisation; (4) bench/run.py + bench over 10 corpus briefs; (5) AFTER-PLAN.md items.
