@@ -1382,6 +1382,7 @@ HOW TO GET A PROMISE
             t += "\n   " + line + " Read it back with the amount and the date."
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
+        t = self.said_already(t)
         other = self.event_guidance("negotiate")
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
@@ -1559,7 +1560,7 @@ HOW TO GET A PROMISE
                        "condition": {"operator": "matches_intent", "description": "Customer: " + ev["trigger"]}})
         return {
             "name": "negotiate", "node_type": "conversation",
-            "on_enter": {"type": "tts", "text": "Thank you, you are verified. {{debt_statement_text}} " + tpl(neg["first_ask"])},
+            "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_task(),
             "tools": [self.tool("create_promise", {
@@ -1577,6 +1578,16 @@ HOW TO GET A PROMISE
             "max_node_turns": 40, "max_turn_transition": self.fallback_close("negotiate", ["refused"]),
             "transitions": tr,
         }
+
+    def verified_lead(self):
+        """Spoken by the engine as identity passes: the thanks, then negotiation.post_verify_sentence word for word."""
+        pvs = self.s["negotiation"].get("post_verify_sentence")
+        return "Thank you, you are verified. " + (tpl(pvs) + " " if pvs else "")
+
+    def said_already(self, t):
+        """The task's "You have already said" quote includes the post-verification sentence."""
+        pvs = self.s["negotiation"].get("post_verify_sentence")
+        return t.replace('You have already said: "', 'You have already said: "' + tpl(pvs) + ' ', 1) if pvs else t
 
     def mentioned(self):
         suffix = (self.s["negotiation"].get("floor_offer") or {}).get("sentence_suffix")
@@ -1636,6 +1647,7 @@ HOW TO RUN THE CALL
             t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
+        t = self.said_already(t)
         other = self.event_guidance("negotiate")
         if self.banned_for("negotiate"):
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
@@ -1655,7 +1667,7 @@ HOW TO RUN THE CALL
               go("wrap_done", "Every product settled, nothing to confirm", cond_any(eq(multi_mod.PHASE, "done")))] + trans
         return {
             "name": "negotiate", "node_type": "conversation",
-            "on_enter": {"type": "tts", "text": "Thank you, you are verified. {{debt_statement_text}} {{first_ask_text}}"},
+            "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} {{first_ask_text}}"},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_multi_task(),
             "tools": [self.multi.set_tool()],

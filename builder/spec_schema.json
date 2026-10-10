@@ -668,6 +668,10 @@
         "first_ask_all": {
           "$ref": "#/$defs/str",
           "description": "Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used."
+        },
+        "post_verify_sentence": {
+          "$ref": "#/$defs/str",
+          "description": "Optional: a sentence the brief requires word for word right after identity is verified and before anything about the account (before debt_statement). Absent: none."
         }
       },
       "description": "Stating the debt and getting a promise."

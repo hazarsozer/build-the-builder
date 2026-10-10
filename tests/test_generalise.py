@@ -221,6 +221,29 @@ def test_g2_cases_seed_extra_variables():
         assert c["variables"]["company_name"] == val
 
 
+# ---------------------------------------------------------------- G6 sentence after verification
+
+PVS = "This is an attempt to collect a debt and any information obtained will be used for that purpose."
+
+
+def test_g6_post_verify_sentence_spoken_before_the_debt():
+    for spec in (A, B):
+        s = copy.deepcopy(spec)
+        s["negotiation"]["post_verify_sentence"] = PVS
+        assert validate(s, OA) == []
+        n = C(s, OA)["nodes"]["negotiate"]
+        text = n["on_enter"]["text"]
+        assert text.index("verified") < text.index(PVS) < text.index("{{debt_statement_text}}"), text
+        assert PVS in n["task_message"]
+        assert PVS in cases.fixed_sentences(s)
+    assert len(C(dict(copy.deepcopy(A), negotiation=dict(A["negotiation"], post_verify_sentence=PVS)), OA)
+               ["nodes"]["negotiate"]["task_message"]) <= 4000 + len(PVS) + 1
+
+
+def test_g6_reference_unchanged():
+    assert C(A, OA)["nodes"]["negotiate"]["on_enter"]["text"].startswith("Thank you, you are verified. {{debt_statement_text}}")
+
+
 # ---------------------------------------------------------------- G5 note reason -> close reason
 
 MOA = json.load(open("bench/multi-raw/openapi.json"))

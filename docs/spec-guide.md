@@ -85,6 +85,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `negotiation.banned_offers` (required): list of string. Things never offered.
 - `negotiation.debt_statement_per_product` (optional): string. Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. Absent: use debt_statement for each.
 - `negotiation.first_ask_all` (optional): string. Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used.
+- `negotiation.post_verify_sentence` (optional): string. Optional: a sentence the brief requires word for word right after identity is verified and before anything about the account (before debt_statement). Absent: none.
 - `events` (required): list of object. Customer situations that change the call's course. Known ids map to fixed graph branches (promise_recorded, paid, dispute, restructuring, human, hardship, refused, service_error, failed, declined, callback, no_callback, wrong_number, deceased, unclear, not_talk); other ids become generic intent branches.
   - each item: when `action` is ['transfer', 'insist_once_then_transfer', 'offer_transfer_else_close'], also required: `queue`
   - each item: when `action` is offer_transfer_else_close, also required: `else_outcome`, `else_reason`

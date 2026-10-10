@@ -79,7 +79,7 @@ def fixed_sentences(spec):
     """Every sentence the spec says word for word. Placeholders like {last_name} are kept."""
     o, i, n, c = spec["opening"], spec["identity"], spec["negotiation"], spec["confirmation"]
     s = [o["first_sentence"], o["confirm_question"]] + [q["ask"] for q in i["questions"]]
-    s += [i["decline_explanation"], i["failed_advice"], n["debt_statement"], n["first_ask"], n["floor_offer"].get("sentence_suffix"),
+    s += [i["decline_explanation"], i["failed_advice"], n.get("post_verify_sentence"), n["debt_statement"], n["first_ask"], n["floor_offer"].get("sentence_suffix"),
           n.get("debt_statement_per_product"), n.get("first_ask_all")]
     s += [e.get("say") for e in spec["events"]] + [r["say"] for r in spec["say_rules"]]
     s += [c["question"], c["success_sentence"], c.get("change_note")] + list(spec["third_party"]["fixed_sentences"].values())
