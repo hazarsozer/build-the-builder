@@ -11,31 +11,66 @@ MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
        'September', 'October', 'November', 'December']
 
 
+# A business-day search that meets no business day in this many days in a row stops with an error.
+MAX_SCAN_DAYS = 800
+
+
+def check_weekdays(cal):
+    """calendar.weekdays must be a non-empty list of whole numbers 0 (Monday) to 6; else ValueError."""
+    wd = cal.get("weekdays") if isinstance(cal, dict) else None
+    if not isinstance(wd, list) or not wd or not all(type(x) is int and 0 <= x <= 6 for x in wd):
+        raise ValueError("calendar.weekdays must be a non-empty list of integers 0-6, got " + repr(wd))
+
+
 def is_bd(d, cal):
     return d.weekday() in cal["weekdays"] and d.isoformat() not in cal["holidays"]
 
 
+def _no_bd(start, cal):
+    raise ValueError("no business day within " + str(MAX_SCAN_DAYS) + " days of " + start.isoformat() +
+                     "; check calendar.weekdays and calendar.holidays")
+
+
 def next_bd(d, cal):
+    check_weekdays(cal)
+    start = d
     d = d + datetime.timedelta(days=1)
+    k = 1
     while not is_bd(d, cal):
         d = d + datetime.timedelta(days=1)
+        k += 1
+        if k > MAX_SCAN_DAYS:
+            _no_bd(start, cal)
     return d
 
 
 def prev_bd(d, cal):
+    check_weekdays(cal)
+    start = d
     d = d - datetime.timedelta(days=1)
+    k = 1
     while not is_bd(d, cal):
         d = d - datetime.timedelta(days=1)
+        k += 1
+        if k > MAX_SCAN_DAYS:
+            _no_bd(start, cal)
     return d
 
 
 def nth_bd(start, n, cal):
+    check_weekdays(cal)
     d = start
     c = 0
+    miss = 0
     while c < n:
         d = d + datetime.timedelta(days=1)
         if is_bd(d, cal):
             c += 1
+            miss = 0
+        else:
+            miss += 1
+            if miss > MAX_SCAN_DAYS:
+                _no_bd(start, cal)
     return d
 
 

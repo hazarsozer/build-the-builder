@@ -426,6 +426,18 @@ def test_no_spec_exits_nonzero(env):
     assert not env.saved and not env.exported
 
 
+def test_empty_weekdays_spec_does_not_hang(env, monkeypatch):
+    spec = copy.deepcopy(A)
+    spec["calendar"]["weekdays"] = []
+    env.spec = spec
+    t0 = time.monotonic()
+    run_main(env, "--budget-min", "0.2")
+    assert time.monotonic() - t0 < 20
+    rows = trace_rows(env)
+    assert rows[-1]["kind"] == "end"
+    assert any("calendar.weekdays" in json.dumps(r) for r in rows)
+
+
 def test_official_url_assertion_blocks_save(env, monkeypatch):
     real = M.comp.compile
 

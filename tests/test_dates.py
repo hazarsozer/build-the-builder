@@ -50,3 +50,21 @@ def test_speak_and_last_bd():
 def test_custom_weekdays():
     cal = {"weekdays": [0,1,2,3,4,5], "holidays": []}
     assert D.is_bd(dt.date(2026,10,17), cal)
+
+
+def test_bad_weekdays_raise_instead_of_looping():
+    import pytest
+    for wd in ([], ["Monday"], [7], [True], None, "0,1"):
+        cal = {"weekdays": wd, "holidays": []}
+        for call in (lambda: D.next_bd(T, cal), lambda: D.prev_bd(T, cal), lambda: D.nth_bd(T, 3, cal),
+                     lambda: D.deadline(T, {"rule": "nth_business_day", "n": 5}, cal)):
+            with pytest.raises(ValueError, match="calendar.weekdays"):
+                call()
+
+
+def test_business_day_scan_is_capped():
+    import pytest
+    blocked = {"weekdays": [0], "holidays": [(T + dt.timedelta(days=i)).isoformat() for i in range(-900, 900)]}
+    for call in (lambda: D.next_bd(T, blocked), lambda: D.prev_bd(T, blocked), lambda: D.nth_bd(T, 1, blocked)):
+        with pytest.raises(ValueError, match="no business day within"):
+            call()
