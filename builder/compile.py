@@ -710,6 +710,8 @@ try:
             d['what_to_do_next'] = 'All answers are verified. Say only: Thank you.'
         elif hint and hint in HINTS:
             d['what_to_do_next'] = 'This is NOT a wrong answer (' + str(hint).replace('_', ' ') + '). ' + HINTS[hint] + ' Then call verify_identity again.'
+        elif str(left) == '0' and d.get('verified') is not True:
+            d['what_to_do_next'] = 'That was the last wrong answer allowed. The check has ended. Do not ask anything else.'
         elif d.get('ok') is False:
             d['what_to_do_next'] = 'The answer could not be read. This is NOT a wrong answer. Ask the customer to repeat it (' + UNREADABLE + '). Then call verify_identity again.'
         elif d.get('verified') is True:
@@ -779,6 +781,18 @@ try:
         pid = vars.get('product_id')
         if pid:
             b['product_id'] = str(pid)
+except Exception:
+    pass
+'''
+
+# spec.responses: the brief's openapi names some response fields differently; copy each back to the name the
+# hooks read (RESP is {canonical: brief name}) before any other post-hook logic runs.
+ALIAS_POST = r'''
+try:
+    if isinstance(result, dict) and isinstance(result.get('data'), dict):
+        for rk, rv in RESP.items():
+            if rv != rk and rv in result['data']:
+                result['data'][rk] = result['data'][rv]
 except Exception:
     pass
 '''
@@ -855,6 +869,9 @@ class _Compiler:
         extra, req, hook = self.extra_props(name, props, source, model)
         if hook:
             kw["pre"] = "import json\n" + _const("EXTRA", hook) + EXTRA_PRE + (kw.get("pre") or "")
+        resp = {k: v for k, v in ((self.s.get("responses") or {}).get(name) or {}).items() if k != v}
+        if resp:
+            kw["post"] = "import json\n" + _const("RESP", resp) + ALIAS_POST + (kw.get("post") or "")
         return api_tool(name, self.base, self.oa, dict(props, **extra), list(required) + req, **kw)
 
     def extra_fields(self, name, known=()):

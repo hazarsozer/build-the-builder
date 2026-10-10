@@ -181,6 +181,15 @@ def _tool_field_errors(spec, openapi):
         for k in ("default", "value"):
             if enum and g.get(k) is not None and g[k] not in enum:
                 errs.append("tool_fields[%s].%s: %r not in the openapi enum %s" % (key, k, g[k], enum))
+    for tool, m in (spec.get("responses") or {}).items():
+        try:
+            rprops = openapi["paths"]["/" + tool]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+        except (KeyError, TypeError):
+            errs.append("responses: tool %r has no openapi 200 response schema" % tool)
+            continue
+        for canon, name in m.items():
+            if name not in rprops:
+                errs.append("responses.%s.%s: %r is not a field of the %s response (%s)" % (tool, canon, name, tool, sorted(rprops)))
     for tool in COMPILED_FIELDS:
         sc = _request(openapi, tool)
         if not sc:

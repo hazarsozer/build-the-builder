@@ -183,6 +183,81 @@ def test_g1_compile_lint_clean_with_mapping():
         assert [p for p in lint(w, spec) if not p.startswith("warning:")] == []
 
 
+# ---------------------------------------------------------------- G4 response field aliases
+
+ALIASES = {"verify_identity": {"verified": "match", "wrong_answers_left": "attempts_left"}, "create_promise": {"ok": "ok"}}
+
+
+def _aliased(spec, al=ALIASES):
+    s = copy.deepcopy(spec)
+    s["responses"] = copy.deepcopy(al)
+    return s
+
+
+def _accepted_oa():
+    """create_promise answers {accepted} instead of {ok}."""
+    oa = copy.deepcopy(FOA)
+    props = oa["paths"]["/create_promise"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+    props["accepted"] = props.pop("ok")
+    return oa
+
+
+def test_g4_validate_aliases():
+    assert validate(_aliased(A), FOA) == []
+    errs = validate(_aliased(A, {"verify_identity": {"verified": "matched"}}), FOA)
+    assert any("matched" in e for e in errs), errs
+    errs = validate(_aliased(A, {"no_such_tool": {"ok": "ok"}}), FOA)
+    assert any("no_such_tool" in e for e in errs), errs
+
+
+def test_g4_reference_has_no_alias_code():
+    assert "RESP" not in json.dumps(C(A, OA)) and "RESP" not in json.dumps(C(B, OA))
+
+
+def test_g4_verify_posthook_reads_aliases():
+    w = C(_aliased(A), FOA)
+    post = _named(w, "identity", "verify_identity")["post_process_code"]
+    r = {"status": "success", "data": {"ok": True, "match": True, "attempts_left": 3, "all_verified": False}}
+    run(post, r)
+    assert "This answer is correct" in r["data"]["what_to_do_next"]
+    r = {"status": "success", "data": {"ok": True, "match": False, "attempts_left": 2, "all_verified": False}}
+    run(post, r)
+    assert "SAME question" in r["data"]["what_to_do_next"] and r["data"]["wrong_answers_left"] == 2
+    r = {"status": "success", "data": {"ok": False, "match": False, "attempts_left": 0, "error": "identity check is over"}}
+    run(post, r)
+    assert "ended" in r["data"]["what_to_do_next"] and str(r["data"]["wrong_answers_left"]) == "0"
+    for bad in [None, "x", {}, {"data": None}, {"data": {"match": None}}]:
+        run(post, copy.deepcopy(bad))
+
+
+def test_g4_ended_check_is_not_unreadable_without_aliases_either():
+    """ok false with wrong_answers_left 0 ends the check (the bank says 'identity check is over')."""
+    post = _named(C(A, OA), "identity", "verify_identity")["post_process_code"]
+    r = {"status": "success", "data": {"ok": False, "verified": False, "wrong_answers_left": 0, "error": "identity check is over"}}
+    run(post, r)
+    assert "ended" in r["data"]["what_to_do_next"]
+
+
+def test_g4_promise_alias_ok():
+    s = _aliased(_with_fields(A), {"create_promise": {"ok": "accepted"}})
+    oa = _accepted_oa()
+    assert validate(s, oa) == []
+    w = C(s, oa)
+    post = _named(w, "negotiate", "create_promise")["post_process_code"]
+    r = {"status": "success", "data": {"accepted": True, "promise_id": "x"}}
+    run(post, r)
+    assert r["data"]["promise_status"] == "recorded"
+    rp = _named(w, "retry_promise", "create_promise")
+    r = {"status": "success", "data": {"accepted": True}}
+    run(rp["post_process_code"], r)
+    assert r["data"]["ok"] is True
+    wb = C(_aliased(_with_fields(B), {"create_promise": {"ok": "accepted"}}), oa)
+    r = {"status": "success", "data": {"accepted": True}}
+    v = {}
+    run(wb["nodes"]["record_1"]["pre_actions"][0]["post_process_code"], r, v)
+    assert v["rec1_status"] == "recorded"
+
+
 # ---------------------------------------------------------------- G3 required tool fields the compiler does not know
 
 FOA = json.load(open("bench/fields/openapi.json"))

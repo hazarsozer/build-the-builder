@@ -1033,6 +1033,20 @@
       },
       "description": "Optional: request fields of an openapi tool that the compiler has no slot for, keyed \"<tool>.<field>\" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it."
     },
+    "responses": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z_][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/str"
+        },
+        "description": "Name the compiler reads -> the name in this openapi's 200 response schema."
+      },
+      "description": "Optional: response fields the openapi names differently from the names the compiler reads, keyed by tool. The compiler reads verify_identity ok, verified, wrong_answers_left, all_verified, hint, error; create_promise ok, error; get_account ok, products, error; schedule_callback ok, error. Map each one whose meaning appears under another name, e.g. {\"verify_identity\": {\"verified\": \"<the field that says the answer matched>\"}}. Leave out names that are unchanged."
+    },
     "extra_rules": {
       "type": "array",
       "items": {
