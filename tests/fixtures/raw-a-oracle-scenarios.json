@@ -1,0 +1,506 @@
+[
+ {
+  "id": "s01",
+  "now": "2026-10-14T11:00",
+  "products": [
+   {
+    "product_id": "CC-4821",
+    "type": "credit_card",
+    "card_last4": "4821",
+    "past_due": 840.0,
+    "days_late": 8,
+    "minimum_payment": 120.0
+   }
+  ],
+  "customer_says": "After verification the customer says the full 840 is too much; offered the minimum payment of 120, they say they can pay 120 this Saturday, and they accept Monday 19 October instead.",
+  "inputs": {
+   "too_much": true,
+   "customer_date": "2026-10-17"
+  },
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "CC-4821",
+     "amount": 120.0,
+     "date": "2026-10-19"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {
+    "CC-4821": "2026-10-21"
+   },
+   "offers": []
+  },
+  "quote": "Decision: for customers 8 to 45 days late, the promise deadline is the 5th business day after the day of the call. | Full amount too much: offer the floor once and say the rest stays overdue. | A weekend day or holiday on or before the deadline: offer the next business day."
+ },
+ {
+  "id": "s02",
+  "now": "2026-10-14T15:30",
+  "products": [
+   {
+    "product_id": "CL-3307",
+    "type": "car_loan",
+    "past_due": 1450.0,
+    "days_late": 45,
+    "instalment_amount": 725.0
+   }
+  ],
+  "customer_says": "The customer answers 'no' to paying today, then 'no' to the Friday offer, then 'no' to the instalment on the deadline, without ever giving a date or an amount.",
+  "inputs": {
+   "refusals": 3
+  },
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {
+    "CL-3307": "2026-10-21"
+   },
+   "offers": [
+    {
+     "product_id": "CL-3307",
+     "attempt": 1,
+     "amount": 1450.0,
+     "date": "2026-10-16"
+    },
+    {
+     "product_id": "CL-3307",
+     "attempt": 2,
+     "amount": 725.0,
+     "date": "2026-10-21"
+    }
+   ]
+  },
+  "quote": "Attempt 1 is for the full amount, or the floor if the customer already said the full amount is too much: propose the last business day of this week (if today is that day, the last business day of next week). Attempt 2, late band only: the floor amount on the deadline. | When the attempts are used up, stop, do not repeat a refused offer, and close with code NP-REF."
+ },
+ {
+  "id": "s03",
+  "now": "2026-10-14T10:00",
+  "products": [
+   {
+    "product_id": "PL-5512",
+    "type": "personal_loan",
+    "past_due": 960.0,
+    "days_late": 7,
+    "instalment_amount": 480.0
+   }
+  ],
+  "customer_says": "The customer says 'no' to paying today, then accepts paying the full 960 on Friday and confirms; the promise cannot be recorded on either try.",
+  "inputs": {
+   "refusals": 1
+  },
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "service_error",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {
+    "PL-5512": "2026-11-02"
+   },
+   "offers": [
+    {
+     "product_id": "PL-5512",
+     "attempt": 1,
+     "amount": 960.0,
+     "date": "2026-10-16"
+    }
+   ]
+  },
+  "quote": "| 1\u20137 | early | 12th business day after today | 1 | | On failure try once more; if it fails again, say it could not be recorded and close with code NP-SYS."
+ },
+ {
+  "id": "s04",
+  "now": "2026-10-21T12:00",
+  "products": [
+   {
+    "product_id": "CC-7710",
+    "type": "credit_card",
+    "card_last4": "7710",
+    "past_due": 310.0,
+    "days_late": 1,
+    "minimum_payment": 45.0
+   }
+  ],
+  "customer_says": "The customer says they can pay the full 310 next Monday, accepts Tuesday 27 October instead and confirms; then asks for a person, declines help from the assistant and insists.",
+  "inputs": {
+   "customer_date": "2026-10-26"
+  },
+  "expected": {
+   "outcome": "transferred",
+   "reason": "human",
+   "promises": [
+    {
+     "product_id": "CC-7710",
+     "amount": 310.0,
+     "date": "2026-10-27"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    "general"
+   ],
+   "deadlines": {
+    "CC-7710": "2026-11-09"
+   },
+   "offers": []
+  },
+  "quote": "\"Next <weekday>\" is that weekday in the following calendar week | A weekend day or holiday on or before the deadline: offer the next business day. | If a transfer follows a recorded promise, close with the transfer's code."
+ },
+ {
+  "id": "s05",
+  "now": "2026-10-21T16:00",
+  "products": [
+   {
+    "product_id": "PL-2094",
+    "type": "personal_loan",
+    "past_due": 1300.0,
+    "days_late": 20,
+    "instalment_amount": 650.0
+   }
+  ],
+  "customer_says": "The customer offers 200 on 6 November; told that cannot be recorded, they accept the instalment of 650 on 29 October and confirm, then ask for lower instalments going forward.",
+  "inputs": {
+   "customer_date": "2026-11-06"
+  },
+  "expected": {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "promises": [
+    {
+     "product_id": "PL-2094",
+     "amount": 650.0,
+     "date": "2026-10-29"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    "restructuring"
+   ],
+   "deadlines": {
+    "PL-2094": "2026-10-29"
+   },
+   "offers": []
+  },
+  "quote": "below the floor, say it cannot be recorded and offer the floor once. | A date after the deadline: say the latest date that can be recorded is the deadline and offer it. | A request for a new payment plan or lower instalments: do not describe a plan; transfer_to_agent queue restructuring; close with code TR-RES."
+ },
+ {
+  "id": "s06",
+  "now": "2026-11-09T11:00",
+  "products": [
+   {
+    "product_id": "CL-8841",
+    "type": "car_loan",
+    "past_due": 1180.0,
+    "days_late": 30,
+    "instalment_amount": 590.0
+   }
+  ],
+  "customer_says": "After hearing the debt the customer says they already paid it on Friday.",
+  "inputs": {},
+  "expected": {
+   "outcome": "paid",
+   "reason": null,
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {
+    "CL-8841": "2026-11-17"
+   },
+   "offers": []
+  },
+  "quote": "\"I already paid\": payments can take one business day to appear; take no promise; close with code PD."
+ },
+ {
+  "id": "s07",
+  "now": "2026-11-09T14:00",
+  "products": [
+   {
+    "product_id": "CC-3365",
+    "type": "credit_card",
+    "card_last4": "3365",
+    "past_due": 425.0,
+    "days_late": 4,
+    "minimum_payment": 60.0
+   }
+  ],
+  "customer_says": "After hearing the debt the customer says that card was closed two years ago and they owe nothing on it.",
+  "inputs": {},
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "dispute",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {
+    "CC-3365": "2026-11-27"
+   },
+   "offers": []
+  },
+  "quote": "\"Not my debt\" / \"never had this product\", or a claim the product was closed or paid off in the past: do not argue, no promise, close with code NP-DIS."
+ },
+ {
+  "id": "s08",
+  "now": "2026-11-10T10:30",
+  "products": [
+   {
+    "product_id": "PL-6620",
+    "type": "personal_loan",
+    "past_due": 880.0,
+    "days_late": 12,
+    "instalment_amount": 440.0
+   }
+  ],
+  "customer_says": "After hearing the debt the customer says they lost their job last month; offered the support team, they say yes.",
+  "inputs": {},
+  "expected": {
+   "outcome": "transferred",
+   "reason": "support",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    "support"
+   ],
+   "deadlines": {
+    "PL-6620": "2026-11-18"
+   },
+   "offers": []
+  },
+  "quote": "Illness, a death in the family or job loss: one short sentence of sympathy, no persuasion attempt, offer to connect the customer with the support team. Accepted: transfer_to_agent queue support, close with code TR-SUP."
+ },
+ {
+  "id": "s09",
+  "now": "2026-11-10T13:00",
+  "products": [
+   {
+    "product_id": "CL-1458",
+    "type": "car_loan",
+    "past_due": 1020.0,
+    "days_late": 6,
+    "instalment_amount": 510.0
+   }
+  ],
+  "customer_says": "After hearing the debt the customer says they have been in hospital; offered the support team, they decline and name no date or amount.",
+  "inputs": {},
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "hardship",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {
+    "CL-1458": "2026-11-30"
+   },
+   "offers": []
+  },
+  "quote": "Declined: close with code NP-HARD. This comes before 7.3 and 9.3."
+ },
+ {
+  "id": "s10",
+  "now": "2026-10-16T18:00",
+  "products": [
+   {
+    "product_id": "CC-9032",
+    "type": "credit_card",
+    "card_last4": "9032",
+    "past_due": 560.0,
+    "days_late": 10,
+    "minimum_payment": 80.0
+   }
+  ],
+  "customer_says": "The customer's wife answers and says he can be reached on Monday at 10:00.",
+  "inputs": {
+   "callback_at": "2026-10-19T10:00"
+  },
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-10-19",
+     "time": "10:00"
+    }
+   ],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "A callback may be booked for today or the next business day, between 10:00 and 19:00 (both included), and later than `now`. Call schedule_callback with the date and the time, then close with code NR-CB."
+ },
+ {
+  "id": "s11",
+  "now": "2026-10-23T17:00",
+  "products": [
+   {
+    "product_id": "PL-4471",
+    "type": "personal_loan",
+    "past_due": 740.0,
+    "days_late": 15,
+    "instalment_amount": 370.0
+   }
+  ],
+  "customer_says": "The customer's son answers and offers Monday at 11:00; asked for another time, he offers tonight at 19:30.",
+  "inputs": {
+   "callback_at": "2026-10-26T11:00"
+  },
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "no_callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "If the time offered is outside the window, ask once for another time. If that is also outside, book nothing and close with code NR-NCB."
+ },
+ {
+  "id": "s12",
+  "now": "2026-10-14T12:00",
+  "products": [
+   {
+    "product_id": "CC-2250",
+    "type": "credit_card",
+    "card_last4": "2250",
+    "past_due": 390.0,
+    "days_late": 9,
+    "minimum_payment": 55.0
+   }
+  ],
+  "customer_says": "The customer confirms who they are, then gives a wrong date of birth twice and a wrong last four phone digits once.",
+  "inputs": {},
+  "expected": {
+   "outcome": "not_verified",
+   "reason": "failed",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "After three wrong answers, do not state the debt; tell the customer to use the mobile app or a branch, and close with code NV-FAIL."
+ },
+ {
+  "id": "s13",
+  "now": "2026-10-14T13:00",
+  "products": [
+   {
+    "product_id": "PL-7718",
+    "type": "personal_loan",
+    "past_due": 620.0,
+    "days_late": 3,
+    "instalment_amount": 310.0
+   }
+  ],
+  "customer_says": "The customer confirms who they are but refuses to give their date of birth, and after the explanation refuses again.",
+  "inputs": {},
+  "expected": {
+   "outcome": "not_verified",
+   "reason": "declined",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "A customer who does not want to answer gets one explanation that the questions protect their account. A second refusal, or a second \"what is this about?\" instead of an answer, closes with code NV-DEC."
+ },
+ {
+  "id": "s14",
+  "now": "2026-10-15T10:15",
+  "products": [
+   {
+    "product_id": "CL-5096",
+    "type": "car_loan",
+    "past_due": 1600.0,
+    "days_late": 25,
+    "instalment_amount": 800.0
+   }
+  ],
+  "customer_says": "The person who answers says there is nobody of that name at this number; it is their number.",
+  "inputs": {},
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "wrong_number",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "Number does not belong to the customer: close with code NR-WN."
+ },
+ {
+  "id": "s15",
+  "now": "2026-10-15T11:30",
+  "products": [
+   {
+    "product_id": "CC-6683",
+    "type": "credit_card",
+    "card_last4": "6683",
+    "past_due": 275.0,
+    "days_late": 18,
+    "minimum_payment": 40.0
+   }
+  ],
+  "customer_says": "The customer's daughter answers and says her father passed away last month.",
+  "inputs": {},
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "deceased",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "Customer has died: say \"I am sorry for your loss.\", ask nothing else, close with code NR-DEC."
+ },
+ {
+  "id": "s16",
+  "now": "2026-10-15T14:45",
+  "products": [
+   {
+    "product_id": "PL-3389",
+    "type": "personal_loan",
+    "past_due": 1100.0,
+    "days_late": 11,
+    "instalment_amount": 550.0
+   }
+  ],
+  "customer_says": "The person answers 'hello?' to the first ask and 'go ahead' to the second.",
+  "inputs": {},
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "unclear",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [],
+   "deadlines": {},
+   "offers": []
+  },
+  "quote": "\"Hello\", \"go ahead\" and \"who is this\" do not; ask once more. If still unclear after the second ask, close with code NR-UNC."
+ }
+]

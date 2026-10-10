@@ -173,6 +173,19 @@ def test_notes_when_spec_disables_notes_flagged():
     assert "notes" in fields(ms)
 
 
+def test_raw_a_oracle_flags_only_the_memo_band():
+    """Scenarios a live oracle wrote from bench/raw-a (memo: late band 7 -> 5 business days),
+    checked against a spec built without the memo: every mismatch points at the late band."""
+    scen = json.load(open(ROOT / "tests/fixtures/raw-a-oracle-scenarios.json"))
+    ms = check(A, scen)
+    assert ms
+    assert all(any(p.startswith("bands[1]") for p in m["spec_paths"]) for m in ms)
+    assert "deadline" in fields(ms)
+    memo = copy.deepcopy(A)
+    memo["bands"][1]["deadline"]["n"] = 5
+    assert check(memo, scen) == []
+
+
 def test_bad_scenario_reported_not_raised():
     s = sc(now="not a date", expected={"deadlines": {"p1": "2026-10-23"}})
     ms = check(A, [s])
