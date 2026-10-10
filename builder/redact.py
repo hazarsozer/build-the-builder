@@ -2,7 +2,7 @@
 import os
 import re
 
-_PATTERNS = [re.compile(r"fak_[A-Za-z0-9]+"), re.compile(r"sk-ant-[\w-]+")]
+_PATTERNS = [re.compile(r"fak_[\w-]+"), re.compile(r"sk-ant-[\w-]+")]
 
 
 def _secret_vars():

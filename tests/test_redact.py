@@ -34,3 +34,10 @@ def test_patterns():
 def test_unrelated_env_untouched(monkeypatch):
     monkeypatch.setenv("OTHER_VAR", "valuevalue1")
     assert scrub("valuevalue1") == "valuevalue1"
+
+
+def test_fak_with_dash_and_underscore():
+    out = scrub("key=fak_ab-cd_EF12-gh tail")
+    assert out == "key=[REDACTED] tail"
+    assert "fak_" not in out
+    assert out.count("[REDACTED]") == 1
