@@ -47,6 +47,20 @@ def _queues(spec):
     return {e["queue"] for e in spec["events"] if e.get("queue")}
 
 
+def _cfg(spec, product):
+    return spec["products"].get(product.get("type")) or {}
+
+
+def _amount(spec, product):
+    """The product's full overdue amount, read through products.<type>.amount_field."""
+    v = dates.pfield(product, _cfg(spec, product), "amount_field", "past_due")
+    return float(v) if v not in (None, "") else None
+
+
+def _days(spec, product):
+    return dates.days_of(product, _cfg(spec, product))
+
+
 def _floor(spec, product):
     p = spec["products"].get(product.get("type"))
     if p is None:
@@ -58,9 +72,9 @@ def _order(spec, products):
     order = spec["multi_product"]["order"]
     ps = list(products)
     if order == "highest_past_due":
-        ps.sort(key=lambda p: -float(p.get("past_due") or 0))
+        ps.sort(key=lambda p: -(_amount(spec, p) or 0))
     elif order == "most_days_late":
-        ps.sort(key=lambda p: -int(p.get("days_late") or 0))
+        ps.sort(key=lambda p: -_days(spec, p))
     return [p["product_id"] for p in ps]
 
 
@@ -153,9 +167,9 @@ def _check_one(spec, s):
     deadlines = {}
     bands = {}
     for pid, p in prods.items():
-        i, b = _band(spec, int(p["days_late"]))
+        i, b = _band(spec, _days(spec, p))
         if b is None:
-            out.append(_mm(s, "band", p["days_late"], None, ["bands"], "no band covers days_late"))
+            out.append(_mm(s, "band", _days(spec, p), None, ["bands"], "no band covers days_late"))
             continue
         bands[pid] = (i, b)
         deadlines[pid] = dates.deadline(today, b["deadline"], cal)
@@ -186,7 +200,7 @@ def _check_one(spec, s):
             if att["amount"] == "floor" or att["amount"] == "current" and inp.get("too_much"):
                 amount = floor
             else:
-                amount = p.get("past_due")
+                amount = _amount(spec, p)
             if "amount" in o and not _money_eq(o["amount"], amount):
                 out.append(_mm(s, "offer amount", o["amount"], amount,
                                ["bands[%d].attempts[%d].amount" % (i, k - 1),

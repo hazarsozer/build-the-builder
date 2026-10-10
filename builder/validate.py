@@ -138,8 +138,12 @@ def _openapi_errors(spec, openapi):
     for name, p in spec["products"].items():
         if product_types and name not in product_types:
             errs.append("products: type %r not in openapi get_account type enum %s" % (name, product_types))
-        if product_props and p["floor_field"] not in product_props:
-            errs.append("products.%s: floor_field %r not a get_account product field" % (name, p["floor_field"]))
+        if product_props:
+            for key, default in (("floor_field", None), ("amount_field", "past_due"), ("days_late_field", "days_late")):
+                f = p.get(key) or default
+                if f is not None and f not in product_props:
+                    errs.append("products.%s: %s %r not a get_account product field%s"
+                                % (name, key, f, "" if key in p else " (the default; name the field with %s)" % key))
     for t in product_types:
         if t not in spec["products"]:
             errs.append("products: openapi product type %r has no entry" % t)

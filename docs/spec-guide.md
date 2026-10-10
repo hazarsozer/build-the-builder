@@ -52,6 +52,8 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `products` (required): map of name -> object. Keyed by get_account product `type`. Every openapi product type needs an entry.
 - `products.<name>.words` (required): string. How the product is said, may use product fields, e.g. "<product noun> ending {<id_field>}".
 - `products.<name>.floor_field` (required): string. The get_account product field that holds the floor (lowest acceptable amount).
+- `products.<name>.amount_field` (optional): string. The get_account product field that holds the full overdue amount. Default when absent: past_due. Sentences still say {past_due}.
+- `products.<name>.days_late_field` (optional): string. The get_account product field that holds how many days the payment is late. Default when absent: days_late. Sentences still say {days_late}.
 - `bands` (required): list of object. days_late ranges, contiguous with no gap or overlap. Each sets the deadline rule and the persuasion attempts.
 - `bands[].name` (required): string. The band's name from the brief.
 - `bands[].days_late` (required): list of integer, min 0. [min, max], both included.

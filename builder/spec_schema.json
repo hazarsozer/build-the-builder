@@ -494,6 +494,14 @@
           "floor_field": {
             "$ref": "#/$defs/str",
             "description": "The get_account product field that holds the floor (lowest acceptable amount)."
+          },
+          "amount_field": {
+            "$ref": "#/$defs/str",
+            "description": "The get_account product field that holds the full overdue amount. Default when absent: past_due. Sentences still say {past_due}."
+          },
+          "days_late_field": {
+            "$ref": "#/$defs/str",
+            "description": "The get_account product field that holds how many days the payment is late. Default when absent: days_late. Sentences still say {days_late}."
           }
         }
       },

@@ -123,6 +123,23 @@ def speak(d):
     return WD[d.weekday()] + ' ' + str(d.day) + ' ' + MON[d.month - 1] + ' ' + str(d.year) + ' (' + d.isoformat() + ')'
 
 
+def pfield(p, cfg, key, default):
+    """A product's value for a mapped field (products.<type>.amount_field / days_late_field), else the default name."""
+    name = (cfg or dict()).get(key) or default
+    v = p.get(name)
+    if v in (None, '') and name != default:
+        v = p.get(default)
+    return v
+
+
+def amount_of(p, cfg):
+    return float(pfield(p, cfg, 'amount_field', 'past_due'))
+
+
+def days_of(p, cfg):
+    return int(float(pfield(p, cfg, 'days_late_field', 'days_late') or 0))
+
+
 def band_for(days_late, bands):
     for b in bands:
         if b['days_late'][0] <= days_late <= b['days_late'][1]:
@@ -136,13 +153,13 @@ def plan_products(products, today, bands, cal, product_cfg=None):
     """Per-product facts: product_id, band, deadline, floor, full, attempts [(amount_kind, date)]."""
     out = []
     for i, p in enumerate(products):
-        full = float(p.get('past_due'))
         cfg = (product_cfg or dict()).get(str(p.get('type') or '')) or dict()
+        full = amount_of(p, cfg)
         ff = cfg.get('floor_field') or 'floor'
         floor = float(p.get(ff)) if p.get(ff) not in (None, '') else full
         if floor > full:
             floor = full
-        band = band_for(int(float(p.get('days_late') or 0)), bands)
+        band = band_for(days_of(p, cfg), bands)
         dl = deadline(today, band['deadline'], cal)
         attempts = [(a['amount'], attempt_date(today, a['date'], dl, cal)) for a in band['attempts']]
         out.append(dict(product_id=str(p.get('product_id') or ('p' + str(i + 1))), band=band['name'],

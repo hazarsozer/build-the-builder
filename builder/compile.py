@@ -245,8 +245,8 @@ def pick_band(days_late):
 def product_facts(p):
     ptype = str(p.get('type') or '')
     cfg = PRODUCTS.get(ptype) or dict(words=ptype.replace('_', ' '), floor_field='')
-    past_due = float(p.get('past_due'))
-    days_late = int(float(p.get('days_late') or 0))
+    past_due = amount_of(p, cfg)
+    days_late = days_of(p, cfg)
     words = fill(cfg['words'], p, dict())
     ff = cfg.get('floor_field') or ''
     floor = float(p.get(ff)) if p.get(ff) not in (None, '') else past_due
@@ -331,7 +331,8 @@ def weekday_text():
 
 
 try:
-    products = [p for p in find_products() if p.get('past_due') not in (None, '')]
+    products = [p for p in find_products()
+                if pfield(p, PRODUCTS.get(str(p.get('type') or '')), 'amount_field', 'past_due') not in (None, '')]
     if not products:
         raise ValueError('no product')
     facts = [product_facts(p) for p in products]
