@@ -51,19 +51,11 @@ dev = [
     { name = "pytest" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.165" },
     { name = "jsonschema", specifier = ">=4.26.0" },
 ]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]
