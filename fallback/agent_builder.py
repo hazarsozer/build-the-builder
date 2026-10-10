@@ -6,6 +6,8 @@
 Differences from examples/agent_builder.py: skill build-phone-agent-v2; no MCP servers at all (strict);
 reads of env.sh / .env* denied through both disallowed_tools and a settings deny list; every trace and
 console line goes through builder.redact.scrub; the trace also records the end of the run.
+Secrets: the model's Bash needs the FREYA keys to save and test, so env-level secrets cannot be hidden from it. The Bash deny
+patterns are best-effort; `scrub` on every trace and console line is the real control (the skill also forbids printing them).
 Trace: traces/<start time>.jsonl (start, one line per message, end). --dry prints the resolved options and exits.
 """
 import asyncio, dataclasses, json, os, pathlib, sys, time
@@ -50,7 +52,11 @@ def trace_line(obj):
 
 
 def message_record(message):
-    return {"type": type(message).__name__, "t": time.strftime("%H:%M:%S"), **dataclasses.asdict(message)}
+    try:
+        body = dataclasses.asdict(message)
+    except Exception:
+        body = {"repr": repr(message)}
+    return {"type": type(message).__name__, "t": time.strftime("%H:%M:%S"), **body}
 
 
 def describe(options):

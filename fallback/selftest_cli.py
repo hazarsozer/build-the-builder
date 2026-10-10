@@ -49,7 +49,7 @@ def main():
         print(scrub(json.dumps({"passed": res["passed"], "total": res["total"], "agent_id": agent})))
         for r in res["rows"]:
             if not r["pass"]: print(scrub(json.dumps({"id": r["id"], "title": r["title"], "failed": r["failed"]})))
-            for w in r.get("warnings") or []: print("warning", r["id"], w)
+            for w in r.get("warnings") or []: print(scrub(f"warning {r['id']} {w}"))
     finally:
         if proc: tunnel.stop(proc)
         srv.shutdown()
