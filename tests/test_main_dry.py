@@ -85,6 +85,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(tunnel, "stop", tstop)
     f.cancelled, f.sim_list = [], []
     monkeypatch.setattr(M, "SIMS_FILE", tmp_path / ".freya-sims.json")
+    monkeypatch.setattr(M, "TUNNEL_BACKOFF_S", 0.01)
     monkeypatch.setattr(freya, "cancel_simulation", lambda sid: f.cancelled.append(sid) or
                         {"success": True, "cancelledJobs": 3, "cancelledIterations": 1})
     monkeypatch.setattr(freya, "list_simulations", lambda: f.sim_list)
@@ -397,12 +398,16 @@ def test_selftest_crash_still_exports(env, monkeypatch):
 
 
 def test_tunnel_failure_still_exports(env, monkeypatch):
+    tries = []
+
     def bad(port):
+        tries.append(port)
         raise RuntimeError("no cloudflared")
     monkeypatch.setattr(tunnel, "start", bad)
     assert run_main(env) == 0
     assert (env.out / (env.slot + ".workflow.json")).exists()
     assert any(r["kind"] == "phase_failed" for r in trace_rows(env))
+    assert len(tries) == 3 and [r["retry"] for r in trace_rows(env) if r["kind"] == "tunnel_failed"] == [True, True, False]
 
 
 def test_budget_hard_stop_during_selftest(env, monkeypatch):
@@ -463,6 +468,23 @@ def test_extraction_retry_needs_budget(env, monkeypatch):
     calls = _counting_extract(monkeypatch, [None, A])
     assert run_main(env, "--no-selftest", "--budget-min", "10") == 2       # 600 s - reserve < 10 min: no retry
     assert len(calls) == 1 and "extract_retry" not in kinds(env) and "no_spec" in kinds(env)
+
+
+def test_tunnel_retried_with_backoff(env, monkeypatch):
+    tries = []
+
+    def flaky(port):
+        tries.append(port)
+        if len(tries) < 3:
+            raise RuntimeError("cloudflared printed no URL")
+        return TUNNEL, "proc"
+    monkeypatch.setattr(tunnel, "start", flaky)
+    monkeypatch.setattr(selftest, "run", lambda a, cases, b, **k: selftest_result(cases))
+    assert run_main(env) == 0
+    assert len(tries) == 3
+    rows = trace_rows(env)
+    assert [(r["attempt"], r["retry"]) for r in rows if r["kind"] == "tunnel_failed"] == [(1, True), (2, True)]
+    assert any(r["kind"] == "selftest_round" for r in rows)
 
 
 def test_empty_weekdays_spec_does_not_hang(env, monkeypatch):

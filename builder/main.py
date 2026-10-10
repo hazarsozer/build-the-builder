@@ -59,6 +59,9 @@ EXTRACT_RETRY_MIN_S = 10 * 60   # no spec from extraction: retry once only with 
 FINAL_RESERVE_S = 150        # kept back for the final compile, save and export
 ROUND2_MIN_S = 12 * 60       # fix round + round 2 only with more than this left (after the reserve)
 TUNNEL_WAIT_S = 120          # once the spec exists, wait at most this long for the tunnel
+TUNNEL_TRIES = 3             # tunnel.start attempts (in the background, during extraction)
+TUNNEL_BACKOFF_S = 3         # sleep before attempt k+1: k * this
+TUNNEL_RETRY_MIN_S = 4 * 60  # no further attempt with less than this left for tests
 BUSY_MAX_S = 180             # a busy workspace (another team simulation) longer than this skips the self-test
 FREYA_CALL_S = 180           # one save_workflow / export_workflow call
 STYLES = [None, "talkative", "pieces", "corrects", "asks_back", "in_words"]   # tools/run_cases.STYLES, mixed
@@ -259,6 +262,7 @@ class Build:
         self.rounds = []
         self.final = {}
         self.srv = self.tun = None
+        self._bank_stopped = False   # set once the build ends: a background tunnel retry then gives up
 
     # -- helpers
     def left(self):
@@ -349,12 +353,27 @@ class Build:
         try:
             self.srv = server.serve(0, self.openapi)
             port = self.srv.server_address[1]
-            self.tun = Bg(lambda: tunnel.start(port), on_late=lambda v: tunnel.stop(v[1]))
+            self.tun = Bg(lambda: self._tunnel(port), on_late=lambda v: tunnel.stop(v[1]))
             self.ev("bank_started", port=port)
         except Exception as e:
             self.failed("bank", e)
 
+    def _tunnel(self, port):
+        """tunnel.start, up to TUNNEL_TRIES attempts with a short backoff, while the self-test still has time."""
+        for k in range(1, TUNNEL_TRIES + 1):
+            try:
+                return tunnel.start(port)
+            except Exception as e:
+                if self._bank_stopped:
+                    raise
+                last = k == TUNNEL_TRIES or self.test_left() < TUNNEL_RETRY_MIN_S
+                self.ev("tunnel_failed", attempt=k, error=_err(e), retry=not last)
+                if last:
+                    raise
+                time.sleep(TUNNEL_BACKOFF_S * k)
+
     def _stop_bank(self):
+        self._bank_stopped = True
         if self.tun is not None:
             v = self.tun.abandon()
             if v is not None:
