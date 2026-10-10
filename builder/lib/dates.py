@@ -115,5 +115,69 @@ def attempt_date(today, kind, deadline_d, cal):
     return d
 
 
+def say_date(d):
+    return WD[d.weekday()] + ' ' + str(d.day) + ' ' + MON[d.month - 1] + ' ' + str(d.year)
+
+
 def speak(d):
     return WD[d.weekday()] + ' ' + str(d.day) + ' ' + MON[d.month - 1] + ' ' + str(d.year) + ' (' + d.isoformat() + ')'
+
+
+def band_for(days_late, bands):
+    for b in bands:
+        if b['days_late'][0] <= days_late <= b['days_late'][1]:
+            return b
+    if days_late < min(b['days_late'][0] for b in bands):
+        return min(bands, key=lambda b: b['days_late'][0])
+    return max(bands, key=lambda b: b['days_late'][1])
+
+
+def plan_products(products, today, bands, cal, product_cfg=None):
+    """Per-product facts: product_id, band, deadline, floor, full, attempts [(amount_kind, date)]."""
+    out = []
+    for i, p in enumerate(products):
+        full = float(p.get('past_due'))
+        cfg = (product_cfg or dict()).get(str(p.get('type') or '')) or dict()
+        ff = cfg.get('floor_field') or 'floor'
+        floor = float(p.get(ff)) if p.get(ff) not in (None, '') else full
+        if floor > full:
+            floor = full
+        band = band_for(int(float(p.get('days_late') or 0)), bands)
+        dl = deadline(today, band['deadline'], cal)
+        attempts = [(a['amount'], attempt_date(today, a['date'], dl, cal)) for a in band['attempts']]
+        out.append(dict(product_id=str(p.get('product_id') or ('p' + str(i + 1))), band=band['name'],
+                        deadline=dl, floor=floor, full=full, attempts=attempts))
+    return out
+
+
+def apply_shared_date(plans, d):
+    """One date named for every product: a product whose deadline is earlier keeps its own deadline."""
+    out = []
+    for p in plans:
+        if d > p['deadline']:
+            out.append((p['product_id'], p['deadline'], True))
+        else:
+            out.append((p['product_id'], d, False))
+    return out
+
+
+def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None):
+    """(outcome, reason) of a several-product call.
+
+    notes: [(product_id, reason)] in product order; promises: number recorded; transferred: the
+    transfer's reason or None. A transfer wins, then any recorded promise, then the notes."""
+    if transferred:
+        return ('transferred', transferred)
+    if promises and promises > 0:
+        return ('promise', None)
+    reasons = [r for _, r in notes]
+    if reasons and all(r == 'paid' for r in reasons) and all_paid:
+        return (all_paid, None)
+    if rule == 'last_note' and reasons:
+        return ('no_promise', reasons[-1])
+    for r in reasons:
+        if r != 'paid':
+            return ('no_promise', r)
+    if fallback:
+        return (fallback[0], fallback[1])
+    return ('no_promise', reasons[0] if reasons else None)

@@ -22,7 +22,7 @@ def test_structure():
 
 
 def test_no_brief_constants_in_compiler_source():
-    src = open("builder/compile.py").read() + open("builder/nodes.py").read()
+    src = open("builder/compile.py").read() + open("builder/nodes.py").read() + open("builder/multi.py").read()
     for s in ["2026-10-26", "minimum_payment", "restructuring", "Freya Bank", "date_of_birth", "phone_last4",
               "collections", "credit card", "Freya", "hardship", "2026-"]:
         assert s not in src
@@ -91,7 +91,7 @@ def test_compiler_rephrases_unsafe_recording_clause():
     s["opening"]["first_sentence"] = "Hello, this is a digital assistant calling from Some Bank, and this call is recorded."
     t = C(s, OA)["nodes"]["opening"]["on_enter"]["text"]
     assert t.startswith("Hello, this is a digital assistant calling from Some Bank.")
-    assert "This call is being recorded for quality and security." in t
+    assert "This call is monitored and stored for quality and security purposes." in t
     assert "and this call is recorded" not in t
 
 
@@ -306,3 +306,89 @@ def test_reference_specs_still_valid():
     from builder.validate import validate
     for f in ("specs/reference/spec-a.json", "specs/reference/spec-b.json"):
         assert validate(json.load(open(f)), OA) == [], f
+
+
+# ---------------------------------------------------------------- live gate fixes (G1-G3)
+
+MONITORED = "This call is monitored and stored for quality and security purposes."
+
+
+def test_g1_recording_clause_becomes_monitored():
+    s = copy.deepcopy(A)
+    s["opening"]["first_sentence"] = "Hello, this is a digital assistant calling from Some Bank. This call is being recorded for quality and security purposes."
+    t = C(s, OA)["nodes"]["opening"]["on_enter"]["text"]
+    assert MONITORED in t and "record" not in t.lower()
+
+
+def test_g1_reference_specs_say_monitored():
+    for f in ("specs/reference/spec-a.json", "specs/reference/spec-b.json"):
+        assert MONITORED in json.load(open(f))["opening"]["first_sentence"], f
+
+
+def test_g1_no_record_word_in_spoken_templates():
+    import re
+    w = wf()
+    for k in ("opening", "identity", "negotiate"):
+        n = w["nodes"][k]
+        assert "record" not in n.get("on_enter", {}).get("text", "").lower(), k
+        for quoted in re.findall(r'"([^"]*)"', n["task_message"]):
+            assert "record" not in quoted.lower(), (k, quoted)
+    neg = w["nodes"]["negotiate"]["task_message"]
+    assert "latest date you can accept" in neg and "Dates you may accept" in neg
+
+
+def test_g1_lint_errors_on_record_in_spoken_text():
+    w = wf()
+    w["nodes"]["opening"]["on_enter"]["text"] = "Hello. " + "This call is being recorded for quality and security."
+    assert any("record" in e and not e.startswith("warning") for e in lint(w, A))
+    w = wf()
+    w["nodes"]["negotiate"]["task_message"] += '\n- Say "I have recorded it."'
+    assert any("record" in e for e in lint(w, A))
+
+
+def _human_transition(node):
+    return [t for t in node["transitions"] if t["target_node"].startswith("transfer_general")][0]
+
+
+def test_g2_human_transfer_requires_asked_flag():
+    w = wf()
+    for k in ("opening", "identity", "negotiate"):
+        n = w["nodes"][k]
+        c = json.dumps(_human_transition(n)["condition"])
+        assert '"human_asked"' in c and '"human_insists"' in c, k
+        assert _human_transition(n)["condition"]["conditions"][0]["logic"] == "and"
+        enum = n["extraction_schema"][0]["enum_values"]
+        assert "human_first_request" in enum and "human_insists" in enum and "human" not in enum
+        assert "human_asked" not in [x["name"] for x in n["extraction_schema"]]
+        first = [t for t in n["transitions"] if "human_first_request" in json.dumps(t["condition"])][0]
+        assert first["target_node"] == "human_ask_" + k
+        code = _code(w["nodes"]["human_ask_" + k])
+        v = {}
+        exec(code, {"vars": v})
+        assert v["human_asked"] == "yes"
+        hold = w["nodes"]["human_hold_" + k]
+        assert hold["on_enter"]["text"] == "Can I help you with that first?"
+        ht = {t["target_node"]: json.dumps(t["condition"]) for t in hold["transitions"]}
+        back = "human_back_" + k
+        assert '"insists"' in ht["transfer_general"] and '"other"' in ht[back]
+        assert hold["max_turn_transition"] == back
+        var = n["extraction_schema"][0]["name"]
+        v = {var: "human_first_request"}
+        exec(_code(w["nodes"][back]), {"vars": v})
+        assert v[var] in ("pending", "continue") and v["human_reply"] == "pending"
+        assert w["nodes"][back]["transitions"][-1]["target_node"] == k
+
+
+def test_g2_say_rules_listed_as_not_events():
+    w = wf()
+    for k in ("opening", "identity", "negotiate"):
+        d = w["nodes"][k]["extraction_schema"][0]["description"]
+        assert "robot or AI" in d and "scam" in d and "NOT any transfer or close event" in d, k
+
+
+def test_g3_no_figure_restated():
+    v = _run_account("2026-10-14T11:00", dict(CARD, days_late=20))
+    plan = v["attempt_plan"]
+    assert "only the date" in plan.split("Attempt 2")[1]
+    neg = wf()["nodes"]["negotiate"]["task_message"]
+    assert "Never restate a figure already offered" in neg and "A read-back is not an offer" in neg

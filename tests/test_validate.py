@@ -207,7 +207,7 @@ def test_key_nested_properties_have_descriptions():
 
 def test_opening_does_not_end_on_recorded():
     want = ("Hello, this is a digital assistant calling from Freya Bank. "
-            "This call is being recorded for quality and security purposes.")
+            "This call is monitored and stored for quality and security purposes.")
     assert A["opening"]["first_sentence"] == want
     assert B["opening"]["first_sentence"] == want
 
