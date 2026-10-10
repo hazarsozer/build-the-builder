@@ -64,3 +64,14 @@ def test_markdown_summary(tmp_path, monkeypatch):
     assert "w1" in text and "a1" in text and "9/11" in text and "SELF-02" in text
     assert "submission/s.workflow.json" in text
     assert text.count("mdsecret99999") == 0
+
+
+def test_model_call_gets_one_line_description(tmp_path):
+    t = Trace(tmp_path / "t.jsonl")
+    for p in ("extract:a#1", "extract:b#2", "oracle#1", "settle#1", "fix:round1#1", "other"):
+        t.model_call("m", p)
+    t.close()
+    about = [r["about"] for r in _lines(tmp_path / "t.jsonl")]
+    assert "extraction a" in about[0] and "repair" in about[1]
+    assert "scenarios" in about[2] and "settle" in about[3].lower() and "self-test" in about[4]
+    assert about[5] == "other"

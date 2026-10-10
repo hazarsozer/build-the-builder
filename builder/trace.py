@@ -40,7 +40,7 @@ class Trace:
                 self._f.flush()
 
     def model_call(self, model, purpose):
-        self.event("model_call", model=model, purpose=purpose)
+        self.event("model_call", model=model, purpose=purpose, about=describe(purpose))
 
     def close(self):
         with self._lock:
@@ -53,6 +53,25 @@ class Trace:
         path = Path(path) if path else self.path.with_suffix(".md")
         path.write_text(scrub(render_markdown(self.events, self.path.name)), encoding="utf-8")
         return path
+
+
+def describe(purpose):
+    """One-line description of a model call from its session purpose ("extract:a#1", "oracle#1", "fix:round1#2")."""
+    name, _, n = str(purpose).partition("#")
+    first = n in ("", "1")
+    kind, _, label = name.partition(":")
+    if kind == "extract":
+        return ("read the brief into a policy spec (independent extraction %s)" % label if first
+                else "repair extraction %s's spec from validator errors" % label)
+    if kind == "oracle":
+        return "write test scenarios with expected records from the brief alone (never sees the spec)"
+    if kind == "settle":
+        return ("settle disagreements between the two extractions and oracle mismatches, each with a brief quote"
+                if first else "settle: fix remaining validator errors and mismatches")
+    if kind == "fix":
+        return ("propose quoted spec fixes from failed self-test calls (%s)" % label if first
+                else "repair the self-test fix after validator errors")
+    return str(purpose)
 
 
 def _of(events, kind):
@@ -85,8 +104,8 @@ def render_markdown(events, name):
             "| Openapi | %s |" % _cell(start.get("openapi", "")), ""]
 
     calls = _of(events, "model_call")
-    out += ["## Model calls (%d)" % len(calls), "", "| At (s) | Model | Purpose |", "|---|---|---|"]
-    out += ["| %s | %s | %s |" % (c.get("s"), _cell(c.get("model")), _cell(c.get("purpose"))) for c in calls]
+    out += ["## Model calls (%d)" % len(calls), "", "| At (s) | Model | Purpose | What it does |", "|---|---|---|---|"]
+    out += ["| %s | %s | %s | %s |" % (c.get("s"), _cell(c.get("model")), _cell(c.get("purpose")), _cell(c.get("about", ""))) for c in calls]
     out.append("")
 
     out += ["## Created on Freya", "", "| Slot | Workflow ID | Agent ID | Base URL kind |", "|---|---|---|---|"]
