@@ -507,3 +507,19 @@ def test_seed_hints_from_spec_and_openapi(bank):
         swapped = "%d-%02d-%02d" % (d.year, d.day, d.month)
         r = http(base, "/v1/verify_identity", {"customer_id": cid, "field": "date_of_birth", "answer": swapped})
         assert "hint" not in r, r
+
+
+# --- one crashing scenario never loses the self-test (final review item 6) -----------------------------------------
+
+def test_crashing_scenario_is_skipped_not_fatal(monkeypatch):
+    def boom(c, **o): raise KeyError("calendar")
+    monkeypatch.setattr(C, "s_late_refusal", boom)
+    cs = C.generate(SPEC_A, OPENAPI, NOW)
+    keys = [c["scenario"] for c in cs]
+    assert "late_refusal" not in keys and len(keys) == 11 and keys[-1] == "injection"
+    assert "late_refusal" in cs.skipped and cs.errors["late_refusal"].startswith("KeyError")
+    real = C.build
+    monkeypatch.setattr(C, "build", lambda spec, oa, k, now, **kw: (_ for _ in ()).throw(ValueError("x")) if k == "happy_full_today" else real(spec, oa, k, now, **kw))
+    cs = C.generate(SPEC_A, OPENAPI, NOW)
+    assert "injection" in cs.skipped and "happy_full_today" in cs.skipped and set(cs.errors) >= {"injection", "happy_full_today", "late_refusal"}
+    assert len(cs) == 10 and all(c["scenario"] != "injection" for c in cs)

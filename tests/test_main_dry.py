@@ -426,6 +426,17 @@ def test_no_spec_exits_nonzero(env):
     assert not env.saved and not env.exported
 
 
+def test_crashing_case_builder_still_runs_selftest(env, monkeypatch):
+    def boom(c, **o):
+        raise KeyError("bands")
+    monkeypatch.setattr(M.cases, "s_late_refusal", boom)
+    monkeypatch.setattr(selftest, "run", lambda a, cases, b, **k: selftest_result(cases))
+    assert run_main(env) == 0
+    [ev] = [r for r in trace_rows(env) if r["kind"] == "cases"]
+    assert "late_refusal" in ev["skipped"] and "KeyError" in ev["errors"]["late_refusal"]
+    assert any(r["kind"] == "selftest_round" for r in trace_rows(env))
+
+
 def test_empty_weekdays_spec_does_not_hang(env, monkeypatch):
     spec = copy.deepcopy(A)
     spec["calendar"]["weekdays"] = []

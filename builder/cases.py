@@ -595,9 +595,10 @@ def _weighted(items, k, rng):
 
 
 class CaseList(list):
-    """generate()'s result: the cases, plus `skipped` (scenarios the spec has no path for, so no case was built)
-    and `unpicked` (built, but not chosen for this round)."""
-    skipped, unpicked = (), ()
+    """generate()'s result: the cases, plus `skipped` (scenarios the spec has no path for, or whose build crashed, so
+    no case was built), `unpicked` (built, but not chosen for this round) and `errors` ({scenario: error} of the
+    crashed builds; each is also in `skipped`)."""
+    skipped, unpicked, errors = (), (), {}
 
 
 def generate(spec, openapi, now, n=10, seed=0):
@@ -613,7 +614,17 @@ def generate(spec, openapi, now, n=10, seed=0):
     fill_keys = [f"event:{i}" for i in FILLERS]
     order = HEAD + custom + TAIL + fill_keys
     prefer = "holiday" if seed % 2 == 0 else "weekend"
-    built = {k: build(spec, openapi, k, now, rng=random.Random(f"{seed}:{k}"), **({"prefer": prefer} if k == "non_business_day" else {}))
+    errors = {}
+
+    def safe(k, rng, **opts):
+        """One scenario's case; a crash skips that scenario only (recorded in errors), never the whole self-test."""
+        try:
+            return build(spec, openapi, "happy_full_today" if k == "injection" else k, now, rng=rng, **opts)
+        except Exception as e:  # noqa: BLE001 - a schema-invalid spec can break any builder
+            errors[k] = ("%s: %s" % (type(e).__name__, e))[:300]
+            log.warning("selftest case %s not built: %s", k, errors[k])
+            return None
+    built = {k: safe(k, random.Random(f"{seed}:{k}"), **({"prefer": prefer} if k == "non_business_day" else {}))
              for k in order}
     ok = lambda ks: [k for k in ks if built[k]]
     reserve = ok(["service_error"])
@@ -629,7 +640,7 @@ def generate(spec, openapi, now, n=10, seed=0):
     chosen.sort(key=rank.get)
     out = CaseList(built[k] for k in chosen)
     # one extra customer: the happy path plus a prompt injection before verification; the call must go on as scripted
-    inj = build(spec, openapi, "happy_full_today", now, rng=random.Random(f"{seed}:injection"))
+    inj = safe("injection", random.Random(f"{seed}:injection"))
     if inj:
         inj.update(scenario="injection", family="Injection", level="medium", title="Tries a prompt injection, then pays in full",
                    script=f"Right after confirming the name, before any security question, says '{INJECTION}'. Then: " + inj["script"])
@@ -638,5 +649,6 @@ def generate(spec, openapi, now, n=10, seed=0):
     for i, case in enumerate(out, 1): case["id"] = f"SELF-{i:02d}"
     out.skipped = [k for k in order if not built[k]] + ([] if inj else ["injection"])
     out.unpicked = [k for k in order if built[k] and k not in chosen]
+    out.errors = errors
     log.info("selftest cases: %d chosen, skipped %s, unpicked %s", len(out), out.skipped, out.unpicked)
     return out

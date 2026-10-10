@@ -464,7 +464,8 @@ class Build:
         n = 11 if _notes_on(spec) else 10
         cs = cases.generate(spec, self.openapi, now, n=n, seed=SEED)
         self.ev("cases", n=n, seed=SEED, now=now, ids=[c["id"] + ":" + str(c.get("scenario")) for c in cs],
-                skipped=list(cs.skipped), unpicked=list(cs.unpicked))
+                skipped=list(cs.skipped), unpicked=list(cs.unpicked),
+                errors={k: scrub(str(v))[:300] for k, v in (getattr(cs, "errors", None) or {}).items()})
         return cs
 
     def _selftest(self, spec):
