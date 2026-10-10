@@ -22,3 +22,10 @@ def test_options_strict_and_denied():
 def test_lint_cli_drops_spec_only_check():
     wf = json.load(open("examples/base-agent.json"))
     assert not any("spec outcome table" in e for e in lint_cli.problems(wf))
+
+
+def test_swap_base_uses_openapi_servers():
+    from fallback.selftest_cli import swap_base
+    api = {"servers": [{"url": "https://example.test/api/v2"}]}
+    out = swap_base('{"u": "https://example.test/api/v2/get_account"}', api, "https://t.trycloudflare.com")
+    assert out == '{"u": "https://t.trycloudflare.com/v1/get_account"}'

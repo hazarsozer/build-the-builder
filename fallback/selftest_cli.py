@@ -1,11 +1,11 @@
 """Run your own test cases against the agent on OUR mock bank (for briefs the official practice routes do not seed).
 
-    python3 fallback/selftest_cli.py <slot> <workflow.json> <cases.json> [--out results/selftest.json]
+    python3 fallback/selftest_cli.py <slot> <workflow.json> <cases.json> [--openapi <brief openapi.json>] [--out results/selftest.json]
 
 <cases.json> is a list in the public-test-set.json format (id, family, level, title, variables, identity, products, script,
 expected, optional faults). Optional per case: "reasons": {"no_promise": ["refused", ...], "promise": []} = the brief's close_call table.
-The workflow file must use https://freya-bank-mock.freyavoice.workers.dev/v1 as the tool base URL; this script starts the bank and a
-Cloudflare tunnel, swaps that URL for the tunnel URL, saves the workflow under <slot>-selftest, runs ONE simulation of all cases and
+The workflow file must use servers[0].url of the openapi file (--openapi, default tools/openapi.json) as the tool base URL; this script
+starts the bank and a Cloudflare tunnel, swaps that URL for the tunnel URL, saves the workflow under <slot>-selftest, runs ONE simulation of all cases and
 prints passed/total plus each failing case with its reasons. The tunnel is stopped at the end.
 """
 import argparse, json, pathlib, sys
@@ -16,7 +16,13 @@ from bank import server, tunnel
 from builder import selftest
 from builder.redact import scrub
 
-OFFICIAL_V1 = "https://freya-bank-mock.freyavoice.workers.dev/v1"
+
+def swap_base(text, openapi, tunnel_url):
+    """Replace servers[0].url of the brief's openapi with our bank (the bank serves /v1)."""
+    official = openapi["servers"][0]["url"].rstrip("/")
+    assert official in text, "workflow does not use servers[0].url %s as its tool base URL" % official
+    return text.replace(official, tunnel_url + "/v1")
+
 
 
 def prepare(cases):
@@ -33,14 +39,15 @@ def prepare(cases):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("slot"); ap.add_argument("workflow"); ap.add_argument("cases")
+    ap.add_argument("--openapi", default=str(ROOT / "tools" / "openapi.json"))
     ap.add_argument("--out", default=str(ROOT / "results" / "selftest.json"))
     a = ap.parse_args()
-    openapi = json.loads((ROOT / "tools" / "openapi.json").read_text())
+    openapi = json.loads(pathlib.Path(a.openapi).read_text())
     cases = prepare(json.loads(pathlib.Path(a.cases).read_text()))
     srv, proc = server.serve(0, openapi), None
     try:
         url, proc = tunnel.start(srv.server_address[1])
-        wf = json.loads(pathlib.Path(a.workflow).read_text().replace(OFFICIAL_V1, url + "/v1"))
+        wf = json.loads(swap_base(pathlib.Path(a.workflow).read_text(), openapi, url))
         agent = freya.save_workflow(a.slot + "-selftest", wf, state_file=str(ROOT / ".freya-agents.json"))["agent_id"]
         res = selftest.run(agent, cases, url)
         res["agent_id"] = agent
