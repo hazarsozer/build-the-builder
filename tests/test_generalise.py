@@ -183,6 +183,86 @@ def test_g1_compile_lint_clean_with_mapping():
         assert [p for p in lint(w, spec) if not p.startswith("warning:")] == []
 
 
+# ---------------------------------------------------------------- G5 note reason -> close reason
+
+MOA = json.load(open("bench/multi-raw/openapi.json"))
+RENOTE = {"refused": "declined", "dispute": "disputed", "paid": "payment_claimed", "service_error": "system_error"}
+
+
+def _memo(spec=None):
+    """Brief B with the memo's note codes: note reasons renamed, close reasons unchanged."""
+    s = copy.deepcopy(spec or B)
+    for e in s["events"]:
+        if e.get("per_product_note") in RENOTE:
+            e["per_product_note"] = RENOTE[e["per_product_note"]]
+    n = s["multi_product"]["notes"]
+    n["reasons"] = [RENOTE.get(r, r) for r in n["reasons"]]
+    n["close_reason_map"] = {"declined": "refused", "disputed": "dispute", "system_error": "service_error"}
+    n["paid_note_reason"] = "payment_claimed"
+    return s
+
+
+def test_g5_close_reason_maps_notes():
+    m = {"declined": "refused", "disputed": "dispute"}
+    cr = dates.close_reason
+    assert cr([("p1", "payment_claimed"), ("p2", "disputed"), ("p3", "declined")], 0, None, "first_non_paid_note",
+              "paid", None, m, "payment_claimed") == ("no_promise", "dispute")
+    assert cr([("p1", "payment_claimed"), ("p2", "payment_claimed")], 0, None, "first_non_paid_note", "paid", None, m,
+              "payment_claimed") == ("paid", None)
+    assert cr([("p1", "declined")], 0, None, "last_note", "paid", None, m, "payment_claimed") == ("no_promise", "refused")
+    # defaults unchanged
+    assert cr([("p1", "paid"), ("p2", "refused")], 0, None, "first_non_paid_note") == ("no_promise", "refused")
+
+
+def test_g5_validate_map():
+    assert validate(_memo(), MOA) == []
+    bad = _memo()
+    bad["multi_product"]["notes"]["close_reason_map"]["declined"] = "nope"
+    assert any("nope" in e for e in validate(bad, MOA))
+    bad = _memo()
+    bad["multi_product"]["notes"]["paid_note_reason"] = "paid"
+    assert any("paid_note_reason" in e for e in validate(bad, MOA))
+
+
+def _wrap(spec, oa, node, notes_state):
+    """Run a wrap node with products in the given statuses; return (mp_close, notes written)."""
+    w = C(spec, oa)
+    prods = [dict(CARD, product_id="p%d" % i, days_late=3) for i in range(1, len(notes_state) + 1)]
+    v = {"now": "2026-10-16T11:00", "acct_products_json": json.dumps(prods)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    st = json.loads(v["mp_state"])
+    for pid, stt in notes_state.items():
+        st["p"][pid]["status"] = stt
+    v["mp_state"] = json.dumps(st)
+    exec(_code(w["nodes"][node]), {"vars": v})
+    notes = [(v["note%d_pid" % i], v["note%d_reason" % i]) for i in range(1, 4) if v.get("note_has_%d" % i) == "yes"]
+    return v["mp_close"], notes, w
+
+
+def test_g5_wrap_maps_note_to_close_reason():
+    s = _memo()
+    close, notes, w = _wrap(s, MOA, "wrap_done", {"p1": "payment_claimed", "p2": "disputed", "p3": "declined"})
+    assert notes == [("p1", "payment_claimed"), ("p2", "disputed"), ("p3", "declined")]
+    assert close == "close_dispute" and w["nodes"][close]
+    close, notes, _ = _wrap(s, MOA, "wrap_done", {"p1": "payment_claimed", "p2": "payment_claimed"})
+    assert close == "close_paid"
+    close, notes, _ = _wrap(s, MOA, "wrap_done", {"p1": "declined", "p2": "declined"})
+    assert close == "close_refused"
+    assert [p for p in lint(w, s) if not p.startswith("warning:")] == []
+
+
+def test_g5_oracle_and_cases_use_map():
+    s = _memo()
+    assert oracle.close_from_notes(s, ["p1", "p2"], {"p1": "payment_claimed", "p2": "declined"}) == ("no_promise", "refused")
+    assert oracle.close_from_notes(s, ["p1", "p2"], {"p1": "payment_claimed", "p2": "payment_claimed"}) == ("paid", None)
+    c = cases.build(s, MOA, "multi_product", "2026-10-14T11:00", plan=["refused", "paid", "dispute"])
+    assert c["expected"]["outcome"] == "no_promise" and c["expected"]["reason"] == "refused", c["expected"]
+    assert {n["reason"] for n in c["expected"]["notes"]} == {"declined", "payment_claimed", "disputed"}
+    c = cases.build(s, MOA, "multi_product", "2026-10-14T11:00", plan=["paid", "paid", "paid"])
+    assert c["expected"]["outcome"] == "paid", c["expected"]
+
+
 # ---------------------------------------------------------------- G4 response field aliases
 
 ALIASES = {"verify_identity": {"verified": "match", "wrong_answers_left": "attempts_left"}, "create_promise": {"ok": "ok"}}

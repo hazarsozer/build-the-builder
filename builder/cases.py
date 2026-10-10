@@ -202,12 +202,14 @@ def _multi_expected(spec, products, results):
             e = _event(spec, r)
             reason = e.get("per_product_note") if e else r
             if mp["notes"]["enabled"] and reason in mp["notes"]["reasons"]: notes.append({"product_id": p["product_id"], "reason": reason})
+    paid = mp["notes"].get("paid_note_reason") or "paid"
+    rmap = mp["notes"].get("close_reason_map") or {}
     if promises: outcome, reason = _row(spec, "promise_recorded") or ("promise", None)
-    elif notes and all(n["reason"] == "paid" for n in notes) and len(notes) == len(order): outcome, reason = mp["all_paid_outcome"], None
+    elif notes and all(n["reason"] == paid for n in notes) and len(notes) == len(order): outcome, reason = mp["all_paid_outcome"], None
     else:
-        non_paid = [n for n in notes if n["reason"] != "paid"] or notes
+        non_paid = [n for n in notes if n["reason"] != paid] or notes
         pick = notes[-1] if mp["no_promise_reason"] == "last_note" else (non_paid[0] if non_paid else None)
-        outcome, reason = _note_row(spec, pick["reason"]) if pick else ("no_promise", None)
+        outcome, reason = _note_row(spec, rmap.get(pick["reason"], pick["reason"])) if pick else ("no_promise", None)
     return _exp(outcome, reason, promises, notes)
 
 

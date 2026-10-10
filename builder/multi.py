@@ -431,7 +431,7 @@ for q in (st.get('ga') or order):
         r = stt
     if NOTES_ON and r in REASONS:
         notes.append((q, r))
-outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK)
+outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK, REASON_MAP, PAID_NOTE)
 key = str(outcome) + '|' + str(reason or '')
 vars['mp_close'] = CLOSE_BY.get(key, CLOSE_BY.get('*'))
 for i in range(1, SLOTS + 1):
@@ -470,6 +470,8 @@ class Multi:
         notes = self.mp.get("notes") or {}
         self.notes_on = bool(notes.get("enabled"))
         self.reasons = list(notes.get("reasons") or [])
+        self.reason_map = dict(notes.get("close_reason_map") or {})
+        self.paid_note = notes.get("paid_note_reason") or "paid"
         ev = self.s["events"]
         self.fail_ev = c.fail_ev
         # outcomes the model reports per product: note_and_continue events of negotiate (not the service failure)
@@ -507,7 +509,7 @@ class Multi:
         keys = ["promise|"]
         if self.mp.get("all_paid_outcome"):
             keys.append("%s|" % self.mp["all_paid_outcome"])
-        keys += ["no_promise|" + r for r in self.reasons]
+        keys += ["no_promise|" + self.reason_map.get(r, r) for r in self.reasons]
         out = []
         for k in keys:
             if k in by and by[k] not in out:
@@ -582,7 +584,7 @@ class Multi:
         fe = c.events.get(self.fail_ev) or {}
         by = self.close_by()
         targets = self.wrap_targets()
-        fb = fallback or ("no_promise", self.refused_note)
+        fb = fallback or ("no_promise", self.reason_map.get(self.refused_note, self.refused_note))
         fb_key = "%s|%s" % (fb[0], fb[1] or "")
         by_used = {k: v for k, v in by.items() if v in targets}
         by_used["*"] = by.get(fb_key) if by.get(fb_key) in targets else (targets[-1] if targets else "close_account_error")
@@ -600,6 +602,7 @@ class Multi:
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
+                _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
                 _const("FALLBACK", list(fb)) + _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
                 "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or "") + WRAP_CODE)
         first = "note_1" if self.notes_on else "finish"

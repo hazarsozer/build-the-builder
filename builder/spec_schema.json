@@ -931,6 +931,17 @@
                 "at_close"
               ],
               "description": "When add_note is called. immediate: as soon as a product ends without a promise. at_close: notes are collected and written only just before a non-transfer close_call, so a later transfer leaves no notes. Default when absent: immediate."
+            },
+            "close_reason_map": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "Optional: add_note reason -> close_call reason, when the brief's close reasons differ from its note reasons. A note reason not listed closes with the same name."
+            },
+            "paid_note_reason": {
+              "$ref": "#/$defs/str",
+              "description": "Optional: the add_note reason that means the product is already paid. Default when absent: paid."
             }
           },
           "description": "add_note policy for products that end without a promise."

@@ -86,10 +86,12 @@ def close_from_notes(spec, order, notes):
     Returns None when the rule cannot be applied (no notes, or a `fixed` reason).
     """
     mp = spec["multi_product"]
+    m = mp["notes"].get("close_reason_map") or {}
+    paid = mp["notes"].get("paid_note_reason") or "paid"
     reasons = [notes[pid] for pid in order if pid in notes]
     if not reasons:
         return None
-    if all(r == "paid" for r in reasons) and mp.get("all_paid_outcome"):
+    if all(r == paid for r in reasons) and mp.get("all_paid_outcome"):
         return (mp["all_paid_outcome"], None)
     refused = _event(spec, "refused")
     outcome = refused["outcome"] if refused else None
@@ -97,9 +99,10 @@ def close_from_notes(spec, order, notes):
         return None
     rule = mp["no_promise_reason"]
     if rule == "first_non_paid_note":
-        return (outcome, next(r for r in reasons if r != "paid"))
+        r = next((r for r in reasons if r != paid), None)
+        return (outcome, m.get(r, r)) if r else None
     if rule == "last_note":
-        return (outcome, reasons[-1])
+        return (outcome, m.get(reasons[-1], reasons[-1]))
     return None
 
 

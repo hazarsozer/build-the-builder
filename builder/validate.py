@@ -127,9 +127,19 @@ def _openapi_errors(spec, openapi):
         if note is not None and note not in note_reasons:
             errs.append("events[%s]: per_product_note %r not in openapi add_note reason enum" % (e["id"], note))
 
-    for r in spec["multi_product"]["notes"]["reasons"]:
+    notes = spec["multi_product"]["notes"]
+    for r in notes["reasons"]:
         if r not in note_reasons:
             errs.append("multi_product.notes.reasons: %r not in openapi add_note reason enum %s" % (r, note_reasons))
+    close_reasons = {row["reason"] for row in spec["outcomes"] if row.get("reason")}
+    for nr, cr in (notes.get("close_reason_map") or {}).items():
+        if nr not in notes["reasons"] and nr not in note_reasons:
+            errs.append("multi_product.notes.close_reason_map: key %r is not a note reason" % nr)
+        if cr not in close_reasons:
+            errs.append("multi_product.notes.close_reason_map[%s]: %r is not a reason in outcomes" % (nr, cr))
+    pr = notes.get("paid_note_reason")
+    if pr is not None and pr not in notes["reasons"] and pr not in note_reasons:
+        errs.append("multi_product.notes.paid_note_reason: %r is not a note reason" % pr)
 
     for i, q in enumerate(spec["identity"]["questions"]):
         if q["field"] not in fields:

@@ -122,6 +122,8 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `multi_product.notes.reasons` (required): list of string. Allowed add_note reasons (subset of the openapi enum).
 - `multi_product.notes.on_transfer` (required): one of `none`, `before`, `after`. none: no notes at all on a call that is transferred (before or after it).
 - `multi_product.notes.timing` (optional): one of `immediate`, `at_close`. When add_note is called. immediate: as soon as a product ends without a promise. at_close: notes are collected and written only just before a non-transfer close_call, so a later transfer leaves no notes. Default when absent: immediate.
+- `multi_product.notes.close_reason_map` (optional): map of name -> string. Optional: add_note reason -> close_call reason, when the brief's close reasons differ from its note reasons. A note reason not listed closes with the same name.
+- `multi_product.notes.paid_note_reason` (optional): string. Optional: the add_note reason that means the product is already paid. Default when absent: paid.
 - `multi_product.no_promise_reason` (required): one of `first_non_paid_note`, `last_note`, `fixed`. first_non_paid_note: with no promise, close no_promise with the reason of the first product (in order) whose note is not paid.
 - `multi_product.all_paid_outcome` (required): string or null. close_call outcome when every product is noted paid and no promise was recorded.
 - `closing` (required): object. How every call ends.

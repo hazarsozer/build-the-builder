@@ -178,23 +178,27 @@ def apply_shared_date(plans, d):
     return out
 
 
-def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None):
+def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None, reason_map=None, paid='paid'):
     """(outcome, reason) of a several-product call.
 
     notes: [(product_id, reason)] in product order; promises: number recorded; transferred: the
-    transfer's reason or None. A transfer wins, then any recorded promise, then the notes."""
+    transfer's reason or None. A transfer wins, then any recorded promise, then the notes.
+    reason_map: note reason -> close reason (multi_product.notes.close_reason_map); paid: the note
+    reason that means "already paid" (multi_product.notes.paid_note_reason)."""
+    m = reason_map or dict()
+    paid = paid or 'paid'
     if transferred:
         return ('transferred', transferred)
     if promises and promises > 0:
         return ('promise', None)
     reasons = [r for _, r in notes]
-    if reasons and all(r == 'paid' for r in reasons) and all_paid:
+    if reasons and all(r == paid for r in reasons) and all_paid:
         return (all_paid, None)
     if rule == 'last_note' and reasons:
-        return ('no_promise', reasons[-1])
+        return ('no_promise', m.get(reasons[-1], reasons[-1]))
     for r in reasons:
-        if r != 'paid':
-            return ('no_promise', r)
+        if r != paid:
+            return ('no_promise', m.get(r, r))
     if fallback:
         return (fallback[0], fallback[1])
-    return ('no_promise', reasons[0] if reasons else None)
+    return ('no_promise', m.get(reasons[0], reasons[0]) if reasons else None)
