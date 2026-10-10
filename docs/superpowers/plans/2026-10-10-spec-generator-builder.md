@@ -97,11 +97,11 @@ CAL = {"weekdays": [0,1,2,3,4], "holidays": ["2026-10-26","2026-11-11","2026-11-
 T = dt.date(2026,10,14)  # Wednesday
 
 def test_nth_bd_skips_weekend_and_holiday():
-    assert D.nth_bd(T, 12, CAL) == dt.date(2026,10,30)   # 26 Oct holiday skipped
+    assert D.nth_bd(T, 12, CAL) == dt.date(2026,11,2)    # 26 Oct holiday skipped
     assert D.nth_bd(T, 7, CAL) == dt.date(2026,10,23)
 
 def test_last_bd_of_week_rolls_on_friday():
-    assert D.attempt_date(T, "last_business_day_of_week", dt.date(2026,10,30), CAL) == dt.date(2026,10,16)
+    assert D.attempt_date(T, "last_business_day_of_week", dt.date(2026,11,2), CAL) == dt.date(2026,10,16)
     fri = dt.date(2026,10,16)
     assert D.attempt_date(fri, "last_business_day_of_week", dt.date(2026,11,10), CAL) == dt.date(2026,10,23)
 
@@ -226,7 +226,7 @@ Also `tests/test_embed.py`: `source(dates, money)` contains `def nth_bd` and no 
   "outcomes": [{"outcome":"promise","reason":null,"event":"promise_recorded"}],
   "extra_rules": [{"stage": "negotiate", "text": "…"}],
   "custom_code": [],
-  "examples": [{"kind": "deadline", "today": "2026-10-14", "days_late": 6, "expect": "2026-10-30", "source": "derived"}],
+  "examples": [{"kind": "deadline", "today": "2026-10-14", "days_late": 6, "expect": "2026-11-02", "source": "derived"}],
   "conflicts": [],
   "sources": {"bands": "rule 18"}
 }

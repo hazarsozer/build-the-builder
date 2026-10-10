@@ -5,3 +5,6 @@ __pycache__/
 results/
 .freya-agents.json
 traces/
+.superpowers/
+.personas.json
+.claude/worktrees/
