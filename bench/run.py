@@ -22,7 +22,8 @@ Per brief, sequentially (one simulation slot):
 One bank for the whole run; the tunnel starts at the first simulation, is restarted if it died, and is stopped by pid
 at the end. A failing brief is recorded and the bench goes on. .freya-agents.json is copied in from the main checkout
 before each brief and back after it. Results: results/bench-<builder>-<time>.json and .md, rewritten after every brief.
-Env: env.sh of the main checkout is loaded when FREYA_API_KEY is not set (never printed).
+Env: env.sh of the main checkout is always loaded with setdefault (never printed). SIGTERM/SIGHUP exit 143 through
+the same cleanup; Ctrl-C kills the running build's process group and records an `interrupted` row.
 """
 import argparse, datetime, json, os, pathlib, shutil, signal, subprocess, sys, time
 
@@ -175,6 +176,27 @@ def render_md(meta, rows):
     return "\n".join(lines)
 
 
+def clear_outputs(out_dir, name):
+    """Delete the previous build's bench-<name>.spec.json and *.workflow.json in out_dir."""
+    out_dir = pathlib.Path(out_dir)
+    for f in [out_dir / ("bench-%s.spec.json" % name), *out_dir.glob("*.workflow.json")]:
+        f.unlink(missing_ok=True)
+
+
+def kill_group(p):
+    try: os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+
+
+def interrupted_row(brief, builder, why):
+    return {"name": brief["name"], "builder": builder, "build_s": None, "exit": None, "spec_errors": None, "conflicts": None,
+            "checks": {}, "sim": None, "sim_skip": why, "interrupted": True, "errors": [{"phase": "run", "error": why}]}
+
+
+def _exit_on_signal(signum, frame):
+    sys.exit(143)                                     # SystemExit runs every `finally`: the tunnel and bank are stopped
+
+
 def newest_workflow(out_dir, since):
     ws = [p for p in pathlib.Path(out_dir).glob("*.workflow.json") if p.stat().st_mtime >= since]
     return max(ws, key=lambda p: p.stat().st_mtime) if ws else None
@@ -192,8 +214,8 @@ def main_checkout():
 
 
 def load_env(env_file):
-    """Source env.sh in bash and merge its variables into os.environ. Nothing is printed."""
-    if os.environ.get("FREYA_API_KEY") or not pathlib.Path(env_file).exists(): return
+    """Source env.sh in bash and merge its variables into os.environ (setdefault: set values win). Nothing is printed."""
+    if not pathlib.Path(env_file).exists(): return
     out = subprocess.run(["bash", "-c", 'set -a; source "$1" >/dev/null 2>&1; set +a; env -0', "_", str(env_file)],
                          capture_output=True, timeout=30).stdout
     for item in out.split(b"\0"):
@@ -226,19 +248,25 @@ class Runner:
         out_dir.mkdir(parents=True, exist_ok=True)
         cmd = build_cmd(self.a.builder, brief, out_dir, repo_root=self.root)
         log = out_dir / "build.log"
+        clear_outputs(out_dir, brief["name"])         # a stale spec or workflow must never pass for this build's
         t0, wall0 = time.monotonic(), time.time()
         p = subprocess.Popen(cmd, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:
             text, _ = p.communicate(timeout=BUILD_TIMEOUT_S[self.a.builder])
             code = p.returncode
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)          # the build's own process group, by pid
+            kill_group(p)                             # the build's own process group, by pid
             text, _ = p.communicate()
             code = "timeout"
+        except BaseException:                         # Ctrl-C, SIGTERM (SystemExit): the build must not outlive us
+            kill_group(p)
+            raise
         text = scrub(text or "")
         log.write_text(text)
         res = {"seconds": round(time.monotonic() - t0, 1), "exit": code, "log": str(log.relative_to(HERE)),
                "tail": "\n".join(text.strip().splitlines()[-12:])}
+        if code != 0:
+            return res                                # no artifact: the sim is skipped, the exit code is recorded
         if self.a.builder == "ours":
             spec = out_dir / ("bench-%s.spec.json" % brief["name"])
             res["artifact"] = spec if spec.exists() else None
@@ -289,7 +317,7 @@ class Runner:
         from fallback.selftest_cli import swap_base
         openapi = json.loads(brief["openapi"].read_text())
         url = self.ensure_tunnel()
-        self.srv.bank.__init__(openapi)               # the same bank and server, now serving this brief's openapi
+        self.srv.bank.reset(openapi)                  # the same bank and server, now serving this brief's openapi
         if self.a.builder == "ours":
             wf = comp.compile(json.loads(pathlib.Path(artifact).read_text()), openapi, url + "/v1")
         else:
@@ -319,6 +347,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     a = parse_args(argv)
+    for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, _exit_on_signal)
     root, main_root = pathlib.Path(a.repo_root).resolve(), main_checkout()
     load_env(main_root / "env.sh")
     for p in (HERE / "tools", HERE, root / "tools", root):   # later insert(0) wins: --repo-root's builder is imported
@@ -343,6 +372,9 @@ def main(argv=None):
             sync_state(main_root / ".freya-agents.json", run.state)
             try:
                 rec = run_brief(b, a.builder, run.build, run.sim, a.no_sim, run.extract if a.builder == "ours" else None)
+            except (KeyboardInterrupt, SystemExit) as e:
+                rows.append(interrupted_row(b, a.builder, "interrupted (%s)" % type(e).__name__))
+                raise
             finally:
                 sync_state(run.state, main_root / ".freya-agents.json")
             rows.append(rec)

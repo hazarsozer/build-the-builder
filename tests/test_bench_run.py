@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import time
 
 import pytest
@@ -178,3 +179,104 @@ def test_main_mocked_writes_results_and_syncs_state(tmp_path, monkeypatch):
     assert rows[0]["sim"]["passed"] == 8 and rows[1]["errors"][0]["phase"] == "build"
     assert seen[0] == {"keep": 1} and seen[1] == {"keep": 1, "bench-ids": 2} and seen[-1] == "stopped"
     assert json.loads((main_root / ".freya-agents.json").read_text()) == {"keep": 1, "bench-plan2": 2}
+
+
+class FakePopen:
+    behaviour, killed = None, []
+
+    def __init__(self, cmd, **kw):
+        self.pid, self.returncode = 4242, None
+        self.out_dir = pathlib.Path(cmd[cmd.index("--out-dir") + 1])
+
+    def communicate(self, timeout=None):
+        if self.behaviour == "interrupt" and timeout is not None: raise KeyboardInterrupt
+        if self.behaviour in ("ok", "fail_with_output"):
+            (self.out_dir / "bench-ids.spec.json").write_text("{}")   # a crashed build may still leave a file
+        self.returncode = 0 if self.behaviour == "ok" else 1
+        return "log line", None
+
+
+def _runner(tmp_path, monkeypatch, behaviour):
+    monkeypatch.setattr(br, "HERE", tmp_path)
+    FakePopen.behaviour, FakePopen.killed = behaviour, []
+    monkeypatch.setattr(br.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(br.os, "killpg", lambda pid, sig: FakePopen.killed.append((pid, sig)))
+    _mk(tmp_path, "ids")
+    out = tmp_path / "results" / "bench" / "ids"
+    out.mkdir(parents=True)
+    (out / "bench-ids.spec.json").write_text('{"stale": true}')
+    (out / "old.workflow.json").write_text("{}")
+    return br.Runner(br.parse_args(["ours"]), tmp_path, tmp_path), br.discover(tmp_path)[0], out
+
+
+def test_build_clears_stale_outputs_and_uses_fresh_spec(tmp_path, monkeypatch):
+    run, b, out = _runner(tmp_path, monkeypatch, "ok")
+    res = run.build(b)
+    assert res["exit"] == 0 and res["artifact"] == out / "bench-ids.spec.json"
+    assert (out / "bench-ids.spec.json").read_text() == "{}" and not (out / "old.workflow.json").exists()
+
+
+def test_build_nonzero_exit_has_no_artifact_and_skips_sim(tmp_path, monkeypatch):
+    run, b, out = _runner(tmp_path, monkeypatch, "fail")
+    res = run.build(b)
+    assert res["exit"] == 1 and "artifact" not in res and not (out / "bench-ids.spec.json").exists()
+    FakePopen.behaviour = "fail_with_output"
+    called = []
+    rec = br.run_brief(b, "ours", run.build, lambda b, a: called.append(1), extract_fn=lambda b, a: called.append(2))
+    assert rec["exit"] == 1 and rec["sim_skip"] == "no build output" and not called
+
+
+def test_build_ctrl_c_kills_group_and_reraises(tmp_path, monkeypatch):
+    import signal
+    run, b, _ = _runner(tmp_path, monkeypatch, "interrupt")
+    with pytest.raises(KeyboardInterrupt):
+        run.build(b)
+    assert FakePopen.killed == [(4242, signal.SIGKILL)]
+
+
+def test_main_records_interrupted_row(tmp_path, monkeypatch):
+    bench, root = tmp_path / "bench", tmp_path / "wt"
+    bench.mkdir(); root.mkdir()
+    _mk(bench, "ids"); _mk(bench, "sme")
+    monkeypatch.setattr(br, "HERE", tmp_path); monkeypatch.setattr(br, "BENCH", bench)
+    monkeypatch.setattr(br, "main_checkout", lambda: root)
+    monkeypatch.setattr(br.signal, "signal", lambda *a: None)
+
+    def build(self, b): raise KeyboardInterrupt
+    stopped = []
+    monkeypatch.setattr(br.Runner, "build", build)
+    monkeypatch.setattr(br.Runner, "stop", lambda self: stopped.append(1))
+    with pytest.raises(KeyboardInterrupt):
+        br.main(["ours", "--repo-root", str(root)])
+    rows = json.loads(next((tmp_path / "results").glob("bench-ours-*.json")).read_text())["rows"]
+    assert [(r["name"], r.get("interrupted")) for r in rows] == [("ids", True)] and stopped
+
+
+def test_signal_handler_exits_143():
+    with pytest.raises(SystemExit) as e:
+        br._exit_on_signal(15, None)
+    assert e.value.code == 143
+
+
+def test_load_env_setdefault_even_with_key_set(tmp_path, monkeypatch):
+    env = tmp_path / "env.sh"
+    env.write_text("export FREYA_API_KEY=from_file\nexport BENCH_TEST_ONLY_VAR=loaded\n")
+    monkeypatch.setenv("FREYA_API_KEY", "already")
+    monkeypatch.setenv("BENCH_TEST_ONLY_VAR", "x")
+    monkeypatch.delenv("BENCH_TEST_ONLY_VAR")
+    br.load_env(env)
+    assert os.environ["FREYA_API_KEY"] == "already" and os.environ["BENCH_TEST_ONLY_VAR"] == "loaded"
+    monkeypatch.delenv("BENCH_TEST_ONLY_VAR")
+
+
+def test_bank_reset_swaps_openapi_and_drops_sessions():
+    from bank.server import Bank
+
+    def oa(v):
+        return {"paths": {"/close_call": {"post": {"requestBody": {"content": {"application/json": {"schema": {
+            "properties": {"outcome": {"enum": [v]}}}}}}}}}}
+    bank = Bank(oa("promise"))
+    bank.sessions["x"] = {}
+    lock = bank.lock
+    bank.reset(oa("paid"))
+    assert bank.outcomes == ["paid"] and bank.sessions == {} and bank.lock is lock and not lock.locked()

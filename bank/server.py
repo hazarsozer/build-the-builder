@@ -101,7 +101,16 @@ def say_or(items):
 
 class Bank:
     def __init__(self, openapi):
-        self.openapi, self.lock, self.sessions = openapi, threading.Lock(), {}
+        self.lock = threading.Lock()
+        self._load(openapi)
+
+    def reset(self, openapi):
+        """Serve another openapi from the same server: drop every session and reload the enums, under the lock."""
+        with self.lock:
+            self._load(openapi)
+
+    def _load(self, openapi):
+        self.openapi, self.sessions = openapi, {}
         self.tools = [p.strip("/") for p in openapi.get("paths", {})]
         self.fields = enum(openapi, "verify_identity", "field") or []
         self.outcomes = enum(openapi, "close_call", "outcome")
