@@ -170,6 +170,7 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 - [x] 3-run checks on the Task 5 code (before the 7b and 8 merges), on the organisers' bank. **Not perfect.**
   - **Brief B: 2/3.** PUB-12 failed once: in run 3 all 3 products were noted refused, but the expected record was a 510 promise on p1.
   - **Brief A with pieces-style customers: 7/10.** PUB-07 failed 0/3: the customer offers 26 Oct, a holiday, and the agent should offer the next business day. PUB-02 and PUB-04 each failed 1 of 3.
+  - **Brief B with pieces-style customers: 1/3.** PUB-12 and PUB-13 each failed 1 of 3.
   - dev-2d is diagnosing these. They are real gaps, not outages.
 - [ ] Re-check of the merged builder: Brief A and B at 3 runs
 - [ ] Dress rehearsal on Brief A: build time and 3 runs
