@@ -439,6 +439,32 @@ def test_crashing_case_builder_still_runs_selftest(env, monkeypatch):
     assert any(r["kind"] == "selftest_round" for r in trace_rows(env))
 
 
+def _counting_extract(monkeypatch, results):
+    calls = []
+
+    def fake(brief_paths, openapi, trace=None, **kw):
+        calls.append(kw)
+        r = results[min(len(calls), len(results)) - 1]
+        return (copy.deepcopy(r), [], {"seconds": 1.0}) if r is not None else (None, ["no candidate"], {})
+    monkeypatch.setattr(ex, "extract", fake)
+    return calls
+
+
+def test_extraction_without_spec_is_retried_once(env, monkeypatch):
+    calls = _counting_extract(monkeypatch, [None, A])
+    assert run_main(env, "--no-selftest") == 0
+    assert len(calls) == 2 and "dual" not in calls[0]
+    assert calls[1]["dual"] is False and calls[1]["use_oracle"] is False and calls[1]["deadline_s"] <= 360
+    ks = kinds(env)
+    assert "extract_retry" in ks and "no_spec" not in ks and "export" in ks
+
+
+def test_extraction_retry_needs_budget(env, monkeypatch):
+    calls = _counting_extract(monkeypatch, [None, A])
+    assert run_main(env, "--no-selftest", "--budget-min", "10") == 2       # 600 s - reserve < 10 min: no retry
+    assert len(calls) == 1 and "extract_retry" not in kinds(env) and "no_spec" in kinds(env)
+
+
 def test_empty_weekdays_spec_does_not_hang(env, monkeypatch):
     spec = copy.deepcopy(A)
     spec["calendar"]["weekdays"] = []

@@ -55,6 +55,7 @@ STATE_FILE = ROOT / ".freya-agents.json"
 SIMS_FILE = ROOT / ".freya-sims.json"     # simulations this builder started (only these are ever cancelled)
 FINISHED = ("completed", "failed", "paused", "cancelled", "canceled")
 EXTRACT_MAX_S = 360          # extraction budget (design §4: <= 6 min)
+EXTRACT_RETRY_MIN_S = 10 * 60   # no spec from extraction: retry once only with more than this left (after the reserve)
 FINAL_RESERVE_S = 150        # kept back for the final compile, save and export
 ROUND2_MIN_S = 12 * 60       # fix round + round 2 only with more than this left (after the reserve)
 TUNNEL_WAIT_S = 120          # once the spec exists, wait at most this long for the tunnel
@@ -370,15 +371,24 @@ class Build:
             self.srv = None
 
     # -- extract
-    def _extract(self):
+    def _extract_once(self, **kw):
         deadline_s = max(60, min(EXTRACT_MAX_S, int(self.left() - FINAL_RESERVE_S - 30)))
         try:
-            spec, errs, info = bounded(lambda: ex.extract(self.briefs, self.openapi, self.trace, deadline_s=deadline_s),
-                                       deadline_s + 90)
+            return bounded(lambda: ex.extract(self.briefs, self.openapi, self.trace, deadline_s=deadline_s, **kw),
+                           deadline_s + 90)
         except BudgetStop:
-            spec, errs, info = None, ["extraction did not return within %d s" % (deadline_s + 90)], {}
+            return None, ["extraction did not return within %d s" % (deadline_s + 90)], {}
         except Exception as e:
-            spec, errs, info = None, [_err(e)], {}
+            return None, [_err(e)], {}
+
+    def _extract(self):
+        spec, errs, info = self._extract_once()
+        if spec is None and self.left() - FINAL_RESERVE_S > EXTRACT_RETRY_MIN_S:
+            # one more, lighter attempt (single extraction, no oracle) while the budget still allows a build after it
+            self.ev("extract_retry", errors=[scrub(str(x))[:400] for x in errs[:5]], seconds_left=round(self.left(), 1))
+            self.log("extraction produced no spec; retrying once (single extraction, no oracle)")
+            spec, errs2, info = self._extract_once(dual=False, use_oracle=False)
+            errs = list(errs) + list(errs2)
         if spec is None:
             self.ev("no_spec", errors=[scrub(str(x))[:400] for x in errs[:10]])
             self.log("extraction produced no spec: %s" % scrub(str(errs[:3])))
