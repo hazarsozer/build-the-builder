@@ -167,6 +167,23 @@ def pfield(p, cfg, key, default):
     return v
 
 
+def product_cfg_of(p, product_cfg):
+    """A product's products.<type> config: by its `type` field; else by any of its string values that is a config key;
+    else the first config whose amount_field holds a value in the product; else an empty dict."""
+    pc = product_cfg or dict()
+    cfg = pc.get(str(p.get('type') or ''))
+    if cfg:
+        return cfg
+    for v in p.values():
+        if isinstance(v, str) and isinstance(pc.get(v), dict):
+            return pc[v]
+    for c in pc.values():
+        f = (c or dict()).get('amount_field') if isinstance(c, dict) else None
+        if f and p.get(f) not in (None, ''):
+            return c
+    return dict()
+
+
 def amount_of(p, cfg):
     return float(pfield(p, cfg, 'amount_field', 'past_due'))
 
@@ -188,7 +205,7 @@ def plan_products(products, today, bands, cal, product_cfg=None):
     """Per-product facts: product_id, band, deadline, floor, full, attempts [(amount_kind, date)]."""
     out = []
     for i, p in enumerate(products):
-        cfg = (product_cfg or dict()).get(str(p.get('type') or '')) or dict()
+        cfg = product_cfg_of(p, product_cfg)
         full = amount_of(p, cfg)
         ff = cfg.get('floor_field') or 'floor'
         floor = float(p.get(ff)) if p.get(ff) not in (None, '') else full

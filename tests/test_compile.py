@@ -196,6 +196,29 @@ def test_prepare_account_reads_products_list():
     assert v["product_words"] == "car loan" and v["floor_text"] == "210.50"
 
 
+def test_prepare_account_product_without_type_key():
+    other_key = {k: v for k, v in CARD.items() if k != "type"}
+    v = _run_account("2026-10-14T11:00", dict(other_key, product_type="credit_card"))
+    assert v["account_state"] == "ok" and v["product_words"] == "credit card ending 4821" and v["floor_text"] == "35.00"
+    s = copy.deepcopy(A)
+    s["products"]["credit_card"]["amount_field"] = "amount_due"
+    bare = {k: v for k, v in other_key.items() if k != "past_due"}
+    v = _run_account("2026-10-14T11:00", dict(bare, amount_due=420.0), spec=s)
+    assert v["account_state"] == "ok" and v["past_due_text"] == "420.00" and v["floor_text"] == "35.00"
+
+
+def test_product_cfg_of_fallbacks():
+    from builder.lib import dates as D
+    pc = {"card": {"words": "card", "amount_field": "due"}, "loan": {"words": "loan"}}
+    assert D.product_cfg_of({"type": "loan"}, pc) is pc["loan"]
+    assert D.product_cfg_of({"kind": "loan"}, pc) is pc["loan"]
+    assert D.product_cfg_of({"due": 5}, pc) is pc["card"]
+    assert D.product_cfg_of({"x": 1}, pc) == {} and D.product_cfg_of({"type": "loan"}, None) == {}
+    [plan] = D.plan_products([{"kind": "card", "due": 50, "days_late": 3}],
+                             __import__("datetime").date(2026, 10, 14), A["bands"], A["calendar"], pc)
+    assert plan["full"] == 50.0
+
+
 def test_prepare_account_examples_from_spec():
     for ex in A["examples"]:
         v = _run_account(ex["today"] + "T11:00", dict(CARD, days_late=ex["days_late"]))
