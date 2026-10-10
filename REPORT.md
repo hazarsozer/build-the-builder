@@ -5,7 +5,7 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 ## 1. The short version
 
 - **The builder exists end to end and is merged.** `python -m builder.main <brief files>` reads a brief and writes a policy spec, compiles a Freya workflow, tests it on our own copy of the bank, fixes the spec, then exports the workflow and writes a trace. Code: branch `builder`, 451 tests passing.
-- **Live results on the organisers' bank are perfect so far on the practice set:**
+- **Live results on the organisers' bank were perfect on the practice set at the `gate-green-1` tag.** Later checks with pieces-style customers show gaps (see section 10):
 
   | | Score | Detail |
   |---|---|---|
@@ -167,7 +167,10 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 
 ## 10. Overnight (dev-2d), filled in as results arrive
 
-- [ ] 3-run checks: Brief B and the pieces style (on the final Task 5 code)
+- [x] 3-run checks on the Task 5 code (before the 7b and 8 merges), on the organisers' bank. **Not perfect.**
+  - **Brief B: 2/3.** PUB-12 failed once: in run 3 all 3 products were noted refused, but the expected record was a 510 promise on p1.
+  - **Brief A with pieces-style customers: 7/10.** PUB-07 failed 0/3: the customer offers 26 Oct, a holiday, and the agent should offer the next business day. PUB-02 and PUB-04 each failed 1 of 3.
+  - dev-2d is diagnosing these. They are real gaps, not outages.
 - [ ] Re-check of the merged builder: Brief A and B at 3 runs
 - [ ] Dress rehearsal on Brief A: build time and 3 runs
 - [ ] Dress rehearsal on Brief A+B: build time and 3 runs
