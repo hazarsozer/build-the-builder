@@ -172,6 +172,6 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 - [ ] Dress rehearsal on Brief A: build time and 3 runs
 - [ ] Dress rehearsal on Brief A+B: build time and 3 runs
 - [ ] Bench over the 10 test briefs
-- [ ] Final whole-branch review findings, and fixes
+- [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
 - [ ] Customer styles at 3 runs, different "today" dates, variance at 5 runs
 - [ ] Fallback live check (for the 16:00 decision)
