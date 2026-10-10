@@ -78,7 +78,7 @@ def test_verify_prehook_normalises_by_format():
     q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
     cases = [(q["date"], "02/11/1979", "1979-11-02"), (q["date"], "14 March 1988", "1988-03-14"),
              (q["date"], "March 14, 1988", "1988-03-14"), (q["date"], "1988-03-14", "1988-03-14"),
-             (q["digits"], "55 01 23 3 4 4 7", "3447")]
+             (q["digits"], "4 4 1 0", "4410")]
     for field, ans, want in cases:
         cfg = {"body": {"field": field, "answer": ans}}
         run(pre, None, {}, cfg)
@@ -99,7 +99,8 @@ def test_p1_partial_answers_never_reach_the_bank_as_answers():
     w = C(A, OA)
     q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
     ok = {"status": "success", "data": {"ok": True, "verified": False, "wrong_answers_left": 2}}
-    for field, ans in [(q["date"], "14 March"), (q["digits"], "44"), (q["digits"], "4 4 7")]:
+    for field, ans in [(q["date"], "14 March"), (q["date"], "1988"), (q["date"], "March 1988"), (q["digits"], "44"),
+                       (q["digits"], "4 4 7"), (q["digits"], "55 01 23 3 4 4 7")]:
         v = {}
         body, data = _verify(w, field, ans, v, dict(ok))
         assert body["field"] == "incomplete_answer" and body["answer"] == "", ans
@@ -116,6 +117,83 @@ def test_p1_parts_are_combined_from_id_partial():
     assert body["answer"] == "4410"
     body, _ = _verify(w, q["digits"], "4410", {"id_partial": "99"}, {"status": "success", "data": {"ok": True}})
     assert body["answer"] == "4410"
+
+
+OK = {"status": "success", "data": {"ok": True, "verified": True, "all_verified": False, "wrong_answers_left": 3}}
+INCOMPLETE = None  # body rewritten to the incomplete_answer field, never checked by the bank
+STALE_DOB = {"id_partial": "14 March 1988", "id_partial_spent": "14 March 1988"}
+
+# (question format, model answer, vars before the call, answer sent to the bank or INCOMPLETE)
+ROUND4 = [
+    ("date", "1988", {"id_partial": "14 March"}, "1988-03-14"),
+    ("date", "1988", {"id_partial": "14 March 1988"}, "1988-03-14"),
+    ("date", "14 March", {}, INCOMPLETE),
+    ("date", "1988", {}, INCOMPLETE),
+    ("date", "03/14/1988", {}, "03/14/1988"),
+    ("date", "the 14th of March, 1988", {}, "1988-03-14"),
+    ("date", "fourteenth March 1988", {}, "fourteenth March 1988"),
+    ("date", "1988", {"id_partial": "14 March", "id_partial_field": "phone_last4"}, INCOMPLETE),
+    ("digits", "10", {"id_partial": "4410"}, INCOMPLETE),
+    ("digits", "10", {"id_partial": "44"}, "4410"),
+    ("digits", "10", {"id_partial": "44 10"}, "4410"),
+    ("digits", "44", dict(STALE_DOB), INCOMPLETE),
+    ("digits", "44", {"id_partial": "14 March 1988"}, INCOMPLETE),
+    ("digits", "4401, sorry, I mean 4410", {}, "4410"),
+    ("digits", "4401", {"id_partial": "44"}, "4401"),
+    ("digits", "4 4 7", {}, INCOMPLETE),
+    ("digits", "44", {"id_partial": "44"}, INCOMPLETE),
+    ("digits", "44107", {}, INCOMPLETE),
+    ("digits", "10", {"id_partial": "4401, sorry, I mean 44"}, INCOMPLETE),
+]
+
+
+def test_round4_completeness_table():
+    w = C(A, OA)
+    q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
+    for fm, ans, v, want in ROUND4:
+        body, data = _verify(w, q[fm], ans, dict(v), json.loads(json.dumps(OK)))
+        if want is INCOMPLETE:
+            assert body == {"field": "incomplete_answer", "answer": ""}, (fm, ans, v, body)
+            assert data["counted"] is False and "INCOMPLETE" in data["what_to_do_next"], (fm, ans, v)
+        else:
+            assert body == {"field": q[fm], "answer": want}, (fm, ans, v, body)
+
+
+def test_round4_year_format_needs_exactly_four_digits():
+    spec = json.loads(json.dumps(A))
+    spec["identity"]["questions"][0] = {"field": "birth_year", "ask": "What year were you born?", "format": "year"}
+    w = C(spec, OA)
+    for ans, v, want in [("1988", {}, "1988"), ("88", {}, INCOMPLETE), ("19", {"id_partial": "19"}, INCOMPLETE),
+                         ("88", {"id_partial": "19"}, "1988"), ("19888", {}, INCOMPLETE)]:
+        body, _ = _verify(w, "birth_year", ans, dict(v), json.loads(json.dumps(OK)))
+        assert body["answer"] == ("" if want is INCOMPLETE else want), (ans, v, body)
+
+
+def test_round4_parts_are_spent_after_a_checked_call_and_kept_after_an_incomplete_one():
+    w = C(A, OA)
+    q = {x["format"]: x["field"] for x in A["identity"]["questions"]}
+    v = {"id_partial": "14 March"}
+    body, _ = _verify(w, q["date"], "14 March", v, OK)
+    assert body["field"] == "incomplete_answer" and v["id_partial_field"] == q["date"]
+    v["id_partial"] = "14 March 1988"
+    body, _ = _verify(w, q["date"], "1988", v, json.loads(json.dumps(OK)))
+    assert body["answer"] == "1988-03-14" and v["id_partial_spent"] == "14 March 1988" and v["id_partial_field"] == ""
+    body, _ = _verify(w, q["digits"], "44", v, OK)  # the extractor still holds the DOB
+    assert body["field"] == "incomplete_answer"
+    v["id_partial"] = "44"
+    body, _ = _verify(w, q["digits"], "10", v, OK)
+    assert body["answer"] == "4410"
+
+
+def test_round4_posthook_treats_field_errors_as_incomplete_without_the_flag():
+    w = C(A, OA)
+    post = _tool(w, "verify_identity")["post_process_code"]
+    for r in ({"status": "success", "data": {"ok": False, "error": "field must be date_of_birth or phone_last4"}},
+              {"status": "success", "error": "field must be date_of_birth or phone_last4", "data": {}}):
+        v = {}
+        run(post, r, v)
+        assert r["data"]["counted"] is False and "INCOMPLETE" in r["data"]["what_to_do_next"]
+        assert "id_partial_spent" not in v
 
 
 def test_p3_self_correction_digits_keep_the_last_value():

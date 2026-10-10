@@ -380,20 +380,27 @@ try:
     import re
     MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september',
               'october', 'november', 'december']
+    FILLER = ['the', 'of', 'in', 'on', 'born', 'i', 'was', 'its', 'it', 'is', 'and', 'my', 'birthday', 'year']
+    FIX = r'(?:sorry|i mean|i meant|actually|correction|no wait|wait|rather|scratch that)'
     def _month(w):
-        w = w.lower()[:3]
+        w = w.lower()
+        if len(w) < 3:
+            return 0
         for i, m in enumerate(MONTHS):
-            if m[:3] == w:
+            if m[:3] == w[:3]:
                 return i + 1
         return 0
     def _date(a, order):
-        a = a.strip().rstrip('.')
+        a = re.sub(r'^(?:the\s+)', '', a.strip().rstrip('.'), flags=re.I)
+        m = re.match(r'^(\d{4}),?\s+([A-Za-z].*)$', a)
+        if m:
+            a = m.group(2) + ' ' + m.group(1)
         if re.match(r'^\d{4}-\d{2}-\d{2}$', a):
             return a
-        m = re.match(r'^(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+([A-Za-z]+),?\s+(\d{4})$', a)
+        m = re.match(r'^(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+([A-Za-z]+)\.?,?\s+(\d{4})$', a)
         if m and _month(m.group(2)):
             return '%s-%02d-%02d' % (m.group(3), _month(m.group(2)), int(m.group(1)))
-        m = re.match(r'^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$', a)
+        m = re.match(r'^([A-Za-z]+)\.?\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$', a)
         if m and _month(m.group(1)):
             return '%s-%02d-%02d' % (m.group(3), _month(m.group(1)), int(m.group(2)))
         m = re.match(r'^(\d{1,4})[./ -](\d{1,2})[./ -](\d{1,4})$', a)
@@ -408,44 +415,71 @@ try:
             if len(yr) == 4 and 1 <= int(mo) <= 12 and 1 <= int(dy) <= 31:
                 return '%s-%02d-%02d' % (yr, int(mo), int(dy))
         return a
-    def _norm(a, q):
+    def _date_ok(a, v):
+        """A date is incomplete only without a 4-digit year (a lone year, or a year with only a month, is a part)."""
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', v):
+            return True
+        if not re.search(r'(?<!\d)\d{4}(?!\d)', a):
+            return False
+        rest = re.sub(r'(?<!\d)\d{4}(?!\d)', ' ', a, count=1)
+        if re.search(r'\d', rest):
+            return True
+        words = [w for w in re.findall(r'[a-z]+', rest.lower()) if w not in FILLER]
+        return len(words) >= 2 or (len(words) == 1 and not _month(words[0]))
+    def _digits(a, n, alone):
+        dg = ''.join(ch for ch in a if ch.isdigit())
+        if alone and n and len(dg) > n:
+            # explicit self-correction inside one answer: the value after the last correction word counts
+            parts = re.split(FIX, a, flags=re.I)
+            if len(parts) > 1:
+                dg = ''.join(ch for ch in parts[-1] if ch.isdigit())
+        if n:
+            return dg, len(dg) == n
+        return dg, bool(dg)
+    def _norm(a, q, alone):
         """(normalised answer, complete?) for one answer text."""
         fm = q.get('format')
         if fm == 'date':
             v = _date(a, q.get('date_order') or 'DMY')
-            return v, bool(re.match(r'^\d{4}-\d{2}-\d{2}$', v))
+            return v, _date_ok(a, v)
         if fm == 'digits':
-            dg = ''.join(ch for ch in a if ch.isdigit())
-            n = int(q.get('length') or 0)
-            if n and len(dg) >= n:
-                return dg[-n:], True
-            return dg or a, not n and bool(dg)
+            return _digits(a, int(q.get('length') or 0), alone)
         if fm == 'year':
-            m = re.search(r'\d{4}', a)
-            return (m.group(0), True) if m else (a, False)
+            return _digits(a, 4, alone)
         if fm == 'postcode':
             return a.upper().replace(' ', ''), True
         return a, True
     vars['id_incomplete'] = 'no'
     b = config.get('body')
     if isinstance(b, dict):
-        q = FORMATS.get(str(b.get('field') or ''))
+        fld = str(b.get('field') or '')
+        q = FORMATS.get(fld)
         a = str(b.get('answer') if b.get('answer') is not None else '').strip()
+        part = str(vars.get('id_partial') or '').strip()
+        vars['id_partial_seen'] = part
+        # a part collected for another question, or already used in a checked call, is stale: never combine it
+        if part and (part == str(vars.get('id_partial_spent') or '') or str(vars.get('id_partial_field') or fld) != fld):
+            part = ''
         if q and a:
-            v, ok = _norm(a, q)
-            if not ok:
-                # parts said across turns: the extracted id_partial holds what was collected so far
-                part = str(vars.get('id_partial') or '').strip()
-                for cand in ([part + ' ' + a, a + ' ' + part] if part and part not in a else []):
-                    v2, ok2 = _norm(cand.strip(), q)
-                    if ok2:
-                        v, ok = v2, True
-                        break
+            cands = [(a, True)]
+            if part:
+                # this answer is already one of the recorded pieces: try the parts on their own, never append it twice
+                if re.search(r'(?<![0-9A-Za-z])' + re.escape(a) + r'(?![0-9A-Za-z])', part, flags=re.I):
+                    cands.append((part, False))
+                else:
+                    cands.append((part + ' ' + a, False))
+            v, ok = a, False
+            for c, alone in cands:
+                v2, ok2 = _norm(c, q, alone)
+                if ok2:
+                    v, ok = v2, True
+                    break
             if ok:
                 b['answer'] = v
             else:
                 # a partial answer must not reach the bank as an answer (a short digit string counts as wrong)
                 vars['id_incomplete'] = 'yes'
+                vars['id_partial_field'] = fld
                 b['field'] = 'incomplete_answer'
                 b['answer'] = ''
 except Exception:
@@ -462,15 +496,24 @@ try:
             result['data'] = d
         left = d.get('wrong_answers_left')
         hint = d.get('hint')
-        if str(vars.get('id_incomplete') or '') == 'yes':
+        err = str(d.get('error') or result.get('error') or '')
+        technical = str(result.get('status', 'success')) != 'success' or (d.get('ok') is None and d.get('verified') is None)
+        incomplete = str(vars.get('id_incomplete') or '') == 'yes' or err.startswith('field must be')
+        if incomplete:
             vars['id_incomplete'] = 'no'
             d.clear()
             d['ok'] = False
             d['counted'] = False
             d['what_to_do_next'] = ('The answer is INCOMPLETE and was NOT checked. This is NOT a wrong answer. Ask only for the missing part (' +
                                     UNREADABLE + '), keep the part already given, and then call verify_identity once with the whole answer.')
-        elif str(result.get('status', 'success')) != 'success' or (d.get('ok') is None and d.get('verified') is None):
+        elif technical:
             d['what_to_do_next'] = 'The security service had a technical problem and nothing was checked. Say so in one short sentence and call verify_identity again with the same answer.'
+        else:
+            # the bank checked this answer: the parts collected so far are used up, never combine them into the next answer
+            vars['id_partial_spent'] = str(vars.get('id_partial_seen') or '')
+            vars['id_partial_field'] = ''
+        if incomplete or technical:
+            pass
         elif d.get('all_verified') is True:
             d['what_to_do_next'] = 'All answers are verified. Say only: Thank you.'
         elif hint and hint in HINTS:
