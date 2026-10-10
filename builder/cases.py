@@ -540,7 +540,11 @@ def build(spec, openapi, scenario, now, products=None, identity=None, variables=
     if wrong: case["wrong_answers"] = [wrong[0], list(wrong[1])]
     case["fixed"] = fixed_sentences(spec)
     case["seed"] = {"variables": dict(c.variables), "identity": dict(c.identity), "products": [dict(p) for p in got["products"]],
-                    "faults": faults, "reasons": reasons_table(spec)}
+                    "faults": faults, "reasons": reasons_table(spec),
+                    "identity_policy": {"max_wrong": spec["identity"]["max_wrong"], "scope": spec["identity"]["wrong_scope"]}}
+    aliases = {tool: {k: v for k, v in m.items() if k != v} for tool, m in (spec.get("responses") or {}).items()}
+    aliases = {tool: m for tool, m in aliases.items() if m}
+    if aliases: case["seed"]["response_aliases"] = aliases
     return case
 
 

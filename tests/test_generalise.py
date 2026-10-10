@@ -244,6 +244,84 @@ def test_g6_reference_unchanged():
     assert C(A, OA)["nodes"]["negotiate"]["on_enter"]["text"].startswith("Thank you, you are verified. {{debt_statement_text}}")
 
 
+# ---------------------------------------------------------------- G8 bank generalisation
+
+from bank import server  # noqa: E402
+
+SEED = {"variables": {"first_name": "A", "last_name": "B", "title": "Mr", "now": "2026-10-14T11:00"},
+        "identity": {"date_of_birth": "1988-03-14", "phone_last4": "4471"},
+        "products": [{"type": "credit_card", "card_last4": "4821", "past_due": 420.0, "days_late": 6, "minimum_payment": 126.0}]}
+
+
+def _bank(oa, seed):
+    b = server.Bank(oa)
+    cid = b.session({"seed": seed})[1]["variables"]["customer_id"]
+    return b, cid
+
+
+def _call(b, cid, tool, **body):
+    return b.tool(tool, dict(body, customer_id=cid))[1]
+
+
+def test_g8_defaults_unchanged():
+    b, cid = _bank(OA, SEED)
+    r = [_call(b, cid, "verify_identity", field="phone_last4", answer="0000") for _ in range(4)]
+    assert [x.get("wrong_answers_left") for x in r] == [2, 1, 0, 0] and r[3]["error"] == "identity check is over"
+
+
+def test_g8_per_question_limit():
+    seed = dict(SEED, identity_policy={"max_wrong": 2, "scope": "per_question"})
+    b, cid = _bank(OA, seed)
+    assert _call(b, cid, "verify_identity", field="date_of_birth", answer="1980-01-20")["wrong_answers_left"] == 1
+    assert _call(b, cid, "verify_identity", field="phone_last4", answer="0000")["wrong_answers_left"] == 1
+    r = _call(b, cid, "verify_identity", field="phone_last4", answer="4471")
+    assert r["verified"] is True and r["all_verified"] is False
+    r = _call(b, cid, "verify_identity", field="date_of_birth", answer="1980-01-21")
+    assert r["verified"] is False and r["wrong_answers_left"] == 0
+    r = _call(b, cid, "verify_identity", field="date_of_birth", answer="1988-03-14")
+    assert r["ok"] is False and r["error"] == "identity check is over"
+    assert b.ledger(cid)[1]["wrong"] == 3
+
+
+def test_g8_response_aliases_and_extra_fields():
+    seed = dict(SEED, response_aliases={"verify_identity": {"verified": "match", "wrong_answers_left": "attempts_left"}})
+    b, cid = _bank(FOA, seed)
+    r = _call(b, cid, "verify_identity", field="date_of_birth", answer="1988-03-14")
+    assert r["match"] is True and "verified" not in r and r["attempts_left"] == 3
+    _call(b, cid, "verify_identity", field="phone_last4", answer="4471")
+    r = _call(b, cid, "create_promise", product_id="p1", amount=420, date="2026-10-16")
+    assert r["ok"] is False and "channel" in r["error"]
+    r = _call(b, cid, "create_promise", product_id="p1", amount=420, date="2026-10-16", channel="cash")
+    assert r["ok"] is False and "channel" in r["error"]
+    r = _call(b, cid, "create_promise", product_id="p1", amount=420, date="2026-10-16", channel="card")
+    assert r["ok"] is True
+    led = b.ledger(cid)[1]
+    assert led["promises"][0]["channel"] == "card" and led["verified"] == {"date_of_birth": True, "phone_last4": True}
+
+
+def test_g8_custom_prefix_hint():
+    seed = dict(SEED, identity={"postcode": "SW1A 1AA", "phone_last4": "4471"},
+                hints={"partial_postcode": {"when": "prefix"}})
+    oa = copy.deepcopy(OA)
+    oa["paths"]["/verify_identity"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["field"]["enum"] = ["postcode", "phone_last4"]
+    b, cid = _bank(oa, seed)
+    r = _call(b, cid, "verify_identity", field="postcode", answer="SW1A")
+    assert r["hint"] == "partial_postcode" and r["verified"] is False and r["wrong_answers_left"] == 3
+    r = _call(b, cid, "verify_identity", field="postcode", answer="sw1a 1aa")
+    assert r["verified"] is True
+
+
+def test_g8_cases_seed_policy_and_aliases():
+    s = _aliased(copy.deepcopy(A), {"verify_identity": {"verified": "match"}})
+    s["identity"]["max_wrong"] = 2
+    s["identity"]["wrong_scope"] = "per_question"
+    c = cases.build(s, FOA, "happy_full_today", "2026-10-14T11:00")
+    assert c["seed"]["identity_policy"] == {"max_wrong": 2, "scope": "per_question"}
+    assert c["seed"]["response_aliases"] == {"verify_identity": {"verified": "match"}}
+    c = cases.build(A, OA, "happy_full_today", "2026-10-14T11:00")
+    assert c["seed"]["identity_policy"] == {"max_wrong": 3, "scope": "total"} and "response_aliases" not in c["seed"]
+
+
 # ---------------------------------------------------------------- G5 note reason -> close reason
 
 MOA = json.load(open("bench/multi-raw/openapi.json"))
