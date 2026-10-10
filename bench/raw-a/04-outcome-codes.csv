@@ -1,0 +1,17 @@
+code,api_outcome,api_reason,meaning
+PTP,promise,,at least one promise recorded
+PD,paid,,customer says this past-due amount is already paid
+TR-RES,transferred,restructuring,transferred for a new plan or lower instalments
+TR-HUM,transferred,human,transferred because the customer insisted on a person
+TR-SUP,transferred,support,transferred to support after hardship
+NP-REF,no_promise,refused,attempts used up or customer does not want to talk
+NP-HARD,no_promise,hardship,hardship and the support transfer declined
+NP-DIS,no_promise,dispute,customer disputes the debt or product
+NP-SYS,no_promise,service_error,promise could not be recorded after a retry
+NV-FAIL,not_verified,failed,three wrong security answers
+NV-DEC,not_verified,declined,declined the security questions or did not want to talk before verification
+NR-CB,not_reached,callback,third party booked a callback
+NR-NCB,not_reached,no_callback,no callback time inside the window
+NR-WN,not_reached,wrong_number,number does not belong to the customer
+NR-DEC,not_reached,deceased,customer has died
+NR-UNC,not_reached,unclear,person on the line not confirmed after two asks

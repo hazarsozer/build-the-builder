@@ -1,0 +1,157 @@
+# Policy spec field guide
+
+Generated from `builder/spec_schema.json` by `python -m builder.spec_guide`. Do not edit by hand.
+
+Policy spec for one brief (an organisation's collections call policy). Every fact in the brief lives here; the compiler is generic. Sentences use single-brace placeholders {name}: call_variables, get_account product fields, or product_words, past_due, days_late, floor, deadline, amount, date, product.
+
+Paths: dotted keys; `[]` marks a list item; `<name>` a map key. In spec paths (facts.maps_to, sources,
+conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id` of a list item
+(`events[paid].say`).
+
+## Fields
+
+- `bank_name` (required): string. The organisation name as said to the customer (bank, insurer, ...).
+- `assistant_identity` (required): string. What the agent says it is, e.g. when asked whether it is a robot.
+- `address_as` (required): string. How to address the customer, as a template over call_variables, e.g. "{<honorific_var>} {<surname_var>}".
+- `call_variables` (required): list of string, pattern `^[A-Za-z_][A-Za-z0-9_]*$`. Names of the variables every call starts with (the brief's call-variable table).
+- `opening` (required): object. The first turns, before the person on the line is confirmed as the customer.
+- `opening.first_sentence` (required): string. The first sentence, said word for word. Must contain every fact the brief requires in it.
+- `opening.confirm_question` (required): string. The question that confirms the customer, said word for word.
+- `opening.confirm_accept` (required): list of string. Answers that count as confirmation.
+- `opening.confirm_reject` (required): list of string. Answers that do NOT count as confirmation (ask again).
+- `opening.max_asks` (required): integer, min 1. How many times the confirm question may be asked in total before closing with the unclear event.
+- `opening.banned_before_verify` (required): list of string. Words or topics never said before identity is verified (to anyone).
+- `third_party` (required): object. When someone other than the customer answers.
+- `third_party.say_nothing_beyond_opening` (required): boolean. True: say nothing about the reason for the call beyond the opening sentence.
+- `third_party.callback` (required): object. The callback window for schedule_callback.
+- `third_party.callback.days` (required): list of one of `today`, `next_business_day`, `next_day`, `any_business_day`. Which days a callback may be booked on.
+- `third_party.callback.from` (required): string, pattern `^([01]\d|2[0-3]):[0-5]\d$`. Earliest time, HH:MM.
+- `third_party.callback.to` (required): string, pattern `^([01]\d|2[0-3]):[0-5]\d$`. Latest time, HH:MM.
+- `third_party.callback.inclusive` (optional): boolean. Whether `from` and `to` themselves are allowed. Default when absent: true (both included).
+- `third_party.callback.after_now` (required): boolean. True: the callback must be later than `now`.
+- `third_party.window_retries` (required): integer, min 0. How many more times to ask for another time when the offered one is outside the window.
+- `third_party.fixed_sentences` (required): map of name -> string. Sentences said word for word, keyed by event id (e.g. deceased).
+- `identity` (required): object. Security questions, asked in order, each checked with verify_identity.
+- `identity.questions` (required): list of object. Ordered security questions.
+  - each item: when `format` is date, also required: `date_order`
+  - each item: when `format` is digits, also required: `length`
+- `identity.questions[].field` (required): string. The verify_identity `field` enum value.
+- `identity.questions[].ask` (required): string. The question, said word for word.
+- `identity.questions[].format` (required): one of `date`, `digits`, `text`. date: send as YYYY-MM-DD. digits: exactly `length` digits. text: as said.
+- `identity.questions[].date_order` (optional): one of `DMY`, `MDY`, `YMD`. How to read a date given only as numbers (DMY = day, month, year).
+- `identity.questions[].length` (optional): integer, min 1. Number of digits for format digits.
+- `identity.max_wrong` (required): integer, min 1. Wrong answers that end the check.
+- `identity.wrong_scope` (required): one of `total`, `per_question`. total: counted across all questions. per_question: counted per question.
+- `identity.non_counting_hints` (required): map of name -> string. verify_identity hint value -> what to ask instead. These retries are not wrong answers.
+- `identity.decline_explanation` (required): string. Said (once) when the customer does not want to answer.
+- `identity.decline_limit` (required): integer, min 1. The n-th refusal (or 'what is this about' instead of an answer) closes with the declined event.
+- `identity.failed_advice` (required): string. Said after the check fails, before closing.
+- `calendar` (required): object. Business days used by every date rule.
+- `calendar.weekdays` (required): list of integer, min 0, max 6. Business weekdays, 0=Monday ... 6=Sunday.
+- `calendar.holidays` (required): list of string, pattern `^\d{4}-\d{2}-\d{2}$`. Non-business dates, YYYY-MM-DD.
+- `products` (required): map of name -> object. Keyed by get_account product `type`. Every openapi product type needs an entry.
+- `products.<name>.words` (required): string. How the product is said, may use product fields, e.g. "<product noun> ending {<id_field>}".
+- `products.<name>.floor_field` (required): string. The get_account product field that holds the floor (lowest acceptable amount).
+- `bands` (required): list of object. days_late ranges, contiguous with no gap or overlap. Each sets the deadline rule and the persuasion attempts.
+- `bands[].name` (required): string. The band's name from the brief.
+- `bands[].days_late` (required): list of integer, min 0. [min, max], both included.
+- `bands[].deadline` (required): object. How the promise deadline is computed from today (the date part of `now`).
+  - when `rule` is ['nth_business_day', 'calendar_days'], also required: `n`
+  - when `rule` is fixed_weekday_after_n_weeks, also required: `weekday`, `weeks`
+- `bands[].deadline.rule` (required): one of `nth_business_day`, `calendar_days`, `end_of_month`, `end_of_next_month`, `fixed_weekday_after_n_weeks`. nth_business_day: the n-th business day after today. calendar_days: today + n calendar days. end_of_month: last day of the current month. end_of_next_month: last day of next month. fixed_weekday_after_n_weeks: the given weekday (0=Monday) of this week, plus `weeks` weeks.
+- `bands[].deadline.n` (optional): integer, min 0. Count for nth_business_day and calendar_days.
+- `bands[].deadline.weekday` (optional): integer, min 0, max 6. 0=Monday ... 6=Sunday, for fixed_weekday_after_n_weeks.
+- `bands[].deadline.weeks` (optional): integer, min 0. Weeks to add, for fixed_weekday_after_n_weeks.
+- `bands[].deadline.snap` (optional): one of `back`, `forward`, `null`. If the computed day is not a business day: back = previous business day, forward = next business day, null/absent = keep it.
+- `bands[].attempts` (required): list of object. Persuasion attempts in order; their count is the number of attempts allowed.
+- `bands[].attempts[].amount` (required): one of `current`, `full`, `floor`. current: the full past-due amount, or the floor if the customer already said the full amount is too much. full: always the full past-due amount. floor: the floor amount (products[type].floor_field).
+- `bands[].attempts[].date` (required): one of `today`, `last_business_day_of_week`, `deadline`, `next_business_day`. today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. Always capped at the deadline.
+- `negotiation` (required): object. Stating the debt and getting a promise.
+- `negotiation.debt_statement` (required): string. The debt statement for one product, said after verification.
+- `negotiation.first_ask` (required): string. The first ask for payment, said word for word.
+- `negotiation.floor_offer` (required): object. Offering the floor when the full amount is too much.
+- `negotiation.floor_offer.times` (required): integer, min 0. How many times the floor may be offered.
+- `negotiation.floor_offer.sentence_suffix` (required): string or null. Sentence added to the floor offer, word for word.
+- `negotiation.below_floor` (required): one of `offer_floor_once`, `reject`, `accept`. When the customer proposes less than the floor.
+- `negotiation.vague_date` (required): one of `ask_once_then_deadline`, `propose_deadline`, `ask_until_exact`. When the customer gives a vague period instead of a day.
+- `negotiation.weekday_words` (required): object. Meaning of "next <weekday>" and "this <weekday>". following_week: that weekday in the next calendar week.
+- `negotiation.weekday_words.next` (required): one of `following_week`, `next_occurrence`. 
+- `negotiation.weekday_words.this` (required): one of `current_week`, `next_occurrence`. 
+- `negotiation.non_business_day` (required): one of `next_business_day`, `previous_business_day`, `reject`. When the customer names a weekend day or holiday on or before the deadline.
+- `negotiation.after_deadline` (required): one of `offer_deadline`, `reject`. When the customer names a date after the deadline.
+- `negotiation.never_ask_how_much` (required): boolean. True: the agent proposes every amount and never asks how much the customer can pay.
+- `negotiation.banned_offers` (required): list of string. Things never offered.
+- `negotiation.debt_statement_per_product` (optional): string. Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. Absent: use debt_statement for each.
+- `negotiation.first_ask_all` (optional): string. Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used.
+- `events` (required): list of object. Customer situations that change the call's course. Known ids map to fixed graph branches (promise_recorded, paid, dispute, restructuring, human, hardship, refused, service_error, failed, declined, callback, no_callback, wrong_number, deceased, unclear, not_talk); other ids become generic intent branches.
+  - each item: when `action` is ['transfer', 'insist_once_then_transfer', 'offer_transfer_else_close'], also required: `queue`
+  - each item: when `action` is offer_transfer_else_close, also required: `else_outcome`, `else_reason`
+- `events[].id` (required): string, pattern `^[a-z][a-z0-9_]*$`. Event id; also referenced by outcomes[].event and by path selectors events[<id>].
+- `events[].trigger` (required): string. When it fires, in plain words (used for intent detection).
+- `events[].stages` (required): list of one of `opening`, `third_party`, `identity`, `negotiate`, `any`. Stages in which the trigger is listened for.
+- `events[].say` (required): string or null. A sentence said WORD FOR WORD when the event fires, or null. Only put exact brief wording here.
+- `events[].instruction` (optional): string or null. Guidance for the dialogue model, NOT said verbatim (e.g. 'acknowledge briefly', 'stay neutral').
+- `events[].action` (required): one of `close`, `transfer`, `insist_once_then_transfer`, `offer_transfer_else_close`, `note_and_continue`. close: close the call with outcome/reason. transfer: transfer_to_agent(queue), then close with outcome/reason. insist_once_then_transfer: ask once whether you can help first (say); transfer only if the customer insists. offer_transfer_else_close: offer a transfer; accepted -> transfer to queue and close with outcome/reason, declined -> close with else_outcome/else_reason. note_and_continue (multi-product): note per_product_note on the current product and continue with the next; outcome/reason are used if the call ends on it.
+- `events[].queue` (optional): string. transfer_to_agent queue enum value; required for the transfer actions.
+- `events[].outcome` (required): string or null. close_call outcome (openapi enum) for this event, or null.
+- `events[].reason` (required): string or null. close_call reason, or null (only for outcomes the openapi says take no reason).
+- `events[].else_outcome` (optional): string or null. offer_transfer_else_close only: close_call outcome when the transfer is declined.
+- `events[].else_reason` (optional): string or null. offer_transfer_else_close only: close_call reason when the transfer is declined.
+- `events[].times` (optional): integer, min 1. How many times the trigger must occur before the event fires. Default when absent: 1.
+- `events[].overrides_persuasion` (optional): boolean. True: once this fires, no persuasion attempt is made, and it takes precedence over the attempts ladder and other negotiation events.
+- `events[].per_product_note` (optional): string or null. add_note reason to record on the product(s) concerned when notes are enabled, or null.
+- `say_rules` (required): list of object. Fixed answers that do not change the call's course: say the sentence, then continue.
+- `say_rules[].trigger` (required): string. When to say it.
+- `say_rules[].say` (required): string. The sentence, said word for word.
+- `say_rules[].stages` (optional): list of one of `opening`, `third_party`, `identity`, `negotiate`, `any`. Stages where the rule applies. Default when absent: ["any"].
+- `confirmation` (required): object. Read-back, confirmation and create_promise.
+- `confirmation.question` (required): string. Asked after reading back product, amount and date, word for word.
+- `confirmation.retries` (required): integer, min 0. Extra create_promise attempts after a failure (1 = try once more).
+- `confirmation.success_sentence` (required): string. Said word for word after create_promise returns ok: true.
+- `confirmation.failure_event` (required): string. Event id fired when create_promise still fails after the retries.
+- `confirmation.change_note` (required): string or null. Said when the customer asks to change a recorded promise, or null.
+- `multi_product` (required): object. How a call with several late products is run. Present for single-product briefs too (notes disabled).
+- `multi_product.order` (required): one of `get_account`, `highest_past_due`, `most_days_late`. Order the products are discussed in.
+- `multi_product.ask_all_today_first` (required): boolean. True: first ask whether all products can be paid today, then go product by product.
+- `multi_product.single_readback` (required): boolean. True: read every promise back together and ask one confirmation.
+- `multi_product.shared_date_after_deadline` (required): one of `cap_to_product_deadline_and_say_so`, `reject`. One date named for all products that is past one product's deadline.
+- `multi_product.notes` (required): object. add_note policy for products that end without a promise.
+- `multi_product.notes.enabled` (required): boolean. False when the brief never uses add_note.
+- `multi_product.notes.reasons` (required): list of string. Allowed add_note reasons (subset of the openapi enum).
+- `multi_product.notes.on_transfer` (required): one of `none`, `before`, `after`. none: no notes at all on a call that is transferred (before or after it).
+- `multi_product.notes.timing` (optional): one of `immediate`, `at_close`. When add_note is called. immediate: as soon as a product ends without a promise. at_close: notes are collected and written only just before a non-transfer close_call, so a later transfer leaves no notes. Default when absent: immediate.
+- `multi_product.no_promise_reason` (required): one of `first_non_paid_note`, `last_note`, `fixed`. first_non_paid_note: with no promise, close no_promise with the reason of the first product (in order) whose note is not paid.
+- `multi_product.all_paid_outcome` (required): string or null. close_call outcome when every product is noted paid and no promise was recorded.
+- `closing` (required): object. How every call ends.
+- `closing.thank_and_goodbye` (required): boolean. True: thank the customer and say goodbye before close_call.
+- `outcomes` (required): list of object. The brief's outcome table: each (outcome, reason) pair and the event that produces it.
+- `outcomes[].outcome` (required): string. close_call outcome enum value.
+- `outcomes[].reason` (required): string or null. close_call reason; null only for promise and paid.
+- `outcomes[].event` (required): string. events[].id that produces this row.
+- `unused_outcomes` (optional): list of string. Optional: openapi close_call outcomes the brief never uses.
+- `extra_rules` (required): list of object. Escape hatch: brief rules no structured field expresses, injected into the prompt of the given stage.
+- `extra_rules[].stage` (required): one of `opening`, `third_party`, `identity`, `negotiate`, `any`. Call stage: opening (before the person is confirmed), third_party (someone else answered), identity (security questions), negotiate (after verification: debt, promise, confirmation), any (every stage).
+- `extra_rules[].text` (required): string. 
+- `custom_code` (required): list of object. Python function bodies for date or amount rules the enums cannot express, tested by examples.
+- `custom_code[].name` (required): string, pattern `^[a-z_][a-z0-9_]*$`. 
+- `custom_code[].inputs` (required): list of string. 
+- `custom_code[].outputs` (required): list of string. 
+- `custom_code[].body` (required): string. 
+- `examples` (required): list of object. Concrete date vectors checked with builder.lib.dates. deadline: {today, days_late, expect}. attempt: also attempt_index (1-based); expect is that attempt's proposed date.
+  - each item: when `kind` is attempt, also required: `attempt_index`
+- `examples[].kind` (required): one of `deadline`, `attempt`. 
+- `examples[].today` (required): string, pattern `^\d{4}-\d{2}-\d{2}$`. 
+- `examples[].days_late` (required): integer, min 0. 
+- `examples[].attempt_index` (optional): integer, min 1. 
+- `examples[].expect` (required): string, pattern `^\d{4}-\d{2}-\d{2}$`. 
+- `examples[].source` (optional): string. 
+- `conflicts` (required): list of object. Decisions on contradictions, overrides or gaps in the brief; field is a spec path.
+- `conflicts[].field` (required): string. A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid]).
+- `conflicts[].kept` (required): string. 
+- `conflicts[].overridden` (required): string. 
+- `conflicts[].why` (optional): string. 
+- `facts` (optional): list of object. Optional fact pass: every checkable statement in the brief with its quote and where it lives in the spec.
+- `facts[].id` (required): string. 
+- `facts[].quote` (required): string. 
+- `facts[].maps_to` (required): string. A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid]). Must resolve; extra_rules[n] is allowed.
+- `sources` (required): map of name -> string or list of string. Spec path -> brief citation. Keys are paths: A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid]).
