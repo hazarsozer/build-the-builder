@@ -311,6 +311,29 @@ def test_pub13_shared_date_capped_and_said():
     assert promises == [("p1", 300.0, "2026-10-30"), ("p2", 900.0, "2026-10-23")]
 
 
+def test_a9_shared_date_capped_when_reported_one_product_at_a_time():
+    """A9 item 1 (PUB-13 r3): "both on the 30th" sent as two single-product calls is capped like ALL."""
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
+    msg = s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-30")
+    assert not msg.startswith("NOT accepted") and s.v["mp_phase"] == "readback"
+    rb = s.v["mp_readback"]
+    assert "300.00 for your credit card ending 6604 on Friday 30 October 2026" in rb
+    assert "Friday 23 October 2026, because that is the latest date I can accept for it" in rb
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 300.0, "2026-10-30"), ("p2", 900.0, "2026-10-23")]
+
+
+def test_a9_per_product_cap_respects_reject_policy():
+    spec = copy.deepcopy(B)
+    spec["multi_product"]["shared_date_after_deadline"] = "reject"
+    s = Sim("PUB-13", spec)
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
+    msg = s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-30")
+    assert msg.startswith("NOT accepted") and "Friday 23 October 2026" in msg
+
+
 def test_single_product_date_after_deadline_is_refused_with_deadline():
     s = Sim("PUB-13")
     msg = s.say(product_id="p2", outcome="agreed", amount="900", date="2026-10-30")

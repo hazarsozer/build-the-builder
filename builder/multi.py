@@ -208,7 +208,9 @@ def _agree(st, b, today):
     if d not in DAYS:
         return None, 'NOT accepted: ' + d + ' is not a date that can be used. Ask the customer for the exact day again.'
     raw = str(b.get('amount') if b.get('amount') is not None else 'full').strip().lower()
-    shared = every and len(targets) > 1
+    # one date for several products, also when they are reported one at a time: another product already agreed on it
+    shared = (every and len(targets) > 1) or any(
+        st['p'][o]['status'] == 'agreed' and st['p'][o].get('asked') == d for o in st['order'] if o not in targets)
     new = dict()
     errs = []
     for q in targets:
@@ -265,7 +267,7 @@ def _agree(st, b, today):
         if extra[xf] is not None and extra[xf] != b.get(xf):
             said.append(xf.replace('_', ' ') + ' noted as ' + str(extra[xf]))
     for q, v in new.items():
-        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra)
+        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra, asked=d)
     note = (' Note: ' + '; '.join(said) + '. Tell the customer this value.') if said else ''
     return st, 'Noted for now (nothing is registered before the confirmation).' + note
 
