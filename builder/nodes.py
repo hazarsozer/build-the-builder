@@ -147,15 +147,25 @@ def _fill(t):
 
 
 def close_node(name, outcome, reason, farewell):
-    """Set outcome/reason (read by the close_call lifecycle tool) and the farewell, then go to goodbye."""
+    """Set outcome/reason (read by the close_call lifecycle tool) and the farewell, then go to goodbye.
+
+    The three are written in one statement, so a snippet that fails part way never leaves a new outcome next to
+    an old reason; a snippet that fails before it leaves the defaults setup wrote (see close_defaults_code).
+    A close without a reason writes "" (the close_call pre-hook drops an empty reason)."""
     code = "import re\n"
-    code += "vars['outcome'] = %r\n" % outcome
-    if reason:
-        code += "vars['reason'] = %r\n" % reason
+    code += "OUTCOME = %r\n" % outcome
+    code += "REASON = %r\n" % (reason or "")
     code += "T = %r\n" % farewell
     code += FILL_CODE
-    code += "try:\n    vars['farewell'] = _fill(T)\nexcept Exception:\n    vars['farewell'] = T\n"
+    code += "try:\n    F = _fill(T)\nexcept Exception:\n    F = T\n"
+    code += "vars.update(dict(outcome=OUTCOME, reason=REASON, farewell=F))\n"
     return code_node(name, code, "goodbye")
+
+
+def close_defaults_code(outcome, reason, farewell):
+    """Snippet for the first code node: a valid close (the service-failure one) and a plain goodbye, so a close node
+    whose snippet fails still ends the call with a valid close_call and a spoken farewell."""
+    return "vars.update(dict(outcome=%r, reason=%r, farewell=%r))\n" % (outcome, reason or "", farewell)
 
 
 def goodbye_node():

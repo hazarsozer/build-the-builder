@@ -36,6 +36,8 @@ def _const(name, value):
 
 MP_ACCOUNT_CODE = r'''
 try:
+    if vars.get('account_state') != 'facts':
+        raise ValueError(str(vars.get('account_error') or 'no account facts'))
     plans = plan_products([f['product'] for f in facts], today, BANDS, CAL, PRODUCTS)
     order = list(range(len(facts)))
     if MP.get('order') == 'highest_past_due':
@@ -737,7 +739,10 @@ class Multi:
                     "name": "note_" + s, "node_type": "api_request", "passthrough": True, "passthrough_default_transition": "finish",
                     "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True, "pre_actions": [t], "transitions": tr}
         targets = self.wrap_targets()
-        nodes["finish"] = code_node("finish", "vars['mp_finished'] = 'yes'\n", targets[-1] if targets else "close_account_error",
+        # no close chosen (a wrap that did not run): the service-failure close when the wraps can reach it
+        fail = c.close_key(self.fail_ev)
+        default = fail if fail in targets else (targets[-1] if targets else "close_account_error")
+        nodes["finish"] = code_node("finish", "vars['mp_finished'] = 'yes'\n", default,
                                     [go(t, "Close: " + t, cond_any(eq("mp_close", t))) for t in targets])
         # close nodes reached from a wrap speak the computed summary
         for t in targets:
