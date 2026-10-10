@@ -10,7 +10,7 @@
     "now"
   ],
   "opening": {
-    "first_sentence": "Hello, this is a digital assistant calling from Freya Bank. This call is being recorded.",
+    "first_sentence": "Hello, this is a digital assistant calling from Freya Bank. This call is being recorded for quality and security purposes.",
     "confirm_question": "Am I speaking with {title} {last_name}?",
     "confirm_accept": [
       "yes",
@@ -165,7 +165,9 @@
       "discount",
       "waiver",
       "instalment plan"
-    ]
+    ],
+    "debt_statement_per_product": "Your {product_words} is {days_late} days late, with {past_due} past due.",
+    "first_ask_all": "Can you pay all of them today?"
   },
   "events": [
     {
@@ -416,7 +418,8 @@
         "paid",
         "service_error"
       ],
-      "on_transfer": "none"
+      "on_transfer": "none",
+      "timing": "at_close"
     },
     "no_promise_reason": "first_non_paid_note",
     "all_paid_outcome": "paid"
@@ -701,7 +704,20 @@
       "source": "derived: rule 30"
     }
   ],
-  "conflicts": [],
+  "conflicts": [
+    {
+      "field": "events[hardship]",
+      "kept": "Declining the support transfer ends the call: every product without a recorded promise is noted hardship (at close), and the call closes as promise if any promise was recorded, otherwise no_promise / hardship.",
+      "overridden": "Brief B is silent on whether declining hardship support on one product ends the call or continues with the other products.",
+      "why": "Brief A rule 32 closes on a declined transfer and makes no persuasion attempt; hardship concerns the customer, not one product, so persuading on the remaining products would break rule 32."
+    },
+    {
+      "field": "multi_product.notes",
+      "kept": "When at least one promise is recorded, every other product still gets add_note with its reason, and the call closes as promise.",
+      "overridden": "Brief B's closing section only describes the reason choice when no promise is recorded.",
+      "why": "B rule 8: 'For each product without a promise call add_note'; B rule 8 also says 'The customer may promise some products and refuse others'."
+    }
+  ],
   "sources": {
     "bank_name": [
       "rule 1"
@@ -1014,6 +1030,15 @@
     ],
     "extra_rules[34]": [
       "B closing"
+    ],
+    "negotiation.debt_statement_per_product": [
+      "B rule 2"
+    ],
+    "negotiation.first_ask_all": [
+      "B rule 4"
+    ],
+    "multi_product.notes.timing": [
+      "B rule 10"
     ],
     "multi_product.order": [
       "B rule 4"

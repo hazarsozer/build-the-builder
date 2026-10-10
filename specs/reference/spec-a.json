@@ -10,7 +10,7 @@
     "now"
   ],
   "opening": {
-    "first_sentence": "Hello, this is a digital assistant calling from Freya Bank. This call is being recorded.",
+    "first_sentence": "Hello, this is a digital assistant calling from Freya Bank. This call is being recorded for quality and security purposes.",
     "confirm_question": "Am I speaking with {title} {last_name}?",
     "confirm_accept": [
       "yes",

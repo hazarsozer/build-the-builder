@@ -4,95 +4,337 @@
   "title": "Freya collections policy spec",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bank_name", "assistant_identity", "address_as", "call_variables", "opening", "third_party",
-               "identity", "calendar", "products", "bands", "negotiation", "events", "say_rules", "confirmation",
-               "multi_product", "closing", "outcomes", "extra_rules", "custom_code", "examples", "conflicts", "sources"],
+  "required": [
+    "bank_name",
+    "assistant_identity",
+    "address_as",
+    "call_variables",
+    "opening",
+    "third_party",
+    "identity",
+    "calendar",
+    "products",
+    "bands",
+    "negotiation",
+    "events",
+    "say_rules",
+    "confirmation",
+    "multi_product",
+    "closing",
+    "outcomes",
+    "extra_rules",
+    "custom_code",
+    "examples",
+    "conflicts",
+    "sources"
+  ],
   "$defs": {
-    "str": {"type": "string", "minLength": 1},
-    "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
-    "hhmm": {"type": "string", "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"},
-    "stage": {"enum": ["opening", "third_party", "identity", "negotiate", "any"]},
-    "nullable_str": {"type": ["string", "null"]},
+    "str": {
+      "type": "string",
+      "minLength": 1
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "hhmm": {
+      "type": "string",
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+    },
+    "stage": {
+      "enum": [
+        "opening",
+        "third_party",
+        "identity",
+        "negotiate",
+        "any"
+      ],
+      "description": "Call stage: opening (before the person is confirmed), third_party (someone else answered), identity (security questions), negotiate (after verification: debt, promise, confirmation), any (every stage)."
+    },
+    "nullable_str": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "source_ref": {
-      "oneOf": [{"$ref": "#/$defs/str"}, {"type": "array", "items": {"$ref": "#/$defs/str"}, "minItems": 1}]
+      "oneOf": [
+        {
+          "$ref": "#/$defs/str"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/str"
+          },
+          "minItems": 1
+        }
+      ],
+      "description": "Where in the brief: e.g. \"rule 18\", \"section 7\", \"B rule 3\", or a list of them."
     },
     "deadline_rule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rule"],
+      "required": [
+        "rule"
+      ],
       "properties": {
-        "rule": {"enum": ["nth_business_day", "calendar_days", "end_of_month", "end_of_next_month",
-                          "fixed_weekday_after_n_weeks"]},
-        "n": {"type": "integer", "minimum": 0},
-        "weekday": {"type": "integer", "minimum": 0, "maximum": 6},
-        "weeks": {"type": "integer", "minimum": 0},
-        "snap": {"enum": ["back", "forward", null]}
+        "rule": {
+          "enum": [
+            "nth_business_day",
+            "calendar_days",
+            "end_of_month",
+            "end_of_next_month",
+            "fixed_weekday_after_n_weeks"
+          ],
+          "description": "nth_business_day: the n-th business day after today. calendar_days: today + n calendar days. end_of_month: last day of the current month. end_of_next_month: last day of next month. fixed_weekday_after_n_weeks: the given weekday (0=Monday) of this week, plus `weeks` weeks."
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count for nth_business_day and calendar_days."
+        },
+        "weekday": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "description": "0=Monday ... 6=Sunday, for fixed_weekday_after_n_weeks."
+        },
+        "weeks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Weeks to add, for fixed_weekday_after_n_weeks."
+        },
+        "snap": {
+          "enum": [
+            "back",
+            "forward",
+            null
+          ],
+          "description": "If the computed day is not a business day: back = previous business day, forward = next business day, null/absent = keep it."
+        }
       },
       "allOf": [
-        {"if": {"properties": {"rule": {"enum": ["nth_business_day", "calendar_days"]}}},
-         "then": {"required": ["n"]}},
-        {"if": {"properties": {"rule": {"const": "fixed_weekday_after_n_weeks"}}},
-         "then": {"required": ["weekday", "weeks"]}}
-      ]
+        {
+          "if": {
+            "properties": {
+              "rule": {
+                "enum": [
+                  "nth_business_day",
+                  "calendar_days"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "n"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rule": {
+                "const": "fixed_weekday_after_n_weeks"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "weekday",
+              "weeks"
+            ]
+          }
+        }
+      ],
+      "description": "How the promise deadline is computed from today (the date part of `now`)."
     },
     "attempt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["amount", "date"],
+      "required": [
+        "amount",
+        "date"
+      ],
       "properties": {
-        "amount": {"enum": ["current", "full", "floor"]},
-        "date": {"enum": ["today", "last_business_day_of_week", "deadline", "next_business_day"]}
-      }
+        "amount": {
+          "enum": [
+            "current",
+            "full",
+            "floor"
+          ],
+          "description": "current: the full past-due amount, or the floor if the customer already said the full amount is too much. full: always the full past-due amount. floor: the floor amount (products[type].floor_field)."
+        },
+        "date": {
+          "enum": [
+            "today",
+            "last_business_day_of_week",
+            "deadline",
+            "next_business_day"
+          ],
+          "description": "today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. Always capped at the deadline."
+        }
+      },
+      "description": "One persuasion attempt: which amount, on which date."
     }
   },
   "properties": {
-    "bank_name": {"$ref": "#/$defs/str"},
-    "assistant_identity": {"$ref": "#/$defs/str"},
-    "address_as": {"$ref": "#/$defs/str"},
-    "call_variables": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
-                       "minItems": 1, "uniqueItems": true},
+    "bank_name": {
+      "$ref": "#/$defs/str",
+      "description": "The bank's name as said to the customer."
+    },
+    "assistant_identity": {
+      "$ref": "#/$defs/str",
+      "description": "What the agent says it is, e.g. when asked whether it is a robot."
+    },
+    "address_as": {
+      "$ref": "#/$defs/str",
+      "description": "How to address the customer, as a template over call_variables, e.g. \"{title} {last_name}\"."
+    },
+    "call_variables": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Names of the variables every call starts with (the brief's call-variable table)."
+    },
     "opening": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["first_sentence", "confirm_question", "confirm_accept", "confirm_reject", "max_asks",
-                   "banned_before_verify"],
+      "required": [
+        "first_sentence",
+        "confirm_question",
+        "confirm_accept",
+        "confirm_reject",
+        "max_asks",
+        "banned_before_verify"
+      ],
       "properties": {
-        "first_sentence": {"$ref": "#/$defs/str"},
-        "confirm_question": {"$ref": "#/$defs/str"},
-        "confirm_accept": {"type": "array", "items": {"$ref": "#/$defs/str"}, "minItems": 1},
-        "confirm_reject": {"type": "array", "items": {"$ref": "#/$defs/str"}},
-        "max_asks": {"type": "integer", "minimum": 1},
-        "banned_before_verify": {"type": "array", "items": {"$ref": "#/$defs/str"}}
-      }
+        "first_sentence": {
+          "$ref": "#/$defs/str",
+          "description": "The first sentence, said word for word. Must contain every fact the brief requires in it."
+        },
+        "confirm_question": {
+          "$ref": "#/$defs/str",
+          "description": "The question that confirms the customer, said word for word."
+        },
+        "confirm_accept": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/str"
+          },
+          "minItems": 1,
+          "description": "Answers that count as confirmation."
+        },
+        "confirm_reject": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/str"
+          },
+          "description": "Answers that do NOT count as confirmation (ask again)."
+        },
+        "max_asks": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many times the confirm question may be asked in total before closing with the unclear event."
+        },
+        "banned_before_verify": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/str"
+          },
+          "description": "Words or topics never said before identity is verified (to anyone)."
+        }
+      },
+      "description": "The first turns, before the person on the line is confirmed as the customer."
     },
     "third_party": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["say_nothing_beyond_opening", "callback", "window_retries", "fixed_sentences"],
+      "required": [
+        "say_nothing_beyond_opening",
+        "callback",
+        "window_retries",
+        "fixed_sentences"
+      ],
       "properties": {
-        "say_nothing_beyond_opening": {"type": "boolean"},
+        "say_nothing_beyond_opening": {
+          "type": "boolean",
+          "description": "True: say nothing about the reason for the call beyond the opening sentence."
+        },
         "callback": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["days", "from", "to", "after_now"],
+          "required": [
+            "days",
+            "from",
+            "to",
+            "after_now"
+          ],
           "properties": {
-            "days": {"type": "array", "minItems": 1,
-                     "items": {"enum": ["today", "next_business_day", "next_day", "any_business_day"]}},
-            "from": {"$ref": "#/$defs/hhmm"},
-            "to": {"$ref": "#/$defs/hhmm"},
-            "inclusive": {"type": "boolean"},
-            "after_now": {"type": "boolean"}
-          }
+            "days": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "today",
+                  "next_business_day",
+                  "next_day",
+                  "any_business_day"
+                ]
+              },
+              "description": "Which days a callback may be booked on."
+            },
+            "from": {
+              "$ref": "#/$defs/hhmm",
+              "description": "Earliest time, HH:MM."
+            },
+            "to": {
+              "$ref": "#/$defs/hhmm",
+              "description": "Latest time, HH:MM."
+            },
+            "inclusive": {
+              "type": "boolean",
+              "description": "Whether `from` and `to` themselves are allowed. Default when absent: true (both included)."
+            },
+            "after_now": {
+              "type": "boolean",
+              "description": "True: the callback must be later than `now`."
+            }
+          },
+          "description": "The callback window for schedule_callback."
         },
-        "window_retries": {"type": "integer", "minimum": 0},
-        "fixed_sentences": {"type": "object", "additionalProperties": {"$ref": "#/$defs/str"}}
-      }
+        "window_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many more times to ask for another time when the offered one is outside the window."
+        },
+        "fixed_sentences": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/str"
+          },
+          "description": "Sentences said word for word, keyed by event id (e.g. deceased)."
+        }
+      },
+      "description": "When someone other than the customer answers."
     },
     "identity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["questions", "max_wrong", "wrong_scope", "non_counting_hints", "decline_explanation",
-                   "decline_limit", "failed_advice"],
+      "required": [
+        "questions",
+        "max_wrong",
+        "wrong_scope",
+        "non_counting_hints",
+        "decline_explanation",
+        "decline_limit",
+        "failed_advice"
+      ],
       "properties": {
         "questions": {
           "type": "array",
@@ -100,37 +342,139 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["field", "ask", "format"],
+            "required": [
+              "field",
+              "ask",
+              "format"
+            ],
             "properties": {
-              "field": {"$ref": "#/$defs/str"},
-              "ask": {"$ref": "#/$defs/str"},
-              "format": {"enum": ["date", "digits", "text"]},
-              "date_order": {"enum": ["DMY", "MDY", "YMD"]},
-              "length": {"type": "integer", "minimum": 1}
+              "field": {
+                "$ref": "#/$defs/str",
+                "description": "The verify_identity `field` enum value."
+              },
+              "ask": {
+                "$ref": "#/$defs/str",
+                "description": "The question, said word for word."
+              },
+              "format": {
+                "enum": [
+                  "date",
+                  "digits",
+                  "text"
+                ],
+                "description": "date: send as YYYY-MM-DD. digits: exactly `length` digits. text: as said."
+              },
+              "date_order": {
+                "enum": [
+                  "DMY",
+                  "MDY",
+                  "YMD"
+                ],
+                "description": "How to read a date given only as numbers (DMY = day, month, year)."
+              },
+              "length": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Number of digits for format digits."
+              }
             },
             "allOf": [
-              {"if": {"properties": {"format": {"const": "date"}}}, "then": {"required": ["date_order"]}},
-              {"if": {"properties": {"format": {"const": "digits"}}}, "then": {"required": ["length"]}}
+              {
+                "if": {
+                  "properties": {
+                    "format": {
+                      "const": "date"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "date_order"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "format": {
+                      "const": "digits"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "length"
+                  ]
+                }
+              }
             ]
-          }
+          },
+          "description": "Ordered security questions."
         },
-        "max_wrong": {"type": "integer", "minimum": 1},
-        "wrong_scope": {"enum": ["total", "per_question"]},
-        "non_counting_hints": {"type": "object", "additionalProperties": {"$ref": "#/$defs/str"}},
-        "decline_explanation": {"$ref": "#/$defs/str"},
-        "decline_limit": {"type": "integer", "minimum": 1},
-        "failed_advice": {"$ref": "#/$defs/str"}
-      }
+        "max_wrong": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Wrong answers that end the check."
+        },
+        "wrong_scope": {
+          "enum": [
+            "total",
+            "per_question"
+          ],
+          "description": "total: counted across all questions. per_question: counted per question."
+        },
+        "non_counting_hints": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/str"
+          },
+          "description": "verify_identity hint value -> what to ask instead. These retries are not wrong answers."
+        },
+        "decline_explanation": {
+          "$ref": "#/$defs/str",
+          "description": "Said (once) when the customer does not want to answer."
+        },
+        "decline_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The n-th refusal (or 'what is this about' instead of an answer) closes with the declined event."
+        },
+        "failed_advice": {
+          "$ref": "#/$defs/str",
+          "description": "Said after the check fails, before closing."
+        }
+      },
+      "description": "Security questions, asked in order, each checked with verify_identity."
     },
     "calendar": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["weekdays", "holidays"],
+      "required": [
+        "weekdays",
+        "holidays"
+      ],
       "properties": {
-        "weekdays": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 6},
-                     "minItems": 1, "uniqueItems": true},
-        "holidays": {"type": "array", "items": {"$ref": "#/$defs/date"}, "uniqueItems": true}
-      }
+        "weekdays": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Business weekdays, 0=Monday ... 6=Sunday."
+        },
+        "holidays": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/date"
+          },
+          "uniqueItems": true,
+          "description": "Non-business dates, YYYY-MM-DD."
+        }
+      },
+      "description": "Business days used by every date rule."
     },
     "products": {
       "type": "object",
@@ -138,12 +482,22 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["words", "floor_field"],
+        "required": [
+          "words",
+          "floor_field"
+        ],
         "properties": {
-          "words": {"$ref": "#/$defs/str"},
-          "floor_field": {"$ref": "#/$defs/str"}
+          "words": {
+            "$ref": "#/$defs/str",
+            "description": "How the product is said, may use product fields, e.g. \"credit card ending {card_last4}\"."
+          },
+          "floor_field": {
+            "$ref": "#/$defs/str",
+            "description": "The get_account product field that holds the floor (lowest acceptable amount)."
+          }
         }
-      }
+      },
+      "description": "Keyed by get_account product `type`. Every openapi product type needs an entry."
     },
     "bands": {
       "type": "array",
@@ -151,135 +505,455 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "days_late", "deadline", "attempts"],
+        "required": [
+          "name",
+          "days_late",
+          "deadline",
+          "attempts"
+        ],
         "properties": {
-          "name": {"$ref": "#/$defs/str"},
-          "days_late": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
-          "deadline": {"$ref": "#/$defs/deadline_rule"},
-          "attempts": {"type": "array", "items": {"$ref": "#/$defs/attempt"}}
+          "name": {
+            "$ref": "#/$defs/str",
+            "description": "Band name from the brief, e.g. early."
+          },
+          "days_late": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min, max], both included."
+          },
+          "deadline": {
+            "$ref": "#/$defs/deadline_rule"
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/attempt"
+            },
+            "description": "Persuasion attempts in order; their count is the number of attempts allowed."
+          }
         }
-      }
+      },
+      "description": "days_late ranges, contiguous with no gap or overlap. Each sets the deadline rule and the persuasion attempts."
     },
     "negotiation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["debt_statement", "first_ask", "floor_offer", "below_floor", "vague_date", "weekday_words",
-                   "non_business_day", "after_deadline", "never_ask_how_much", "banned_offers"],
+      "required": [
+        "debt_statement",
+        "first_ask",
+        "floor_offer",
+        "below_floor",
+        "vague_date",
+        "weekday_words",
+        "non_business_day",
+        "after_deadline",
+        "never_ask_how_much",
+        "banned_offers"
+      ],
       "properties": {
-        "debt_statement": {"$ref": "#/$defs/str"},
-        "first_ask": {"$ref": "#/$defs/str"},
+        "debt_statement": {
+          "$ref": "#/$defs/str",
+          "description": "The debt statement for one product, said after verification."
+        },
+        "first_ask": {
+          "$ref": "#/$defs/str",
+          "description": "The first ask for payment, said word for word."
+        },
         "floor_offer": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["times", "sentence_suffix"],
+          "required": [
+            "times",
+            "sentence_suffix"
+          ],
           "properties": {
-            "times": {"type": "integer", "minimum": 0},
-            "sentence_suffix": {"type": ["string", "null"]}
-          }
+            "times": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many times the floor may be offered."
+            },
+            "sentence_suffix": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Sentence added to the floor offer, word for word."
+            }
+          },
+          "description": "Offering the floor when the full amount is too much."
         },
-        "below_floor": {"enum": ["offer_floor_once", "reject", "accept"]},
-        "vague_date": {"enum": ["ask_once_then_deadline", "propose_deadline", "ask_until_exact"]},
+        "below_floor": {
+          "enum": [
+            "offer_floor_once",
+            "reject",
+            "accept"
+          ],
+          "description": "When the customer proposes less than the floor."
+        },
+        "vague_date": {
+          "enum": [
+            "ask_once_then_deadline",
+            "propose_deadline",
+            "ask_until_exact"
+          ],
+          "description": "When the customer gives a vague period instead of a day."
+        },
         "weekday_words": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["next", "this"],
+          "required": [
+            "next",
+            "this"
+          ],
           "properties": {
-            "next": {"enum": ["following_week", "next_occurrence"]},
-            "this": {"enum": ["current_week", "next_occurrence"]}
-          }
+            "next": {
+              "enum": [
+                "following_week",
+                "next_occurrence"
+              ]
+            },
+            "this": {
+              "enum": [
+                "current_week",
+                "next_occurrence"
+              ]
+            }
+          },
+          "description": "Meaning of \"next <weekday>\" and \"this <weekday>\". following_week: that weekday in the next calendar week."
         },
-        "non_business_day": {"enum": ["next_business_day", "previous_business_day", "reject"]},
-        "after_deadline": {"enum": ["offer_deadline", "reject"]},
-        "never_ask_how_much": {"type": "boolean"},
-        "banned_offers": {"type": "array", "items": {"$ref": "#/$defs/str"}}
-      }
+        "non_business_day": {
+          "enum": [
+            "next_business_day",
+            "previous_business_day",
+            "reject"
+          ],
+          "description": "When the customer names a weekend day or holiday on or before the deadline."
+        },
+        "after_deadline": {
+          "enum": [
+            "offer_deadline",
+            "reject"
+          ],
+          "description": "When the customer names a date after the deadline."
+        },
+        "never_ask_how_much": {
+          "type": "boolean",
+          "description": "True: the agent proposes every amount and never asks how much the customer can pay."
+        },
+        "banned_offers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/str"
+          },
+          "description": "Things never offered."
+        },
+        "debt_statement_per_product": {
+          "$ref": "#/$defs/str",
+          "description": "Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. E.g. \"Your {product_words} is {days_late} days late, with {past_due} past due.\" Absent: use debt_statement for each."
+        },
+        "first_ask_all": {
+          "$ref": "#/$defs/str",
+          "description": "Optional, multi-product briefs: the first ask covering every product at once, e.g. \"Can you pay all of them today?\". Absent: first_ask is used."
+        }
+      },
+      "description": "Stating the debt and getting a promise."
     },
     "events": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "trigger", "stages", "say", "action", "outcome", "reason"],
+        "required": [
+          "id",
+          "trigger",
+          "stages",
+          "say",
+          "action",
+          "outcome",
+          "reason"
+        ],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-          "trigger": {"$ref": "#/$defs/str"},
-          "stages": {"type": "array", "items": {"$ref": "#/$defs/stage"}, "minItems": 1, "uniqueItems": true},
-          "say": {"$ref": "#/$defs/nullable_str"},
-          "instruction": {"$ref": "#/$defs/nullable_str"},
-          "action": {"enum": ["close", "transfer", "insist_once_then_transfer", "offer_transfer_else_close",
-                              "note_and_continue"]},
-          "queue": {"$ref": "#/$defs/str"},
-          "outcome": {"$ref": "#/$defs/nullable_str"},
-          "reason": {"$ref": "#/$defs/nullable_str"},
-          "else_outcome": {"$ref": "#/$defs/nullable_str"},
-          "else_reason": {"$ref": "#/$defs/nullable_str"},
-          "times": {"type": "integer", "minimum": 1},
-          "overrides_persuasion": {"type": "boolean"},
-          "per_product_note": {"$ref": "#/$defs/nullable_str"}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Event id; also referenced by outcomes[].event and by path selectors events[<id>]."
+          },
+          "trigger": {
+            "$ref": "#/$defs/str",
+            "description": "When it fires, in plain words (used for intent detection)."
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/stage"
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Stages in which the trigger is listened for."
+          },
+          "say": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "A sentence said WORD FOR WORD when the event fires, or null. Only put exact brief wording here."
+          },
+          "instruction": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "Guidance for the dialogue model, NOT said verbatim (e.g. 'one short sentence of sympathy', 'do not argue')."
+          },
+          "action": {
+            "enum": [
+              "close",
+              "transfer",
+              "insist_once_then_transfer",
+              "offer_transfer_else_close",
+              "note_and_continue"
+            ],
+            "description": "close: close the call with outcome/reason. transfer: transfer_to_agent(queue), then close with outcome/reason. insist_once_then_transfer: ask once whether you can help first (say); transfer only if the customer insists. offer_transfer_else_close: offer a transfer; accepted -> transfer to queue and close with outcome/reason, declined -> close with else_outcome/else_reason. note_and_continue (multi-product): note per_product_note on the current product and continue with the next; outcome/reason are used if the call ends on it."
+          },
+          "queue": {
+            "$ref": "#/$defs/str",
+            "description": "transfer_to_agent queue enum value; required for the transfer actions."
+          },
+          "outcome": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "close_call outcome (openapi enum) for this event, or null."
+          },
+          "reason": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "close_call reason, or null (only for outcomes that take none, e.g. promise, paid)."
+          },
+          "else_outcome": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "offer_transfer_else_close only: close_call outcome when the transfer is declined."
+          },
+          "else_reason": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "offer_transfer_else_close only: close_call reason when the transfer is declined."
+          },
+          "times": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many times the trigger must occur before the event fires. Default when absent: 1."
+          },
+          "overrides_persuasion": {
+            "type": "boolean",
+            "description": "True: once this fires, no persuasion attempt is made, and it takes precedence over the attempts ladder and other negotiation events."
+          },
+          "per_product_note": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "add_note reason to record on the product(s) concerned when notes are enabled, or null."
+          }
         },
         "allOf": [
-          {"if": {"properties": {"action": {"enum": ["transfer", "insist_once_then_transfer",
-                                                     "offer_transfer_else_close"]}}},
-           "then": {"required": ["queue"]}},
-          {"if": {"properties": {"action": {"const": "offer_transfer_else_close"}}},
-           "then": {"required": ["else_outcome", "else_reason"]}}
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "transfer",
+                    "insist_once_then_transfer",
+                    "offer_transfer_else_close"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "queue"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "offer_transfer_else_close"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "else_outcome",
+                "else_reason"
+              ]
+            }
+          }
         ]
-      }
+      },
+      "description": "Customer situations that change the call's course. Known ids map to fixed graph branches (promise_recorded, paid, dispute, restructuring, human, hardship, refused, service_error, failed, declined, callback, no_callback, wrong_number, deceased, unclear, not_talk); other ids become generic intent branches."
     },
     "say_rules": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["trigger", "say"],
+        "required": [
+          "trigger",
+          "say"
+        ],
         "properties": {
-          "trigger": {"$ref": "#/$defs/str"},
-          "say": {"$ref": "#/$defs/str"},
-          "stages": {"type": "array", "items": {"$ref": "#/$defs/stage"}, "minItems": 1}
+          "trigger": {
+            "$ref": "#/$defs/str",
+            "description": "When to say it."
+          },
+          "say": {
+            "$ref": "#/$defs/str",
+            "description": "The sentence, said word for word."
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/stage"
+            },
+            "minItems": 1,
+            "description": "Stages where the rule applies. Default when absent: [\"any\"]."
+          }
         }
-      }
+      },
+      "description": "Fixed answers that do not change the call's course: say the sentence, then continue."
     },
     "confirmation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["question", "retries", "success_sentence", "failure_event", "change_note"],
+      "required": [
+        "question",
+        "retries",
+        "success_sentence",
+        "failure_event",
+        "change_note"
+      ],
       "properties": {
-        "question": {"$ref": "#/$defs/str"},
-        "retries": {"type": "integer", "minimum": 0},
-        "success_sentence": {"$ref": "#/$defs/str"},
-        "failure_event": {"$ref": "#/$defs/str"},
-        "change_note": {"$ref": "#/$defs/nullable_str"}
-      }
+        "question": {
+          "$ref": "#/$defs/str",
+          "description": "Asked after reading back product, amount and date, word for word."
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Extra create_promise attempts after a failure (1 = try once more)."
+        },
+        "success_sentence": {
+          "$ref": "#/$defs/str",
+          "description": "Said word for word after create_promise returns ok: true."
+        },
+        "failure_event": {
+          "$ref": "#/$defs/str",
+          "description": "Event id fired when create_promise still fails after the retries."
+        },
+        "change_note": {
+          "$ref": "#/$defs/nullable_str",
+          "description": "Said when the customer asks to change a recorded promise, or null."
+        }
+      },
+      "description": "Read-back, confirmation and create_promise."
     },
     "multi_product": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["order", "ask_all_today_first", "single_readback", "shared_date_after_deadline", "notes",
-                   "no_promise_reason", "all_paid_outcome"],
+      "required": [
+        "order",
+        "ask_all_today_first",
+        "single_readback",
+        "shared_date_after_deadline",
+        "notes",
+        "no_promise_reason",
+        "all_paid_outcome"
+      ],
       "properties": {
-        "order": {"enum": ["get_account", "highest_past_due", "most_days_late"]},
-        "ask_all_today_first": {"type": "boolean"},
-        "single_readback": {"type": "boolean"},
-        "shared_date_after_deadline": {"enum": ["cap_to_product_deadline_and_say_so", "reject"]},
+        "order": {
+          "enum": [
+            "get_account",
+            "highest_past_due",
+            "most_days_late"
+          ],
+          "description": "Order the products are discussed in."
+        },
+        "ask_all_today_first": {
+          "type": "boolean",
+          "description": "True: first ask whether all products can be paid today, then go product by product."
+        },
+        "single_readback": {
+          "type": "boolean",
+          "description": "True: read every promise back together and ask one confirmation."
+        },
+        "shared_date_after_deadline": {
+          "enum": [
+            "cap_to_product_deadline_and_say_so",
+            "reject"
+          ],
+          "description": "One date named for all products that is past one product's deadline."
+        },
         "notes": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "reasons", "on_transfer"],
+          "required": [
+            "enabled",
+            "reasons",
+            "on_transfer"
+          ],
           "properties": {
-            "enabled": {"type": "boolean"},
-            "reasons": {"type": "array", "items": {"$ref": "#/$defs/str"}, "uniqueItems": true},
-            "on_transfer": {"enum": ["none", "before", "after"]}
-          }
+            "enabled": {
+              "type": "boolean",
+              "description": "False when the brief never uses add_note."
+            },
+            "reasons": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              },
+              "uniqueItems": true,
+              "description": "Allowed add_note reasons (subset of the openapi enum)."
+            },
+            "on_transfer": {
+              "enum": [
+                "none",
+                "before",
+                "after"
+              ],
+              "description": "none: no notes at all on a call that is transferred (before or after it)."
+            },
+            "timing": {
+              "enum": [
+                "immediate",
+                "at_close"
+              ],
+              "description": "When add_note is called. immediate: as soon as a product ends without a promise. at_close: notes are collected and written only just before a non-transfer close_call, so a later transfer leaves no notes. Default when absent: immediate."
+            }
+          },
+          "description": "add_note policy for products that end without a promise."
         },
-        "no_promise_reason": {"enum": ["first_non_paid_note", "last_note", "fixed"]},
-        "all_paid_outcome": {"$ref": "#/$defs/nullable_str"}
-      }
+        "no_promise_reason": {
+          "enum": [
+            "first_non_paid_note",
+            "last_note",
+            "fixed"
+          ],
+          "description": "first_non_paid_note: with no promise, close no_promise with the reason of the first product (in order) whose note is not paid."
+        },
+        "all_paid_outcome": {
+          "$ref": "#/$defs/nullable_str",
+          "description": "close_call outcome when every product is noted paid and no promise was recorded."
+        }
+      },
+      "description": "How a call with several late products is run. Present for single-product briefs too (notes disabled)."
     },
     "closing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["thank_and_goodbye"],
-      "properties": {"thank_and_goodbye": {"type": "boolean"}}
+      "required": [
+        "thank_and_goodbye"
+      ],
+      "properties": {
+        "thank_and_goodbye": {
+          "type": "boolean",
+          "description": "True: thank the customer and say goodbye before close_call."
+        }
+      },
+      "description": "How every call ends."
     },
     "outcomes": {
       "type": "array",
@@ -287,89 +961,201 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["outcome", "reason", "event"],
+        "required": [
+          "outcome",
+          "reason",
+          "event"
+        ],
         "properties": {
-          "outcome": {"$ref": "#/$defs/str"},
-          "reason": {"$ref": "#/$defs/nullable_str"},
-          "event": {"$ref": "#/$defs/str"}
+          "outcome": {
+            "$ref": "#/$defs/str",
+            "description": "close_call outcome enum value."
+          },
+          "reason": {
+            "$ref": "#/$defs/nullable_str",
+            "description": "close_call reason; null only for promise and paid."
+          },
+          "event": {
+            "$ref": "#/$defs/str",
+            "description": "events[].id that produces this row."
+          }
         }
-      }
+      },
+      "description": "The brief's outcome table: each (outcome, reason) pair and the event that produces it."
     },
-    "unused_outcomes": {"type": "array", "items": {"$ref": "#/$defs/str"}},
+    "unused_outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/str"
+      },
+      "description": "Optional: openapi close_call outcomes the brief never uses."
+    },
     "extra_rules": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["stage", "text"],
+        "required": [
+          "stage",
+          "text"
+        ],
         "properties": {
-          "stage": {"$ref": "#/$defs/stage"},
-          "text": {"$ref": "#/$defs/str"}
+          "stage": {
+            "$ref": "#/$defs/stage"
+          },
+          "text": {
+            "$ref": "#/$defs/str"
+          }
         }
-      }
+      },
+      "description": "Escape hatch: brief rules no structured field expresses, injected into the prompt of the given stage."
     },
     "custom_code": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "inputs", "outputs", "body"],
+        "required": [
+          "name",
+          "inputs",
+          "outputs",
+          "body"
+        ],
         "properties": {
-          "name": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
-          "inputs": {"type": "array", "items": {"type": "string"}},
-          "outputs": {"type": "array", "items": {"type": "string"}},
-          "body": {"$ref": "#/$defs/str"}
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z_][a-z0-9_]*$"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "$ref": "#/$defs/str"
+          }
         }
-      }
+      },
+      "description": "Python function bodies for date or amount rules the enums cannot express, tested by examples."
     },
     "examples": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "today", "days_late", "expect"],
+        "required": [
+          "kind",
+          "today",
+          "days_late",
+          "expect"
+        ],
         "properties": {
-          "kind": {"enum": ["deadline", "attempt"]},
-          "today": {"$ref": "#/$defs/date"},
-          "days_late": {"type": "integer", "minimum": 0},
-          "attempt_index": {"type": "integer", "minimum": 1},
-          "expect": {"$ref": "#/$defs/date"},
-          "source": {"$ref": "#/$defs/str"}
+          "kind": {
+            "enum": [
+              "deadline",
+              "attempt"
+            ]
+          },
+          "today": {
+            "$ref": "#/$defs/date"
+          },
+          "days_late": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "attempt_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expect": {
+            "$ref": "#/$defs/date"
+          },
+          "source": {
+            "$ref": "#/$defs/str"
+          }
         },
-        "if": {"properties": {"kind": {"const": "attempt"}}},
-        "then": {"required": ["attempt_index"]}
-      }
+        "if": {
+          "properties": {
+            "kind": {
+              "const": "attempt"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "attempt_index"
+          ]
+        }
+      },
+      "description": "Concrete date vectors checked with builder.lib.dates. deadline: {today, days_late, expect}. attempt: also attempt_index (1-based); expect is that attempt's proposed date."
     },
     "conflicts": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["field", "kept", "overridden"],
+        "required": [
+          "field",
+          "kept",
+          "overridden"
+        ],
         "properties": {
-          "field": {"$ref": "#/$defs/str"},
-          "kept": {"$ref": "#/$defs/str"},
-          "overridden": {"$ref": "#/$defs/str"},
-          "why": {"type": "string"}
+          "field": {
+            "$ref": "#/$defs/str",
+            "description": "A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid])."
+          },
+          "kept": {
+            "$ref": "#/$defs/str"
+          },
+          "overridden": {
+            "$ref": "#/$defs/str"
+          },
+          "why": {
+            "type": "string"
+          }
         }
-      }
+      },
+      "description": "Decisions on contradictions, overrides or gaps in the brief; field is a spec path."
     },
     "facts": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "quote", "maps_to"],
+        "required": [
+          "id",
+          "quote",
+          "maps_to"
+        ],
         "properties": {
-          "id": {"$ref": "#/$defs/str"},
-          "quote": {"$ref": "#/$defs/str"},
-          "maps_to": {"type": "string"}
+          "id": {
+            "$ref": "#/$defs/str"
+          },
+          "quote": {
+            "$ref": "#/$defs/str"
+          },
+          "maps_to": {
+            "type": "string",
+            "description": "A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid]). Must resolve; extra_rules[n] is allowed."
+          }
         }
-      }
+      },
+      "description": "Optional fact pass: every checkable statement in the brief with its quote and where it lives in the spec."
     },
     "sources": {
       "type": "object",
-      "additionalProperties": {"$ref": "#/$defs/source_ref"}
+      "additionalProperties": {
+        "$ref": "#/$defs/source_ref"
+      },
+      "description": "Spec path -> brief citation. Keys are paths: A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid])."
     }
-  }
+  },
+  "description": "Policy spec for one bank brief. Every fact in the brief lives here; the compiler is generic. Sentences use single-brace placeholders {name}: call_variables, get_account product fields, or product_words, past_due, days_late, floor, deadline, amount, date, product."
 }

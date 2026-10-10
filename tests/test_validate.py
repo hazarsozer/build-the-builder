@@ -180,3 +180,49 @@ def test_spec_b_is_spec_a_plus_multi_product():
     assert B["multi_product"]["notes"]["enabled"] is True
     assert B["multi_product"]["notes"]["on_transfer"] == "none"
     assert B["bands"] == A["bands"] and B["calendar"] == A["calendar"]
+
+
+# --- fix round 1 ---------------------------------------------------------------
+
+from builder.validate import SCHEMA
+
+
+def test_every_top_level_property_has_description():
+    missing = [k for k, v in SCHEMA["properties"].items() if not v.get("description")]
+    assert missing == []
+
+
+def test_key_nested_properties_have_descriptions():
+    ev = SCHEMA["properties"]["events"]["items"]["properties"]
+    for k in ("say", "instruction", "action", "queue", "else_outcome", "else_reason", "times",
+              "overrides_persuasion", "per_product_note"):
+        assert ev[k].get("description"), k
+    tp = SCHEMA["properties"]["third_party"]["properties"]["callback"]["properties"]
+    assert "default" in tp["inclusive"]["description"].lower()
+    assert "default" in SCHEMA["properties"]["say_rules"]["items"]["properties"]["stages"]["description"].lower()
+    assert "events[paid]" in SCHEMA["properties"]["sources"]["description"]
+    assert "events[paid]" in SCHEMA["properties"]["facts"]["items"]["properties"]["maps_to"]["description"]
+    assert "at_close" in SCHEMA["properties"]["multi_product"]["properties"]["notes"]["properties"]["timing"]["description"]
+
+
+def test_opening_does_not_end_on_recorded():
+    want = ("Hello, this is a digital assistant calling from Freya Bank. "
+            "This call is being recorded for quality and security purposes.")
+    assert A["opening"]["first_sentence"] == want
+    assert B["opening"]["first_sentence"] == want
+
+
+def test_spec_b_multi_product_wording():
+    n = B["negotiation"]
+    assert "{product_words}" in n["debt_statement_per_product"]
+    assert n["first_ask_all"].endswith("?")
+    assert B["multi_product"]["notes"]["timing"] == "at_close"
+    fields = {c["field"] for c in B["conflicts"]}
+    assert "events[hardship]" in fields and "multi_product.notes" in fields
+    for c in B["conflicts"]:
+        assert resolve_path(B, c["field"])[0], c["field"]
+
+
+def test_notes_timing_enum():
+    s = copy.deepcopy(B); s["multi_product"]["notes"]["timing"] = "later"
+    assert any("schema" in e for e in validate(s, OA))
