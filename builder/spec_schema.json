@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://freya-builder/spec_schema.json",
-  "title": "Freya collections policy spec",
+  "title": "Collections policy spec",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -70,7 +70,7 @@
           "minItems": 1
         }
       ],
-      "description": "Where in the brief: e.g. \"rule 18\", \"section 7\", \"B rule 3\", or a list of them."
+      "description": "Where in the brief: e.g. \"rule 4\", \"memo of <date>\", or a list of them."
     },
     "deadline_rule": {
       "type": "object",
@@ -182,7 +182,7 @@
   "properties": {
     "bank_name": {
       "$ref": "#/$defs/str",
-      "description": "The bank's name as said to the customer."
+      "description": "The organisation name as said to the customer (bank, insurer, ...)."
     },
     "assistant_identity": {
       "$ref": "#/$defs/str",
@@ -190,7 +190,7 @@
     },
     "address_as": {
       "$ref": "#/$defs/str",
-      "description": "How to address the customer, as a template over call_variables, e.g. \"{title} {last_name}\"."
+      "description": "How to address the customer, as a template over call_variables, e.g. \"{<honorific_var>} {<surname_var>}\"."
     },
     "call_variables": {
       "type": "array",
@@ -489,7 +489,7 @@
         "properties": {
           "words": {
             "$ref": "#/$defs/str",
-            "description": "How the product is said, may use product fields, e.g. \"credit card ending {card_last4}\"."
+            "description": "How the product is said, may use product fields, e.g. \"<product noun> ending {<id_field>}\"."
           },
           "floor_field": {
             "$ref": "#/$defs/str",
@@ -514,7 +514,7 @@
         "properties": {
           "name": {
             "$ref": "#/$defs/str",
-            "description": "Band name from the brief, e.g. early."
+            "description": "The band's name from the brief."
           },
           "days_late": {
             "type": "array",
@@ -654,11 +654,11 @@
         },
         "debt_statement_per_product": {
           "$ref": "#/$defs/str",
-          "description": "Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. E.g. \"Your {product_words} is {days_late} days late, with {past_due} past due.\" Absent: use debt_statement for each."
+          "description": "Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. Absent: use debt_statement for each."
         },
         "first_ask_all": {
           "$ref": "#/$defs/str",
-          "description": "Optional, multi-product briefs: the first ask covering every product at once, e.g. \"Can you pay all of them today?\". Absent: first_ask is used."
+          "description": "Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used."
         }
       },
       "description": "Stating the debt and getting a promise."
@@ -702,7 +702,7 @@
           },
           "instruction": {
             "$ref": "#/$defs/nullable_str",
-            "description": "Guidance for the dialogue model, NOT said verbatim (e.g. 'one short sentence of sympathy', 'do not argue')."
+            "description": "Guidance for the dialogue model, NOT said verbatim (e.g. 'acknowledge briefly', 'stay neutral')."
           },
           "action": {
             "enum": [
@@ -724,7 +724,7 @@
           },
           "reason": {
             "$ref": "#/$defs/nullable_str",
-            "description": "close_call reason, or null (only for outcomes that take none, e.g. promise, paid)."
+            "description": "close_call reason, or null (only for outcomes the openapi says take no reason)."
           },
           "else_outcome": {
             "$ref": "#/$defs/nullable_str",
@@ -1157,5 +1157,5 @@
       "description": "Spec path -> brief citation. Keys are paths: A path into the spec: dotted keys plus brackets. A bracket holds a list index (bands[1].deadline.n) or the id of a list item (events[paid].say, events[paid])."
     }
   },
-  "description": "Policy spec for one bank brief. Every fact in the brief lives here; the compiler is generic. Sentences use single-brace placeholders {name}: call_variables, get_account product fields, or product_words, past_due, days_late, floor, deadline, amount, date, product."
+  "description": "Policy spec for one brief (an organisation's collections call policy). Every fact in the brief lives here; the compiler is generic. Sentences use single-brace placeholders {name}: call_variables, get_account product fields, or product_words, past_due, days_late, floor, deadline, amount, date, product."
 }

@@ -1,9 +1,9 @@
-You turn a bank's call-policy brief into a policy spec: one JSON file that a generic compiler turns into an outbound phone agent. The compiler knows nothing about this bank. Every fact the brief states must end up in the spec, or the agent will not follow it.
+You turn an organisation's (bank, insurer, ...) call-policy brief into a policy spec: one JSON file that a generic compiler turns into an outbound phone agent. The compiler knows nothing about this organisation. Every fact the brief states must end up in the spec, or the agent will not follow it.
 
 ## Files in this directory
 
 - The brief: $briefs. It may be one clean document, or raw material: several documents such as mails, policy extracts, memos, meeting notes and code lists.
-- `openapi.json`: the bank's tools. Its enums are the only allowed values for close_call outcomes, transfer queues, add_note reasons, verify_identity fields and product types. get_account's product fields are the only product fields.
+- `openapi.json`: the organisation's tools. Its enums are the only allowed values for close_call outcomes, transfer queues, add_note reasons, verify_identity fields and product types. get_account's product fields are the only product fields.
 - `spec_schema.json`: the JSON Schema the spec must satisfy.
 - `spec-guide.md`: the same schema as a field guide, with the meaning of every field and enum value. Read it in full.
 

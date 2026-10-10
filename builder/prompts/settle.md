@@ -1,4 +1,4 @@
-Two independent readings of the same bank brief produced `spec-a.json` and `spec-b.json`. An independent examiner also wrote test scenarios (`scenarios.json`) from the brief alone; their expected results were recomputed from `spec-a.json`.
+Two independent readings of the same organisation's (bank, insurer, ...) brief produced `spec-a.json` and `spec-b.json`. An independent examiner also wrote test scenarios (`scenarios.json`) from the brief alone; their expected results were recomputed from `spec-a.json`.
 
 `questions.json` lists:
 - `disagreements` ($n_diff): spec paths where the two readings differ, with both values (`a_absent` / `b_absent` mean the path is missing on that side);

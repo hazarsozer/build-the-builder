@@ -2,7 +2,7 @@
 
 Generated from `builder/spec_schema.json` by `python -m builder.spec_guide`. Do not edit by hand.
 
-Policy spec for one bank brief. Every fact in the brief lives here; the compiler is generic. Sentences use single-brace placeholders {name}: call_variables, get_account product fields, or product_words, past_due, days_late, floor, deadline, amount, date, product.
+Policy spec for one brief (an organisation's collections call policy). Every fact in the brief lives here; the compiler is generic. Sentences use single-brace placeholders {name}: call_variables, get_account product fields, or product_words, past_due, days_late, floor, deadline, amount, date, product.
 
 Paths: dotted keys; `[]` marks a list item; `<name>` a map key. In spec paths (facts.maps_to, sources,
 conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id` of a list item
@@ -10,9 +10,9 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 
 ## Fields
 
-- `bank_name` (required): string. The bank's name as said to the customer.
+- `bank_name` (required): string. The organisation name as said to the customer (bank, insurer, ...).
 - `assistant_identity` (required): string. What the agent says it is, e.g. when asked whether it is a robot.
-- `address_as` (required): string. How to address the customer, as a template over call_variables, e.g. "{title} {last_name}".
+- `address_as` (required): string. How to address the customer, as a template over call_variables, e.g. "{<honorific_var>} {<surname_var>}".
 - `call_variables` (required): list of string, pattern `^[A-Za-z_][A-Za-z0-9_]*$`. Names of the variables every call starts with (the brief's call-variable table).
 - `opening` (required): object. The first turns, before the person on the line is confirmed as the customer.
 - `opening.first_sentence` (required): string. The first sentence, said word for word. Must contain every fact the brief requires in it.
@@ -50,10 +50,10 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `calendar.weekdays` (required): list of integer, min 0, max 6. Business weekdays, 0=Monday ... 6=Sunday.
 - `calendar.holidays` (required): list of string, pattern `^\d{4}-\d{2}-\d{2}$`. Non-business dates, YYYY-MM-DD.
 - `products` (required): map of name -> object. Keyed by get_account product `type`. Every openapi product type needs an entry.
-- `products.<name>.words` (required): string. How the product is said, may use product fields, e.g. "credit card ending {card_last4}".
+- `products.<name>.words` (required): string. How the product is said, may use product fields, e.g. "<product noun> ending {<id_field>}".
 - `products.<name>.floor_field` (required): string. The get_account product field that holds the floor (lowest acceptable amount).
 - `bands` (required): list of object. days_late ranges, contiguous with no gap or overlap. Each sets the deadline rule and the persuasion attempts.
-- `bands[].name` (required): string. Band name from the brief, e.g. early.
+- `bands[].name` (required): string. The band's name from the brief.
 - `bands[].days_late` (required): list of integer, min 0. [min, max], both included.
 - `bands[].deadline` (required): object. How the promise deadline is computed from today (the date part of `now`).
   - when `rule` is ['nth_business_day', 'calendar_days'], also required: `n`
@@ -81,8 +81,8 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `negotiation.after_deadline` (required): one of `offer_deadline`, `reject`. When the customer names a date after the deadline.
 - `negotiation.never_ask_how_much` (required): boolean. True: the agent proposes every amount and never asks how much the customer can pay.
 - `negotiation.banned_offers` (required): list of string. Things never offered.
-- `negotiation.debt_statement_per_product` (optional): string. Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. E.g. "Your {product_words} is {days_late} days late, with {past_due} past due." Absent: use debt_statement for each.
-- `negotiation.first_ask_all` (optional): string. Optional, multi-product briefs: the first ask covering every product at once, e.g. "Can you pay all of them today?". Absent: first_ask is used.
+- `negotiation.debt_statement_per_product` (optional): string. Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. Absent: use debt_statement for each.
+- `negotiation.first_ask_all` (optional): string. Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used.
 - `events` (required): list of object. Customer situations that change the call's course. Known ids map to fixed graph branches (promise_recorded, paid, dispute, restructuring, human, hardship, refused, service_error, failed, declined, callback, no_callback, wrong_number, deceased, unclear, not_talk); other ids become generic intent branches.
   - each item: when `action` is ['transfer', 'insist_once_then_transfer', 'offer_transfer_else_close'], also required: `queue`
   - each item: when `action` is offer_transfer_else_close, also required: `else_outcome`, `else_reason`
@@ -90,11 +90,11 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `events[].trigger` (required): string. When it fires, in plain words (used for intent detection).
 - `events[].stages` (required): list of one of `opening`, `third_party`, `identity`, `negotiate`, `any`. Stages in which the trigger is listened for.
 - `events[].say` (required): string or null. A sentence said WORD FOR WORD when the event fires, or null. Only put exact brief wording here.
-- `events[].instruction` (optional): string or null. Guidance for the dialogue model, NOT said verbatim (e.g. 'one short sentence of sympathy', 'do not argue').
+- `events[].instruction` (optional): string or null. Guidance for the dialogue model, NOT said verbatim (e.g. 'acknowledge briefly', 'stay neutral').
 - `events[].action` (required): one of `close`, `transfer`, `insist_once_then_transfer`, `offer_transfer_else_close`, `note_and_continue`. close: close the call with outcome/reason. transfer: transfer_to_agent(queue), then close with outcome/reason. insist_once_then_transfer: ask once whether you can help first (say); transfer only if the customer insists. offer_transfer_else_close: offer a transfer; accepted -> transfer to queue and close with outcome/reason, declined -> close with else_outcome/else_reason. note_and_continue (multi-product): note per_product_note on the current product and continue with the next; outcome/reason are used if the call ends on it.
 - `events[].queue` (optional): string. transfer_to_agent queue enum value; required for the transfer actions.
 - `events[].outcome` (required): string or null. close_call outcome (openapi enum) for this event, or null.
-- `events[].reason` (required): string or null. close_call reason, or null (only for outcomes that take none, e.g. promise, paid).
+- `events[].reason` (required): string or null. close_call reason, or null (only for outcomes the openapi says take no reason).
 - `events[].else_outcome` (optional): string or null. offer_transfer_else_close only: close_call outcome when the transfer is declined.
 - `events[].else_reason` (optional): string or null. offer_transfer_else_close only: close_call reason when the transfer is declined.
 - `events[].times` (optional): integer, min 1. How many times the trigger must occur before the event fires. Default when absent: 1.
