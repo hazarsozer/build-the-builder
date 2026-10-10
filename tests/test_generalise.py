@@ -183,6 +183,44 @@ def test_g1_compile_lint_clean_with_mapping():
         assert [p for p in lint(w, spec) if not p.startswith("warning:")] == []
 
 
+# ---------------------------------------------------------------- G2 extra call variables
+
+def _company(spec=None):
+    s = copy.deepcopy(spec or A)
+    s["call_variables"].append("company_name")
+    s["opening"]["confirm_question"] = "Am I speaking with {title} {last_name} of {company_name}?"
+    s["address_as"] = "{title} {last_name} of {company_name}"
+    return s
+
+
+def test_g2_extra_call_variable_in_prompts_code_and_test_variables():
+    s = _company()
+    assert validate(s, OA) == []
+    w = C(s, OA)
+    assert "{{company_name}}" in w["nodes"]["opening"]["on_enter"]["text"]
+    assert "{{company_name}}" in w["system_prompt"]
+    assert "company_name" in w["test_variables"] and w["test_variables"]["customer_id"] == "c_test"
+    for k in ("first_name", "last_name", "title", "now"):
+        assert k not in w["test_variables"]
+    assert [p for p in lint(w, s) if not p.startswith("warning:")] == []
+    # code nodes read it from vars: a farewell that names the customer
+    v = {"title": "Ms", "last_name": "Okafor", "company_name": "Okafor Joinery"}
+    exec(_code(w["nodes"]["close_promise_recorded"]), {"vars": v})
+    assert "Okafor Joinery" in v["farewell"] and "{" not in v["farewell"]
+
+
+def test_g2_reference_test_variables_unchanged():
+    assert C(A, OA)["test_variables"] == {"customer_id": "c_test"}
+
+
+def test_g2_cases_seed_extra_variables():
+    s = _company()
+    for c in cases.generate(s, OA, "2026-10-14T11:00", n=4, seed=1):
+        val = c["seed"]["variables"].get("company_name")
+        assert val and val != "x", c["seed"]["variables"]
+        assert c["variables"]["company_name"] == val
+
+
 # ---------------------------------------------------------------- G5 note reason -> close reason
 
 MOA = json.load(open("bench/multi-raw/openapi.json"))

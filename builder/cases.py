@@ -147,11 +147,19 @@ def _identity(spec, openapi, rng):
     return {q["field"]: _answer(q, kinds.get(q["field"]), rng) for q in qs}
 
 
+def _extra_var(name, rng):
+    """A plausible value for a call variable the brief adds (e.g. company_name): a name, or the words of its name."""
+    if "name" in name:
+        org = re.search(r"company|business|firm|employer|organi[sz]ation|shop|store", name)
+        return rng.choice(LAST) + (" Ltd" if org else "")
+    return name.replace("_", " ").strip().title() or "X"
+
+
 def _variables(spec, rng, now):
     title = rng.choice(["Mr", "Ms"])
     v = {"first_name": rng.choice(FIRST[title]), "last_name": rng.choice(LAST), "title": title, "now": now}
     for name in spec["call_variables"]:
-        if name not in v and name != "customer_id": v[name] = rng.choice(LAST) if "name" in name else "x"
+        if name not in v and name != "customer_id": v[name] = _extra_var(name, rng)
     return v
 
 

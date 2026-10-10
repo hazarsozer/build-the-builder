@@ -34,6 +34,8 @@ STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity
                "negotiate": {"create_promise"}, "any": set()}
 STAGE_TOOLS_ALL = set().union(*STAGE_TOOLS.values())
 PROMISE_FIELDS = ("product_id", "amount", "date")
+# Call variables every brief so far has; any other spec.call_variables entry is declared in test_variables.
+STANDARD_VARS = ("customer_id", "first_name", "last_name", "title", "now")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
@@ -1719,6 +1721,11 @@ HOW TO RUN THE CALL
         n["goodbye"] = goodbye_node()
         prune_unreachable(n, "setup")
         test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
+        # call variables beyond the usual ones (e.g. a company name): declared with an empty default, so a call
+        # that does not pass one never speaks a raw placeholder
+        for name in self.s.get("call_variables", []):
+            if name not in STANDARD_VARS and name not in test_vars:
+                test_vars[name] = ""
         return {
             "initial_node": "setup",
             "system_prompt": self.system_prompt(),
