@@ -1689,11 +1689,11 @@ HOW TO RUN THE CALL
    - %(vague)s
    - Amount: from the product's floor up to its full amount.
    - %(too_much)s
-3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan; make the next attempt. Never repeat an offer the customer already refused.
+3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
    %(mentioned)s
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
-   - refused, when the last attempt of its plan was refused, with attempts_made.%(notes)s
+   - refused, after EVERY refusal of an attempt (see 3).%(notes)s
    Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),

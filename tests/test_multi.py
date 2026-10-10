@@ -169,6 +169,15 @@ class Sim:
         assert g["_result"]["what_to_do_next"] == self.v["mp_msg"]
         return self.v["mp_msg"]
 
+    def refuse(self, pid, n):
+        """The customer refuses up to n attempts of the product: one set_product refused call per refusal."""
+        msg = None
+        for _ in range(n):
+            msg = self.say(product_id=pid, outcome="refused")
+            if "last attempt" in msg:
+                break
+        return msg
+
     def confirm(self):
         """The readback node: the engine speaks mp_readback, the customer says yes."""
         assert self.v["mp_phase"] == "readback"
@@ -277,10 +286,13 @@ def test_pub12_one_promise_two_refusals_with_attempt_gate():
     s = Sim("PUB-12")
     s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
     assert s.v["mp_phase"] == "open"
-    msg = s.say(product_id="p2", outcome="refused", attempts_made=1)
+    msg = s.refuse("p2", 1)
     assert "attempt 2" in msg.lower() and s.v["mp_phase"] == "open"
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
-    s.say(product_id="p3", outcome="refused", attempts_made=1)
+    assert "Next is" not in msg  # the same product goes on; no second instruction
+    msg = s.refuse("p2", 1)
+    assert "no more offers" in msg and "car loan" in msg  # then the next product
+    msg = s.refuse("p3", 1)
+    assert "no more offers" in msg
     assert s.v["mp_phase"] == "readback" and "credit card ending 9015" in s.v["mp_readback"]
     s.confirm()
     promises, notes, close, outcome, reason = s.chain()
@@ -327,7 +339,7 @@ def test_all_paid_closes_paid_with_notes():
 def test_paid_then_refused_closes_refused():
     s = Sim("PUB-13")
     s.say(product_id="p1", outcome="paid")
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
+    s.refuse("p2", 2)
     s.end = "wrap_done"
     promises, notes, close, outcome, reason = s.chain()
     assert notes == [("p1", "paid"), ("p2", "refused")] and (outcome, reason) == ("no_promise", "refused")
@@ -363,7 +375,7 @@ def test_create_promise_fails_once_is_retried():
 def test_only_failures_close_service_error():
     s = Sim("PUB-13")
     s.say(product_id="p1", outcome="agreed", amount="300", date="2026-10-20")
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
+    s.refuse("p2", 2)
     s.confirm()
     promises, notes, close, outcome, reason = s.chain(fail=(1, 2))
     assert promises == [] and notes == [("p1", "service_error"), ("p2", "refused")]
@@ -372,7 +384,7 @@ def test_only_failures_close_service_error():
 
 def test_hardship_declined_notes_open_products():
     s = Sim("PUB-12")
-    s.say(product_id="p1", outcome="refused", attempts_made=2)
+    s.refuse("p1", 2)
     s.end = "wrap_hardship"
     promises, notes, close, outcome, reason = s.chain()
     assert notes == [("p1", "refused"), ("p2", "hardship"), ("p3", "hardship")]
@@ -401,7 +413,7 @@ def test_change_at_readback_rereads():
 def test_product_reference_by_number_or_words():
     s = Sim("PUB-12")
     s.say(product_id="1", outcome="agreed", amount="510", date="2026-10-15")
-    s.say(product_id="personal loan", outcome="refused", attempts_made=2)
+    s.refuse("personal loan", 2)
     st = json.loads(s.v["mp_state"])["p"]
     assert st["p1"]["status"] == "agreed" and st["p2"]["status"] == "refused"
 
@@ -489,10 +501,38 @@ def test_r2_nan_amount_rejected():
     assert "NOT accepted" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
 
 
-def test_r3_missing_attempts_counts_as_zero():
-    s = Sim("PUB-13")
+def test_a9_attempts_counted_in_code_per_refusal():
+    """A9 item 2: each refused call is one used attempt, counted in mp_state; the band's count is the limit."""
+    s = Sim("PUB-13")  # p1 early band: one attempt; p2 late band: two
     msg = s.say(product_id="p1", outcome="refused")
-    assert "Not yet" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    st = json.loads(s.v["mp_state"])["p"]
+    assert st["p1"]["status"] == "refused" and st["p1"]["tried"] == 1
+    assert "no more offers" in msg and "no other amount, no other date" in msg
+    assert "attempt 1 of its plan" in msg  # p2 starts at its attempt 1
+    msg = s.say(product_id="p2", outcome="refused")
+    st = json.loads(s.v["mp_state"])["p"]
+    assert st["p2"]["status"] == "pending" and st["p2"]["tried"] == 1 and "Make attempt 2 now" in msg
+    msg = s.say(product_id="p2", outcome="refused")
+    assert json.loads(s.v["mp_state"])["p"]["p2"]["status"] == "refused" and s.v["mp_phase"] == "done"
+
+
+def test_a9_next_names_the_attempt_after_the_used_ones():
+    s = Sim("PUB-12")
+    s.say(product_id="p2", outcome="refused")  # p2 out of order: attempt 1 used
+    msg = s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
+    assert "personal loan" in msg and "attempt 2 of its plan" in msg
+
+
+def test_a9_one_attempt_plans_say_no_further_offer():
+    s = Sim("PUB-12")
+    lines = s.v["products_text"].split("\nProduct ")
+    one = [l for l in lines if "One persuasion attempt" in l]
+    two = [l for l in lines if "Two persuasion attempts" in l]
+    assert one and two
+    assert all("make no other offer" in l for l in one) and not any("make no other offer" in l for l in two)
+    t = _tool(s.w["nodes"]["negotiate"], "set_product")
+    assert "attempts_made" not in json.dumps(t["function"]["parameters"])
+    assert "after EVERY refusal" in s.w["nodes"]["negotiate"]["task_message"]
 
 
 def test_r4_model_cannot_confirm():
@@ -524,7 +564,7 @@ def test_notes_in_get_account_order():
     s = Sim("PUB-12", spec)
     st = json.loads(s.v["mp_state"])
     assert st["order"][0] == "p2" and st["ga"] == ["p1", "p2", "p3"]
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
+    s.refuse("p2", 2)
     s.say(product_id="p1", outcome="dispute")
     s.say(product_id="p3", outcome="paid")
     s.end = "wrap_done"

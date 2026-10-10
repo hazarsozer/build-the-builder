@@ -62,7 +62,8 @@ try:
                      ', ' + str(f['days_late']) + ' days late, ' + str(pl['band']).upper() + ' band. Floor (lowest amount you may accept): ' +
                      fmt(f['floor']) + '. Deadline (latest date you may accept): ' + speak(pl['deadline']) + '.\n  Persuasion plan: ' +
                      ' '.join('Attempt ' + str(j + 1) + ': ' + t for j, t in enumerate(att)) + ' ' +
-                     NUMS.get(str(n), str(n)).capitalize() + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.')
+                     NUMS.get(str(n), str(n)).capitalize() + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.' +
+                     (' After one refusal make no other offer for it (no lower amount, no other date).' if n == 1 else ''))
     last = max(pl['deadline'] for pl in plans)
     days = dict()
     d = today
@@ -181,12 +182,15 @@ def _readback(st):
     return 'To confirm, you will pay ' + body + '. ' + CFG['confirm']
 
 
-def _next(st):
+def _next(st, cur=None):
     pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
+    if cur is not None and cur in pend:
+        return 'open', ''
     if pend:
         P = st['p'][pend[0]]
+        k = min(int(P.get('tried') or 0), len(P['att']) - 1)
         return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). If the customer already gave an answer for it, call ' +
-                        TOOL + ' for it now. Otherwise make attempt 1 of its plan: ' + P['att'][0] + ' Do not ask about today again.')
+                        TOOL + ' for it now. Otherwise make attempt ' + str(k + 1) + ' of its plan: ' + P['att'][k] + ' Do not ask about today again.')
     if [q for q in st['order'] if st['p'][q]['status'] == 'agreed']:
         return 'readback', 'Every product is settled. The read-back is spoken automatically: say nothing more.'
     return 'done', 'Every product is settled and there is nothing to confirm. Say nothing more.'
@@ -275,13 +279,14 @@ def _refuse(st, b):
     q = targets[0]
     P = st['p'][q]
     n = len(P['att'])
-    k = _num(b.get('attempts_made'))
-    k = 0 if (k is None or k != k) else int(k)
+    k = int(P.get('tried') or 0) + 1
+    P['tried'] = k
     if k < n:
-        return None, ('Not yet: the ' + P['words'] + ' has ' + str(n) + ' persuasion attempts and you have made ' + str(k) +
-                      '. Make attempt ' + str(k + 1) + ' now: ' + P['att'][k] + ' Never repeat an offer the customer already refused.')
+        P.update(status='pending', amount=None, date=None, capped=False)
+        return st, ('Refusal noted (attempt ' + str(k) + ' of ' + str(n) + ' for the ' + P['words'] + '). Make attempt ' + str(k + 1) +
+                    ' now: ' + P['att'][k] + ' Never repeat an offer the customer already refused.')
     P.update(status='refused', amount=None, date=None, capped=False)
-    return st, 'Noted. Make no more offers for the ' + P['words'] + '.'
+    return st, ('Noted: that was the last attempt for the ' + P['words'] + '. Make no more offers for it: no other amount, no other date.')
 
 
 def _note(st, b, out):
@@ -319,7 +324,8 @@ try:
             msg = ack
         else:
             st = new
-            phase, nxt = _next(st)
+            still = _targets(st, b.get('product_id'), ('pending',))[0] if out == 'refused' else []
+            phase, nxt = _next(st, still[0] if still else None)
             msg = (ack + ' ' + nxt).strip()
     if phase == 'readback':
         vars['mp_readback'] = _readback(st)
@@ -575,12 +581,11 @@ class Multi:
         head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
-            "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: its last persuasion attempt was refused. "
+            "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: the customer refused the current persuasion attempt for it (call it after EVERY refusal; the result says whether another attempt is allowed). "
                         + " ".join("%s: %s." % (o, self.outcome_words(o)) for o in cfg["notes"])
                         + " review: every product is settled and the promises must be read back again (with product_id ALL)."},
             "amount": {"type": "string", "description": "For agreed: the amount as a number such as 220.00, or full, or floor."},
             "date": {"type": "string", "description": "For agreed: the payment date, YYYY-MM-DD."},
-            "attempts_made": {"type": "number", "description": "For refused: how many persuasion attempts of this product's plan you made."},
         }
         props.update(xprops)
         desc = ("Report a settled product. CALL it every time a product is settled (agreed, refused, "
