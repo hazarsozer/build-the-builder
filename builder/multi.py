@@ -6,7 +6,7 @@ Graph (negotiate onwards):
         -> negotiate  [model tool set_product; its pre-hook is the state machine]
              mp_phase == confirmed  -> record_plan -> record_1 [-> retry_1] -> record_2 ... -> wrap_recorded
              mp_phase == done       -> wrap_done
-             support declined       -> wrap_<hardship id>
+             support declined       -> wrap_<offer-transfer event id>
              close events           -> wrap_<id>       (e.g. a second "do not want to talk")
              transfers              -> transfer_<queue> -> close_<id>   (no notes at all)
         wrap_*  (decides notes and the close, dates.close_reason) -> note_1 -> note_2 -> note_3 -> finish -> close_*
@@ -55,7 +55,15 @@ try:
                      ', ' + str(f['days_late']) + ' days late, ' + str(pl['band']).upper() + ' band. Floor (lowest amount you may accept): ' +
                      fmt(f['floor']) + '. Deadline (latest date you may accept): ' + speak(pl['deadline']) + '.\n  Persuasion plan: ' +
                      ' '.join('Attempt ' + str(j + 1) + ': ' + t for j, t in enumerate(att)) + ' ' +
-                     NUMS.get(str(n), str(n)) + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.')
+                     NUMS.get(str(n), str(n)).capitalize() + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.')
+    last = max(pl['deadline'] for pl in plans)
+    days = dict()
+    d = today
+    while d <= last + datetime.timedelta(days=60):
+        days[d.isoformat()] = [say_date(d), 1 if is_bd(d, CAL) else 0, next_bd(d, CAL).isoformat(),
+                               prev_bd(d, CAL).isoformat()]
+        d = d + datetime.timedelta(days=1)
+    st['days'] = days
     vars['mp_state'] = json.dumps(st)
     vars['mp_phase'] = 'open'
     vars['mp_msg'] = ''
@@ -67,7 +75,6 @@ try:
     else:
         vars['debt_statement_text'] = facts[order[0]]['debt_statement']
         vars['first_ask_text'] = NEG['first_ask']
-    last = max(pl['deadline'] for pl in plans)
     vars['calendar_text'] = calendar_text(last).replace(', AFTER THE DEADLINE', '')
     vars['account_state'] = 'ok'
 except Exception as e:
@@ -87,10 +94,16 @@ def _num(x):
 
 
 def _date(x):
-    try:
-        return datetime.date.fromisoformat(str(x).strip()[:10])
-    except Exception:
-        return None
+    t = str(x if x is not None else '').strip()[:10]
+    return t if re.match(r'^\d{4}-\d{2}-\d{2}$', t) else None
+
+
+def _say(d):
+    return DAYS.get(d, [d])[0]
+
+
+def _bd(d):
+    return DAYS[d][1] == 1 if d in DAYS else True
 
 
 def _targets(st, ref, open_only):
@@ -118,8 +131,7 @@ def _readback(st):
         P = st['p'][q]
         if P['status'] != 'agreed':
             continue
-        d = datetime.date.fromisoformat(P['date'])
-        s = fmt(P['amount']) + ' for your ' + P['words'] + ' on ' + say_date(d)
+        s = fmt(P['amount']) + ' for your ' + P['words'] + ' on ' + _say(P['date'])
         if P.get('capped'):
             s += ', because that is the latest date I can accept for it'
         parts.append(s)
@@ -152,12 +164,12 @@ def _agree(st, b, today):
         return None, 'NOT accepted: give the date as YYYY-MM-DD.'
     if d < today:
         return None, 'NOT accepted: that date is in the past. Ask for a date from today on.'
-    if not is_bd(d, CAL):
-        if CFG['nbd'] == 'previous_business_day' and prev_bd(d, CAL) >= today:
-            return None, 'NOT accepted: ' + say_date(d) + ' is not a business day. Offer the business day before it, ' + say_date(prev_bd(d, CAL)) + '.'
+    if not _bd(d):
+        if CFG['nbd'] == 'previous_business_day' and DAYS[d][3] >= today:
+            return None, 'NOT accepted: ' + _say(d) + ' is not a business day. Offer the business day before it, ' + _say(DAYS[d][3]) + '.'
         if CFG['nbd'] == 'reject':
-            return None, 'NOT accepted: ' + say_date(d) + ' is not a business day. Say so and ask for a business day.'
-        return None, 'NOT accepted: ' + say_date(d) + ' is not a business day. Offer the next business day, ' + say_date(next_bd(d, CAL)) + '.'
+            return None, 'NOT accepted: ' + _say(d) + ' is not a business day. Say so and ask for a business day.'
+        return None, 'NOT accepted: ' + _say(d) + ' is not a business day. Offer the next business day, ' + _say(DAYS[d][2]) + '.'
     raw = str(b.get('amount') if b.get('amount') is not None else 'full').strip().lower()
     shared = every and len(targets) > 1
     new = dict()
@@ -182,7 +194,7 @@ def _agree(st, b, today):
             else:
                 errs.append(fmt(amt) + ' is below the floor of the ' + P['words'] + ': say it cannot be accepted')
             continue
-        dl = datetime.date.fromisoformat(P['dl'])
+        dl = P['dl']
         dd = d
         capped = False
         if d > dl:
@@ -190,12 +202,12 @@ def _agree(st, b, today):
                 dd = dl
                 capped = True
             elif CFG['after'] == 'reject':
-                errs.append(say_date(d) + ' is after the deadline of the ' + P['words'] + ': say it cannot be accepted and ask for a date on or before ' + say_date(dl))
+                errs.append(_say(d) + ' is after the deadline of the ' + P['words'] + ': say it cannot be accepted and ask for a date on or before ' + _say(dl))
                 continue
             else:
-                errs.append(say_date(d) + ' is after the deadline of the ' + P['words'] + ': say the latest date you can accept for it is ' + say_date(dl) + ' and offer that date')
+                errs.append(_say(d) + ' is after the deadline of the ' + P['words'] + ': say the latest date you can accept for it is ' + _say(dl) + ' and offer that date')
                 continue
-        new[q] = (round(amt, 2), dd.isoformat(), capped)
+        new[q] = (round(amt, 2), dd, capped)
     if errs:
         return None, 'NOT accepted, nothing changed: ' + '; '.join(errs) + '.'
     for q, v in new.items():
@@ -231,12 +243,13 @@ def _note(st, b, out):
 
 
 try:
-    import json, re, datetime
+    import json, re
     b = config.get('body') if isinstance(config, dict) else None
     if not isinstance(b, dict):
         b = dict()
     st = json.loads(str(vars.get('mp_state') or '{}'))
-    today = datetime.date.fromisoformat(st['today'])
+    today = st['today']
+    DAYS = st.get('days') or dict()
     out = str(b.get('outcome') or '').strip().lower()
     phase = str(vars.get('mp_phase') or 'open')
     if out == 'confirmed':
@@ -472,7 +485,7 @@ class Multi:
                "after": neg.get("after_deadline", "offer_deadline"), "below": neg.get("below_floor", "offer_floor_once"),
                "cap": self.mp.get("shared_date_after_deadline", "cap_to_product_deadline_and_say_so") != "reject",
                "notes": [o for o in outcomes if o not in ("agreed", "refused", "confirmed")], "say": say}
-        pre = ("import json, re, datetime\n" + embed.source(dates, money) + "\n" + _const("CAL", self.s["calendar"]) +
+        pre = ("import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" +
                _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL + SET_PRE)
         return self.c.tool(SET_TOOL, {
             "product_id": {"description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled, and always ALL with outcome confirmed.",

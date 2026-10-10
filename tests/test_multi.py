@@ -379,3 +379,24 @@ def test_hooks_never_raise():
         for r in [None, {}, {"data": None}, "x"]:
             exec(s.t["post_process_code"], {"vars": s.v, "result": r})
     exec(s.t["pre_process_code"], {"vars": {}, "config": {}})
+
+
+def test_counted_close_tool_name_matches_its_wrap():
+    n = wf()["nodes"]["negotiate"]
+    assert "transition_to_wrap_not_talk" in n["task_message"] and "transition_to_close_not_talk" not in n["task_message"]
+    assert n["task_message"].count("   - refused") == 1
+
+
+def test_set_product_hook_needs_no_datetime():
+    t = _tool(wf()["nodes"]["negotiate"], "set_product")
+    assert "datetime" not in t["pre_process_code"] and "datetime" not in t["post_process_code"]
+    assert t["function"]["parameters"]["properties"]["url"]["default"].endswith("/get_account")
+
+
+def test_validate_spec_b_against_freya_dry_run():  # live; skipped without FREYA_API_KEY
+    import os
+    import pytest
+    if not os.environ.get("FREYA_API_KEY"):
+        pytest.skip()
+    import freya
+    freya.validate_workflow("dryrun-b", wf())

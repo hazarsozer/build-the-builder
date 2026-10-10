@@ -21,6 +21,7 @@ import sys
 
 from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
+from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.nodes import (all_of, always, api_tool, body_enum, close_node, code_node, cond_any, eq, go,
                            goodbye_node, gt, is_true, py_json, transfer_node)
@@ -750,7 +751,7 @@ class _Compiler:
                          if ev.get("overrides_persuasion") and "persuasion" not in ins else "")
                 lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s" % (subj("the customer", ev["trigger"]), ins, extra))
             elif self.counted_close(stage, ev):
-                lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.close_key(ev["id"]), (" " + ins) if ins else ""))
+                lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.end_target(stage, ev["id"]), (" " + ins) if ins else ""))
             elif ins:
                 lines.append("If %s: %s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins))
         return lines
@@ -1092,8 +1093,9 @@ HOW TO GET A PROMISE
         }
         neg = self.s["negotiation"]
         code = (self.prelude() + _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
-                _const("NEG", {k: neg.get(k) for k in ("debt_statement", "debt_statement_per_product", "weekday_words", "non_business_day") if neg.get(k) is not None}) +
-                _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_CODE)
+                _const("NEG", {k: neg.get(k) for k in ("debt_statement", "debt_statement_per_product", "weekday_words", "non_business_day", "first_ask", "first_ask_all") if neg.get(k) is not None}) +
+                _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_CODE +
+                (self.multi.account_code() if self.multi else ""))
         self.nodes["prepare_account"] = code_node("prepare_account", code, "negotiate",
                                                   [go("close_account_error", "No account data", cond_any(eq("account_state", "error")))])
 
@@ -1143,6 +1145,92 @@ HOW TO GET A PROMISE
             "transitions": tr,
         }
 
+    def negotiate_multi_task(self):
+        neg, conf = self.s["negotiation"], self.s["confirmation"]
+        nbd = {"next_business_day": "A weekend day or holiday: offer the NEXT business day after it.",
+               "previous_business_day": "A weekend day or holiday: offer the business day BEFORE it.",
+               "reject": "A weekend day or holiday: say it is not a business day and ask for a business day."}[neg.get("non_business_day", "next_business_day")]
+        vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the product\'s deadline.',
+                 "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the product\'s deadline.',
+                 "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
+        fo = neg.get("floor_offer") or {}
+        times = fo.get("times", 1)
+        if times:
+            too_much = "The customer says the full amount of a product is too much: offer that product's floor %s" % ("once" if times == 1 else "up to %s times" % NUM.get(times, str(times)))
+            too_much += (", and add: %s" % q(tpl(fo["sentence_suffix"]))) if fo.get("sentence_suffix") else "."
+        else:
+            too_much = "The customer says the full amount is too much: do not offer a lower amount; treat it as a refusal."
+        if neg.get("never_ask_how_much"):
+            too_much += " Never ask how much they can pay; you propose every amount."
+        mp = self.s.get("multi_product") or {}
+        order = {"get_account": "in the order of PRODUCTS", "highest_past_due": "in the order of PRODUCTS (highest past-due first)",
+                 "most_days_late": "in the order of PRODUCTS (most days late first)"}.get(mp.get("order", "get_account"), "in the order of PRODUCTS")
+        notes = [o for o in self.multi.note_outcomes if o != "refused"]
+        t = """The customer is verified. You have already said: "{{debt_statement_text}} {{first_ask_text}}"
+
+PRODUCTS (computed, use them exactly; a product_id is for the tool only, never say it)
+{{products_text}}
+- Today: {{today_text}}. Current time {{now_time}}.
+- Weekday words:
+{{weekday_text}}
+- Calendar:
+{{calendar_text}}
+
+HOW TO RUN THE CALL
+1. If the customer can pay everything today: call %(tool)s with product_id ALL, outcome agreed, amount full and today's date.
+   If not, go through the products one by one, %(order)s. Do not ask about today again. Start each product at attempt 1 of its own persuasion plan; attempts are counted per product.
+2. For the product you are discussing, the customer names a date or an amount: that is never a refusal.
+   - Date: a business day from today up to that product's deadline. %(nbd)s A date after its deadline: say the latest date you can accept for it is its deadline, and offer it.
+   - %(vague)s
+   - Amount: from the product's floor up to its full amount.
+   - %(too_much)s
+3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan; make the next attempt. Never repeat an offer the customer already refused.
+   After an amount was offered or agreed, later proposals name only the new date ("that payment"). Never restate a figure already offered.
+4. As soon as a product is settled, call %(tool)s:
+   - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
+   - refused, when the last attempt of its plan was refused, with attempts_made.%(notes)s
+   The result's what_to_do_next is computed from all products: do exactly what it says (it names the next product, or gives you the read-back).
+5. When every product is settled, what_to_do_next gives you ONE read-back of all promises with one question %(confirm)s. A read-back is not an offer, so it states product, amount and date. If the customer changes something, call %(tool)s again for that product.
+6. After a clear yes to the read-back: call %(tool)s with product_id ALL and outcome confirmed. Nothing is registered before that; never say anything is recorded.""" % dict(
+            tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
+            notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
+        if conf.get("change_note"):
+            t += "\n7. If the customer asks to change or cancel a promise that is already registered, say: %s" % q(tpl(conf["change_note"]))
+        other = self.event_guidance("negotiate")
+        if self.banned_for("negotiate"):
+            other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
+        other += self.say_lines("negotiate")
+        other.append("A question you cannot answer from these facts: say you do not have that information.")
+        t += "\n" + bullet_block("OTHER SITUATIONS", other)
+        t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
+        return t.rstrip()
+
+    def negotiate_multi_node(self):
+        banned = self.banned_for("negotiate")
+        values, desc, trans = self.event_values("negotiate")
+        structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else [])
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else."]
+        if banned:
+            sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
+        tr = [go("record_plan", "All promises confirmed", cond_any(eq(multi_mod.PHASE, "confirmed"))),
+              go("wrap_done", "Every product settled, nothing to confirm", cond_any(eq(multi_mod.PHASE, "done")))] + trans
+        return {
+            "name": "negotiate", "node_type": "conversation",
+            "on_enter": {"type": "tts", "text": "Thank you, you are verified. {{debt_statement_text}} {{first_ask_text}}"},
+            "on_enter_first_entry_only": True,
+            "task_message": self.negotiate_multi_task(),
+            "tools": [self.multi.set_tool()],
+            "extraction_schema": [{
+                "name": "neg_event", "type": "string", "min_confidence": 0.6,
+                "enum_values": structural[:1] + values + structural[1:],
+                "description": " ".join(["Judge the customer's LATEST message."] + [d for d in desc if d] + sdesc +
+                                        ["continue: anything else (a date, an amount, a question, a confirmation, an agreement, "
+                                         "a refusal, a claim that a product is paid or not theirs)."]),
+            }] + self.seen_vars("negotiate"),
+            "max_node_turns": 60, "max_turn_transition": "wrap_done",
+            "transitions": tr,
+        }
+
     def retry_node(self):
         fail = self.close_key(self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
         ok = self.close_key("promise_recorded") if self.has("promise_recorded") else fail
@@ -1183,10 +1271,16 @@ HOW TO GET A PROMISE
         n["third_party"] = self.third_party_node()
         n["identity"] = self.identity_node()
         self.account_nodes()
-        n["negotiate"] = self.negotiate_node()
-        n["retry_promise"] = self.retry_node()
-        self.build_closes()
+        if self.multi:
+            n["negotiate"] = self.negotiate_multi_node()
+            self.build_closes()
+            self.multi.build(n)
+        else:
+            n["negotiate"] = self.negotiate_node()
+            n["retry_promise"] = self.retry_node()
+            self.build_closes()
         n["goodbye"] = goodbye_node()
+        prune_unreachable(n, "setup")
         test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
         return {
             "initial_node": "setup",
@@ -1196,6 +1290,21 @@ HOW TO GET A PROMISE
             "tools": [self.close_call_tool()],
             "test_variables": test_vars,
         }
+
+
+def prune_unreachable(nodes, start):
+    """Drop nodes no path from `start` reaches (e.g. a close that several products route through a wrap)."""
+    seen, todo = {start}, [start]
+    while todo:
+        nd = nodes.get(todo.pop()) or {}
+        tg = [t.get("target_node") for t in nd.get("transitions") or []]
+        tg += [nd.get(k) for k in ("passthrough_default_transition", "max_turn_transition") if nd.get(k)]
+        for t in tg:
+            if t in nodes and t not in seen:
+                seen.add(t)
+                todo.append(t)
+    for k in [k for k in nodes if k not in seen]:
+        del nodes[k]
 
 
 def compile(spec, openapi, base_url=None):  # noqa: A001 - the interface name is fixed

@@ -22,7 +22,7 @@ def test_structure():
 
 
 def test_no_brief_constants_in_compiler_source():
-    src = open("builder/compile.py").read() + open("builder/nodes.py").read()
+    src = open("builder/compile.py").read() + open("builder/nodes.py").read() + open("builder/multi.py").read()
     for s in ["2026-10-26", "minimum_payment", "restructuring", "Freya Bank", "date_of_birth", "phone_last4",
               "collections", "credit card", "Freya", "hardship", "2026-"]:
         assert s not in src
