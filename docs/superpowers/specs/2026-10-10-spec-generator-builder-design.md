@@ -106,7 +106,13 @@ The extractor must cite the brief line for every value (`source` field). That he
 - Cases are written by code from the spec, in `public-test-set.json` format: personas, identity data, products and expected records. That gives one case per intent, per band edge, per date trap (weekend, holiday, "next weekday", after the deadline), per identity failure, and for a multi-product mix.
 - Expected records come from the **same `lib/` code**. So the self-test catches dialogue failures, not policy-math failures; those are caught by the `examples` and unit tests.
 - About 10 cases are picked per round, weighted toward the hard ones, and run with mixed `--style`.
-- **Assumption, verified in plan task 1:** `run_cases.py --cases <our file>` works with made-up customers. The mock bank must seed whatever data the case sends.
+- **Checked 2026-10-10 17:20: the organisers' mock seeds only the 13 public case IDs** (`POST /v1/practice/sessions {"case": id}`; anything else returns "unknown practice case"). So self-testing a new brief, ours or hidden, needs **our own mock bank** (`bank/`):
+  - A small stdlib-HTTP server that implements the seven tools generically from the brief's openapi. It seeds a customer from a case (identity answers, products, injected failures such as "create_promise fails twice") and writes a ledger in the same shape `score.py` reads.
+  - It is reachable by Freya through a Cloudflare quick tunnel (`cloudflared tunnel --url`, no account change needed).
+  - The compiler takes `base_url`. Self-test builds point at our mock. **The exported final workflow points at the openapi `servers[0].url`**, so the submitted workflow differs from the tested one only in that URL.
+  - **Conformance check:** run the PUB cases on both banks and require the same ledgers. That tells us whether our mock behaves like theirs, including its responses (`verified`, `wrong_answers_left`, `all_verified`, `hint`, failures).
+- Response fields our mock can't infer from a hidden openapi are a risk. The compiler's post-hooks must therefore tolerate missing fields (they already default safely).
+- **Kit hint:** `run_cases.persona_for` already knows the identity fields `postcode`, `birth_year`, `company_number` and `founded_year`. The schema's identity answer formats must cover these (postcode, year, alphanumeric code). That's general support, not hidden-brief content.
 
 ## 6. Fuzz corpus (development only, `bench/`)
 
@@ -151,7 +157,7 @@ The extractor must cite the brief line for every value (`source` field). That he
 
 | When | What |
 |---|---|
-| Sat 17:30–20:00 | Plan; verify the cases assumption; spec schema; extract spec(A) by hand-check; compiler skeleton from `gen_brief_a.py` |
+| Sat 17:30–20:00 | Plan; our mock bank + tunnel + conformance; spec schema; extract spec(A) by hand-check; compiler skeleton from `gen_brief_a.py` |
 | Sat 20:00–01:00 | Compiler at parity on A (reps 3), then B; lib unit tests; fallback hardening (subagent, in parallel) |
 | Sun 09:00–13:00 | Extractor plus validator; fuzz corpus (subagents); cases.py |
 | Sun 13:00–16:00 | Full builder runs on the corpus; fix; build time ≤ 15 min |
