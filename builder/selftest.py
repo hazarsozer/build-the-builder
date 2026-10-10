@@ -22,6 +22,7 @@ for _p in (ROOT, ROOT / "tools"):
 import freya  # noqa: E402
 from run_cases import persona_for  # noqa: E402
 from score import score_ledger  # noqa: E402
+from builder.redact import scrub  # noqa: E402
 
 UA = {"user-agent": "freya-builder-selftest/0.1", "content-type": "application/json"}
 
@@ -103,7 +104,7 @@ def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy
         led = _http(base, "/v1/practice/ledger/" + cid)
         r = score_ledger(c, led)
         j = judge.get(pids[c["id"]], {})
-        if j.get("outcome") != "pass": r["failed"].append("conversation: " + " ".join(str(j.get("reason") or "no verdict").split())[:400])
+        if j.get("outcome") != "pass": r["failed"].append("conversation: " + " ".join(scrub(str(j.get("reason") or "no verdict")).split())[:400])
         rep = None
         if j.get("callId"):
             try: msgs = freya.get_call(j["callId"]).get("messages", [])

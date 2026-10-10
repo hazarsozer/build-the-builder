@@ -84,7 +84,7 @@ def _one(events, kind):
 
 
 def _cell(v, n=160):
-    s = v if isinstance(v, str) else json.dumps(v, default=str, ensure_ascii=False)
+    s = scrub(v if isinstance(v, str) else json.dumps(v, default=str, ensure_ascii=False))   # scrub before cutting
     s = " ".join(s.split()).replace("|", "\\|")
     return s if len(s) <= n else s[:n] + "..."
 
