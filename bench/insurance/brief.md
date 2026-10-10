@@ -107,7 +107,7 @@ Business days are Monday to Friday, except Brightwater holidays: 2026-10-19, 202
 
 ## 12. Notes and closing
 
-47. For every policy that ends without a promise, call `add_note` with that `product_id` and its reason: `refused`, `hardship`, `disputed`, `already_paid` or `system_error`. This also applies with one policy, and when no policy gets a promise. Rules 37 and 41 override this.
+47. For every policy that ends without a promise, call `add_note` with that `product_id` and its reason: `refused`, `hardship`, `disputed`, `already_paid` or `system_error`. This also applies with one policy, and when no policy gets a promise. Rules 37 and 41 override this. A call that ends before `get_account` adds no notes.
 48. Thank the customer and say goodbye. Then end with exactly one `close_call`. It is the last tool call.
 
 | Outcome | Reason | When |

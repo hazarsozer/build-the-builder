@@ -121,7 +121,7 @@
     "minimum_instalment": 240.0
    }
   ],
-  "script": "Verified. Says the full premium is too much. If asked how much she can pay, says 'you tell me'. Accepts the minimum instalment and says she can pay it on Monday. Accepts the next business day when it is offered. Confirms.",
+  "script": "Verified. Says the full premium is too much. If asked how much she can pay, says 'you tell me'. Accepts the minimum instalment and says she can pay it on Monday the 19th. Accepts the next business day when it is offered. Confirms.",
   "expected": {
    "outcome": "promise_to_pay",
    "reason": null,

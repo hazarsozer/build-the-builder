@@ -295,7 +295,7 @@
     "instalment_amount": 230.0
    }
   ],
-  "script": "Verified. Cannot pay today. Says her salary arrives on 5 November and she will pay the full amount then. Accepts the latest possible date when it is offered. Confirms.",
+  "script": "Verified. Cannot pay today. Says her salary arrives on 5 November and wants to pay on 5 November. Accepts the latest possible date when it is offered. Confirms.",
   "expected": {
    "outcome": "promise",
    "reason": null,
