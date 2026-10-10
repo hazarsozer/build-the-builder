@@ -26,6 +26,7 @@ Exit code: 0 when the workflow was exported, 1 when a spec existed but the final
 """
 import argparse
 import datetime
+import hashlib
 import json
 import re
 import subprocess
@@ -145,9 +146,13 @@ def resolve_openapi(briefs, override):
 
 
 def slug_for(briefs):
+    """Default slot: the first brief's folder and name, plus a short hash of the resolved brief set, so x/brief.md and
+    y/brief.md never share a slot (or an export file). The same brief set always gets the same slug."""
     p = Path(str(briefs[0]).rstrip("/"))
-    name = p.name if p.is_dir() else p.stem
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "brief"
+    name = p.name if p.is_dir() else "%s-%s" % (p.resolve().parent.name, p.stem)
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-") or "brief"
+    key = "\n".join(sorted(str(Path(str(b).rstrip("/")).resolve()) for b in briefs))
+    return "%s-%s" % (base, hashlib.sha1(key.encode()).hexdigest()[:6])
 
 
 def resolve_now(cli, spec, briefs):
@@ -592,7 +597,7 @@ class Build:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(prog="python -m builder.main", description=__doc__.split("\n")[0])
     ap.add_argument("briefs", nargs="+", help="brief files or directories")
-    ap.add_argument("--slot", help="Freya slot name (default: a slug of the first brief's name)")
+    ap.add_argument("--slot", help="Freya slot name, used exactly (default: the first brief's folder and name plus a hash of the brief set)")
     ap.add_argument("--openapi", help="the bank's OpenAPI file (default: openapi.json next to the briefs, else the only OpenAPI .json "
                     "there; none or several is an error)")
     ap.add_argument("--no-selftest", action="store_true", help="skip the bank, the tunnel and the self-test")
