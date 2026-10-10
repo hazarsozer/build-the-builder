@@ -37,7 +37,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
   - each item: when `format` is digits, also required: `length`
 - `identity.questions[].field` (required): string. The verify_identity `field` enum value.
 - `identity.questions[].ask` (required): string. The question, said word for word.
-- `identity.questions[].format` (required): one of `date`, `digits`, `text`. date: send as YYYY-MM-DD. digits: exactly `length` digits. text: as said.
+- `identity.questions[].format` (required): one of `date`, `digits`, `year`, `text`. date: send as YYYY-MM-DD. digits: exactly `length` digits. year: a four-digit year from 1900 to the current year. text: as said.
 - `identity.questions[].date_order` (optional): one of `DMY`, `MDY`, `YMD`. How to read a date given only as numbers (DMY = day, month, year).
 - `identity.questions[].length` (optional): integer, min 1. Number of digits for format digits.
 - `identity.max_wrong` (required): integer, min 1. Wrong answers that end the check.

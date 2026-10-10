@@ -587,14 +587,12 @@ try:
         if not segs or (len(segs) > 1 and not alone):
             return a, False
         ts = _dtoks(segs[-1])
-        if not ts or len(ts) % 3 or (len(ts) > 3 and not alone):
+        if not ts or len(ts) != 3:
+            # several dates without a correction word between them: ask again, never guess which one counts
             return a, False
-        r = None
-        for k in range(0, len(ts), 3):
-            # several whole dates in one answer: each must be a date, the last one counts
-            r = _triple(ts[k:k + 3], order)
-            if r is None:
-                return a, False
+        r = _triple(ts, order)
+        if r is None:
+            return a, False
         if r == 'RAW':
             # a whole numeric date in the wrong order goes to the bank as said (it answers with a non-counting hint)
             return a, alone and len(segs) == 1 and len(ts) == 3
@@ -604,13 +602,17 @@ try:
         segs = [s for s in re.split(FIX, a, flags=re.I) if re.search(r'\d', s)]
         if not segs or (len(segs) > 1 and not alone):
             return '', False
-        runs = re.findall(r'\d+', segs[-1])
-        if alone and n:
-            full = [r for r in runs if len(r) == n]
-            if len(full) >= 2:
-                return full[-1], True
-        dg = ''.join(runs)
+        # two plain values ("4410 and 5521") join to too many digits: incomplete, never the last one
+        dg = ''.join(re.findall(r'\d+', segs[-1]))
         return dg, (len(dg) == n if n else bool(dg))
+
+    def _year(a, alone):
+        y, ok = _digits(a, 4, alone)
+        if not ok:
+            return y, False
+        m = re.match(r'\d{4}', str(vars.get('now') or ''))
+        cur = int(m.group(0)) if m else datetime.date.today().year
+        return y, 1900 <= int(y) <= cur
 
     def _norm(a, q, alone):
         """(normalised answer, complete?) for one answer text."""
@@ -620,7 +622,7 @@ try:
         if fm == 'digits':
             return _digits(a, int(q.get('length') or 0), alone)
         if fm == 'year':
-            return _digits(a, 4, alone)
+            return _year(a, alone)
         if fm == 'postcode':
             return a.upper().replace(' ', ''), True
         return a, True
@@ -641,15 +643,20 @@ try:
             v = a
             try:
                 conv = q.get('format') in ('date', 'digits', 'year')
+                numeric = q.get('format') in ('digits', 'year')
                 a2 = _words(a) if conv else a
                 p2 = _words(part) if conv and part else part
+                if numeric and p2 and not re.fullmatch(r'[\d\s,.\-]+', p2):
+                    # a digits answer combines only with digit parts (a stale "14 March" must not become 1410)
+                    p2 = ''
                 cands = [(a2, True)]
                 if p2:
                     if re.search(r'(?<![0-9A-Za-z])' + re.escape(a2) + r'(?![0-9A-Za-z])', p2, flags=re.I):
                         # this answer is already one of the recorded pieces: try the parts on their own
                         cands.append((p2, False))
                     elif not re.search(FIX, p2 + ' ' + a2, flags=re.I):
-                        cands += [(p2 + ' ' + a2, False), (a2 + ' ' + p2, False)]
+                        # digits join in the order said; a date's typed parts may come in either order
+                        cands += [(p2 + ' ' + a2, False)] + ([] if numeric else [(a2 + ' ' + p2, False)])
                 for c, alone in cands:
                     v2, ok2 = _norm(c, q, alone)
                     if ok2:

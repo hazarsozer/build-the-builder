@@ -165,6 +165,18 @@ def test_g1_cases_multi_mapped():
     assert all(AMT in p for p in c["seed"]["products"])
 
 
+def test_g7_year_format_in_schema_and_compiled():
+    s = copy.deepcopy(A)
+    s["identity"]["questions"][1] = {"field": "phone_last4", "ask": "What year were you born?", "format": "year"}
+    assert validate(s, OA) == []
+    w = C(s, OA)
+    pre = [t for k, t in _tools(w) if t["function"]["name"] == "verify_identity"][0]["pre_process_code"]
+    for ans, part, want in [("88", "19", "1988"), ("19", "88", None), ("2150", "", None), ("2026", "", "2026")]:
+        cfg = {"body": {"field": "phone_last4", "answer": ans}}
+        run(pre, None, {"now": "2026-10-14T11:00", "id_partial": part, "id_partial_field": "phone_last4"}, cfg)
+        assert cfg["body"]["answer"] == (want or ""), (ans, part, cfg)
+
+
 def test_g1_compile_lint_clean_with_mapping():
     for spec in (_renamed(A), _renamed(B)):
         w = C(spec, _renamed_oa())

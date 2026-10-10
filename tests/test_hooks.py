@@ -134,11 +134,15 @@ ROUND5 = [
     # self-corrections inside one answer: the last value counts
     ("date", "14 March 1988, sorry, 15 March 1988", {}, "1988-03-15"),
     ("date", "14 March 1988 no 15 March 1988", {}, "1988-03-15"),
-    ("date", "14 March 1988, 15 March 1988", {}, "1988-03-15"),
+    ("date", "14 March 1988, 15 March 1988", {}, INCOMPLETE),  # G7: two plain values, no correction word
+    ("date", "14 March 1988, actually 15 March 1988", {}, "1988-03-15"),
+    ("date", "14 March 1988, wait, 15 March 1988", {}, "1988-03-15"),
     ("date", "03/14/1988, sorry, 15/03/1988", {}, "1988-03-15"),
     ("date", "14 March 1988, sorry, 15", {}, INCOMPLETE),  # corrected only in part: never send the old date
     ("digits", "4401, sorry, I mean 4410", {}, "4410"),
-    ("digits", "4401 4410", {}, "4410"),
+    ("digits", "4401 4410", {}, INCOMPLETE),  # G7: two plain values, no correction word
+    ("digits", "4410 and 5521", {}, INCOMPLETE),
+    ("digits", "4401, no, 4410", {}, "4410"),
     ("year", "1987, no, 1988", {}, "1988"),
     # parts combined in both orders
     ("date", "1988", _p("14 March", DOB), "1988-03-14"),
@@ -158,6 +162,13 @@ ROUND5 = [
     ("digits", "44", _p("44", PIN), INCOMPLETE),
     ("digits", "10", _p("4401, sorry, I mean 44", PIN), INCOMPLETE),
     ("year", "19", _p("19", "birth_year"), INCOMPLETE),
+    ("year", "19", _p("88", "birth_year"), INCOMPLETE),  # G7: 8819 is not a year (said order only)
+    ("digits", "10", _p("14 March", PIN), INCOMPLETE),   # G7: a date part never becomes digits
+    ("digits", "10", _p("March 44", PIN), INCOMPLETE),
+    ("year", "2150", {}, INCOMPLETE),                    # G7: a year is 1900..now
+    ("year", "1899", {}, INCOMPLETE),
+    ("year", "1900", {}, "1900"),
+    ("year", "2026", {}, "2026"),
     # number words
     ("date", "fourteenth March nineteen eighty-eight", {}, "1988-03-14"),
     ("date", "the fourteenth of March, nineteen eighty eight", {}, "1988-03-14"),

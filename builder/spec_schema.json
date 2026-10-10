@@ -360,9 +360,10 @@
                 "enum": [
                   "date",
                   "digits",
+                  "year",
                   "text"
                 ],
-                "description": "date: send as YYYY-MM-DD. digits: exactly `length` digits. text: as said."
+                "description": "date: send as YYYY-MM-DD. digits: exactly `length` digits. year: a four-digit year from 1900 to the current year. text: as said."
               },
               "date_order": {
                 "enum": [
