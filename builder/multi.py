@@ -129,15 +129,28 @@ def _targets(st, ref, open_only):
     return [], False
 
 
+def _xmatch(ok, v):
+    """The one enum value the customer's words name ("the mobile app" -> app), or None."""
+    words = lambda x: ' '.join(re.findall(r'[a-z0-9]+', str(x).lower()))
+    key = words(v)
+    hit = [x for x in ok if words(x) == key]
+    if not hit:
+        hit = [x for x in ok if words(x) and re.search(r'\b' + re.escape(words(x)) + r'\b', key)]
+    if not hit and len(key) >= 3:
+        hit = [x for x in ok if re.search(r'\b' + re.escape(key) + r'\b', words(x))]
+    if not hit:
+        kt = set(key.split())
+        hit = [x for x in ok if kt & set(t for t in words(x).split() if len(t) >= 3)]
+    return hit[0] if len(hit) == 1 else None
+
+
 def _xval(es, v):
-    """An extra create_promise field: a near-miss maps onto the enum, else the spec default."""
+    """An extra create_promise field: the enum value the words name, else the spec default."""
     if isinstance(v, str):
         v = v.strip()
     ok = es.get('enum') or []
     if ok and v not in (None, '') and v not in ok:
-        key = str(v).lower().replace(' ', '_').replace('-', '_')
-        hit = [x for x in ok if str(x).lower() == key]
-        v = hit[0] if hit else None
+        v = _xmatch(ok, v)
     if v in (None, ''):
         v = es.get('default')
     return v
@@ -237,11 +250,15 @@ def _agree(st, b, today):
     if errs:
         return None, 'NOT accepted, nothing changed: ' + '; '.join(errs) + '.'
     extra = dict()
+    said = []
     for xf, es in (CFG.get('extra') or dict()).items():
         extra[xf] = _xval(es, b.get(xf))
+        if extra[xf] is not None and extra[xf] != b.get(xf):
+            said.append(xf.replace('_', ' ') + ' noted as ' + str(extra[xf]))
     for q, v in new.items():
         st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra)
-    return st, 'Noted for now (nothing is registered before the confirmation).'
+    note = (' Note: ' + '; '.join(said) + '. Tell the customer this value.') if said else ''
+    return st, 'Noted for now (nothing is registered before the confirmation).' + note
 
 
 def _refuse(st, b):
@@ -545,6 +562,8 @@ class Multi:
                 continue
             cfg["extra"][f] = {"enum": p.get("enum") or [], "default": g.get("default")}
             xprops[f] = {"type": "string", "description": "For agreed: " + self.c.extra_desc(f, p, g)}
+            if p.get("enum"):
+                xprops[f]["enum"] = list(p["enum"])
         head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},

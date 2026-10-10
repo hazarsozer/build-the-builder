@@ -104,7 +104,10 @@ def _days_field(spec, ptype): return spec["products"][ptype].get("days_late_fiel
 
 def _words(spec, p):
     w = spec["products"].get(p["type"], {}).get("words", p["type"].replace("_", " "))
-    return re.sub(r"\{(\w+)\}", lambda m: str(p.get(m[1], m[0])), w)
+    extra = {}
+    if spec["products"].get(p["type"]) and D.pfield(p, _pcfg(spec, p), "amount_field", "past_due") not in (None, ""):
+        extra = {"past_due": _money(_amt(spec, p)), "days_late": str(_late(spec, p))}
+    return re.sub(r"\{(\w+)\}", lambda m: extra.get(m[1], str(p.get(m[1], m[0]))), w)
 
 
 # ---- generated customer data ------------------------------------------------------------------------------------

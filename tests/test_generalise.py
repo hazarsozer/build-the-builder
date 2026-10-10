@@ -236,8 +236,7 @@ def test_g6_post_verify_sentence_spoken_before_the_debt():
         assert text.index("verified") < text.index(PVS) < text.index("{{debt_statement_text}}"), text
         assert PVS in n["task_message"]
         assert PVS in cases.fixed_sentences(s)
-    assert len(C(dict(copy.deepcopy(A), negotiation=dict(A["negotiation"], post_verify_sentence=PVS)), OA)
-               ["nodes"]["negotiate"]["task_message"]) <= 4000 + len(PVS) + 1
+    # no prompt-size cap here: 4000/4600 is our budget for the reference specs only (M6)
 
 
 def test_g6_reference_unchanged():
@@ -320,6 +319,92 @@ def test_g8_cases_seed_policy_and_aliases():
     assert c["seed"]["response_aliases"] == {"verify_identity": {"verified": "match"}}
     c = cases.build(A, OA, "happy_full_today", "2026-10-14T11:00")
     assert c["seed"]["identity_policy"] == {"max_wrong": 3, "scope": "total"} and "response_aliases" not in c["seed"]
+
+
+# ---------------------------------------------------------------- review minors M1-M5
+
+def test_m1_token_match_before_default_and_model_is_told():
+    w = C(_with_fields(A), FOA)
+    t = _named(w, "negotiate", "create_promise")
+    for sent, want in [("credit card", "card"), ("bank transfer", "bank_transfer"), ("by transfer", "bank_transfer"),
+                       ("the app", "app"), ("cash", "bank_transfer"), ("card or app", "bank_transfer")]:
+        v = {}
+        cfg = {"body": {"amount": 1, "date": "2026-10-14", "channel": sent}}
+        run(t["pre_process_code"], None, v, cfg)
+        assert cfg["body"]["channel"] == want, (sent, cfg)
+        r = {"status": "success", "data": {"ok": True}}
+        run(t["post_process_code"], r, v)
+        assert "channel" in r["data"]["what_to_do_next"] and want in r["data"]["what_to_do_next"], r
+    # an exact value needs no remark
+    v = {}
+    run(t["pre_process_code"], None, v, {"body": {"amount": 1, "date": "2026-10-14", "channel": "app"}})
+    r = {"status": "success", "data": {"ok": True}}
+    run(t["post_process_code"], r, v)
+    assert r["data"]["what_to_do_next"] == "The promise is recorded."
+
+
+def test_m1_multi_token_match_and_ack():
+    s = _with_fields(B)
+    w = C(s, FOA)
+    sp = [t for t in w["nodes"]["negotiate"]["tools"] if t["function"]["name"] == "set_product"][0]
+    prods = [dict(CARD, days_late=3)]
+    v = {"now": "2026-10-14T11:00", "acct_products_json": json.dumps(prods)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    exec(sp["function"]["parameters"]["properties"]["code"]["default"],
+         {"vars": v, "params": {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-16", "channel": "credit card"}})
+    assert json.loads(v["mp_state"])["p"]["p1"]["extra"]["channel"] == "card"
+    assert "channel" in v["mp_msg"] and "card" in v["mp_msg"]
+
+
+def test_m2_set_product_channel_has_enum():
+    w = C(_with_fields(B), FOA)
+    sp = [t for t in w["nodes"]["negotiate"]["tools"] if t["function"]["name"] == "set_product"][0]
+    assert sp["function"]["parameters"]["properties"]["channel"]["enum"] == ["bank_transfer", "card", "app"]
+
+
+def _conds(c):
+    if "conditions" in c:
+        for x in c["conditions"]:
+            yield from _conds(x)
+    elif "variable" in c:
+        yield c["variable"]
+
+
+def test_m3_transitions_also_test_alias_paths():
+    s = _aliased(_with_fields(A), {"verify_identity": {"wrong_answers_left": "attempts_left", "all_verified": "done"},
+                                   "create_promise": {"ok": "accepted"}})
+    oa = _accepted_oa()
+    rp = oa["paths"]["/verify_identity"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+    rp["done"] = rp.pop("all_verified")
+    assert validate(s, oa) == []
+    w = C(s, oa)
+    idv = [v for t in w["nodes"]["identity"]["transitions"] for v in _conds(t["condition"])]
+    assert "verify_identity_response.data.attempts_left" in idv and "verify_identity_response.data.done" in idv
+    neg = [v for t in w["nodes"]["negotiate"]["transitions"] for v in _conds(t["condition"])]
+    assert "create_promise_response.data.accepted" in neg
+    rt = [v for t in w["nodes"]["retry_promise"]["transitions"] for v in _conds(t["condition"])]
+    assert "retry_promise_response.data.accepted" in rt
+    # reference: no alias paths
+    ref = [v for t in C(A, OA)["nodes"]["identity"]["transitions"] for v in _conds(t["condition"])]
+    assert not any("attempts_left" in v for v in ref)
+
+
+def test_m4_extra_desc_no_duplicate_enum_list():
+    ch = _body(_named(C(_with_fields(A), FOA), "negotiate", "create_promise"))["properties"]["channel"]["description"]
+    assert "One of:" not in ch          # the openapi description already names bank_transfer, card and app
+    oa = copy.deepcopy(FOA)
+    oa["paths"]["/create_promise"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["channel"]["description"] = "How they pay."
+    ch = _body(_named(C(_with_fields(A), oa), "negotiate", "create_promise"))["properties"]["channel"]["description"]
+    assert "One of: bank_transfer, card, app." in ch
+
+
+def test_m5_mapped_values_in_product_words():
+    s = _renamed(A)
+    s["products"]["credit_card"]["words"] = "card ending {card_last4} ({days_late} days, {past_due} due)"
+    v = _account(s, _ren(CARD))
+    assert v["product_words"] == "card ending 4821 (20 days, 420.00 due)", v["product_words"]
+    assert cases._words(s, _ren(CARD)) == "card ending 4821 (20 days, 420.00 due)"
 
 
 # ---------------------------------------------------------------- live: Freya dry-run on generalised workflows
@@ -542,7 +627,6 @@ def test_g3_unknown_required_field_is_model_filled():
 def test_g3_prompt_names_the_extra_field():
     t = C(_with_fields(A), FOA)["nodes"]["negotiate"]["task_message"]
     assert "channel" in t and CH["create_promise.channel"]["instruction"] in t
-    assert len(t) <= 4600
 
 
 def test_g3_retry_carries_the_extra_field():

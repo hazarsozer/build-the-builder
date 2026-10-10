@@ -251,7 +251,7 @@ def product_facts(p):
     cfg = PRODUCTS.get(ptype) or dict(words=ptype.replace('_', ' '), floor_field='')
     past_due = amount_of(p, cfg)
     days_late = days_of(p, cfg)
-    words = fill(cfg['words'], p, dict())
+    words = fill(cfg['words'], p, dict(past_due=fmt(past_due), days_late=str(days_late)))
     ff = cfg.get('floor_field') or ''
     floor = float(p.get(ff)) if p.get(ff) not in (None, '') else past_due
     if floor > past_due:
@@ -803,9 +803,28 @@ except Exception:
 # its source variable when it has one, map a near-miss onto the enum, else use the spec default. EXTRA is
 # {field: {enum, default, src}}.
 EXTRA_PRE = r'''
+import re
+
+def _xmatch(ok, v):
+    """The one enum value the customer's words name ("the mobile app" -> app), or None."""
+    words = lambda x: ' '.join(re.findall(r'[a-z0-9]+', str(x).lower()))
+    key = words(v)
+    hit = [x for x in ok if words(x) == key]
+    if not hit:
+        hit = [x for x in ok if words(x) and re.search(r'\b' + re.escape(words(x)) + r'\b', key)]
+    if not hit and len(key) >= 3:
+        hit = [x for x in ok if re.search(r'\b' + re.escape(key) + r'\b', words(x))]
+    if not hit:
+        kt = set(key.split())
+        hit = [x for x in ok if kt & set(t for t in words(x).split() if len(t) >= 3)]
+    return hit[0] if len(hit) == 1 else None
+
+
 try:
+    vars['extra_note'] = ''
     eb = config.get('body')
     if isinstance(eb, dict):
+        notes = []
         for ef, es in EXTRA.items():
             ev = eb.get(ef)
             if es.get('src'):
@@ -817,16 +836,29 @@ try:
                 if ev.startswith('{') or ev.lower() in ('none', 'null'):
                     ev = None
             ok = es.get('enum') or []
+            said = ev
             if ok and ev not in (None, '') and ev not in ok:
-                key = str(ev).lower().replace(' ', '_').replace('-', '_')
-                hit = [x for x in ok if str(x).lower() == key]
-                ev = hit[0] if hit else None
+                ev = _xmatch(ok, ev)
             if ev in (None, ''):
                 ev = es.get('default')
             if ev is None:
                 eb.pop(ef, None)
             else:
                 eb[ef] = ev
+                if ev != said:
+                    notes.append(ef.replace('_', ' ') + ' was sent as ' + str(ev))
+        if notes:
+            vars['extra_note'] = ' Note: ' + '; '.join(notes) + '. Tell the customer this value and use it from now on.'
+except Exception:
+    pass
+'''
+
+# Model tools with extra fields: after the tool's own post-hook, tell the model which value was sent.
+EXTRA_POST = r'''
+try:
+    if isinstance(result, dict) and isinstance(result.get('data'), dict) and vars.get('extra_note'):
+        result['data']['what_to_do_next'] = str(result['data'].get('what_to_do_next') or '') + str(vars.get('extra_note'))
+        vars['extra_note'] = ''
 except Exception:
     pass
 '''
@@ -871,10 +903,21 @@ class _Compiler:
         extra, req, hook = self.extra_props(name, props, source, model)
         if hook:
             kw["pre"] = "import json\n" + _const("EXTRA", hook) + EXTRA_PRE + (kw.get("pre") or "")
+            if model and any(h.get("src") is None for h in hook.values()):
+                kw["post"] = (kw.get("post") or "") + EXTRA_POST
         resp = {k: v for k, v in ((self.s.get("responses") or {}).get(name) or {}).items() if k != v}
         if resp:
             kw["post"] = "import json\n" + _const("RESP", resp) + ALIAS_POST + (kw.get("post") or "")
         return api_tool(name, self.base, self.oa, dict(props, **extra), list(required) + req, **kw)
+
+    def resp_vars(self, tool, canon, prefix=None):
+        """Response variables a transition tests: <prefix>_response.data.<canon>, plus the brief's alias name."""
+        prefix = prefix or tool
+        out = ["%s_response.data.%s" % (prefix, canon)]
+        alias = ((self.s.get("responses") or {}).get(tool) or {}).get(canon)
+        if alias and alias != canon:
+            out.append("%s_response.data.%s" % (prefix, alias))
+        return out
 
     def extra_fields(self, name, known=()):
         """[(field, openapi property, spec guidance)] the call site leaves out but the tool needs."""
@@ -896,7 +939,8 @@ class _Compiler:
 
     def extra_desc(self, f, p, g):
         bits = [g.get("instruction") or "", p.get("description") or ""]
-        if p.get("enum"):
+        said = " ".join(bits)
+        if p.get("enum") and not all(re.search(r"\b%s\b" % re.escape(str(x)), said) for x in p["enum"]):
             bits.append("One of: %s." % ", ".join(str(x) for x in p["enum"]))
         if g.get("default") is not None:
             bits.append("If the customer gives none of these, use %s." % g["default"])
@@ -1379,7 +1423,7 @@ HOW TO GET A PROMISE
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
             first_ask, nbd, aft, vague, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
-            t += "\n   " + line + " Read it back with the amount and the date."
+            t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
             t += "\n6. If the customer asks to change or cancel a recorded promise, say: %s" % q(tpl(conf["change_note"]))
         t = self.said_already(t)
@@ -1439,7 +1483,7 @@ HOW TO GET A PROMISE
         tr = []
         if self.has("callback"):
             tr.append(go(self.close_key("callback"), "Callback booked",
-                         cond_any(eq("cb_status", "booked"), *is_true("schedule_callback_response.data.ok")["conditions"])))
+                         cond_any(eq("cb_status", "booked"), *is_true(*self.resp_vars("schedule_callback", "ok"))["conditions"])))
         return {
             "name": "third_party", "node_type": "conversation",
             "task_message": self.third_party_task(),
@@ -1509,8 +1553,8 @@ HOW TO GET A PROMISE
             }] + self.seen_vars("identity"),
             "max_node_turns": 20, "max_turn_transition": declined,
             "transitions": [
-                go("load_account", "All answers verified", is_true("id_all", "verify_identity_response.data.all_verified")),
-                go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), eq("verify_identity_response.data.wrong_answers_left", "0"))),
+                go("load_account", "All answers verified", is_true("id_all", *self.resp_vars("verify_identity", "all_verified"))),
+                go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), *[eq(x, "0") for x in self.resp_vars("verify_identity", "wrong_answers_left")])),
             ] + trans,
         }
 
@@ -1546,7 +1590,7 @@ HOW TO GET A PROMISE
         tr = []
         if self.has("promise_recorded"):
             tr.append(go(self.close_key("promise_recorded"), "Promise recorded",
-                         cond_any(eq("promise_status", "recorded"), *is_true("create_promise_response.data.ok")["conditions"])))
+                         cond_any(eq("promise_status", "recorded"), *is_true(*self.resp_vars("create_promise", "ok"))["conditions"])))
         if retries >= 1:
             tr.append(go("retry_promise", "First promise call failed with an HTTP error", all_of(
                 eq("create_promise_failure_count", "1"), eq("create_promise_response.status", "error"))))
@@ -1696,7 +1740,7 @@ HOW TO RUN THE CALL
             "disable_inactivity_monitor": True,
             "pre_actions": [rp],
             "response_mapping": [{"path": "data.ok", "variable": "retry_ok"}],
-            "transitions": [go(ok, "Retry worked", is_true("retry_ok", "retry_promise_response.data.ok")), always(fail)],
+            "transitions": [go(ok, "Retry worked", is_true("retry_ok", *self.resp_vars("create_promise", "ok", "retry_promise"))), always(fail)],
         }
 
     def close_call_tool(self):
