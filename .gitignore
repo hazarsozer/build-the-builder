@@ -1,0 +1,6 @@
+env.sh
+.env
+__pycache__/
+.venv/
+results/
+.freya-agents.json
