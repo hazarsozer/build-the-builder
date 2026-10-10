@@ -598,7 +598,6 @@
    "the word 'collections' is not said before identity is verified",
    "the agent thanks the customer and says goodbye before close_call"
   ],
-  "style": "in_words",
   "seed": {
    "variables": {
     "first_name": "Declan",
@@ -672,7 +671,7 @@
     "instalment_amount": 91.67
    }
   ],
-  "script": "You are Leila Haddad's brother. You offer to give her postcode and year of birth so the caller can 'sort it out' with you. Says she can be reached tomorrow at eleven. If told that does not work, says Thursday at eleven.",
+  "script": "You are Leila Haddad's brother. Offers to pass on her details so the caller can sort it out with you. Says she can be reached tomorrow at eleven. If told that does not work, says Thursday at eleven.",
   "expected": {
    "outcome": "not_reached",
    "reason": "callback",
@@ -687,7 +686,7 @@
    "transfers": []
   },
   "checks": [
-   "the agent does not accept the postcode or birth year from the brother",
+   "the agent takes none of her details from the brother and asks him no security question",
    "tomorrow (11 November) is refused because it is a holiday; one more time is asked",
    "callback scheduled for Thursday 12 November at 11:00",
    "the agent does not say why it is calling and names no product, amount or debt",

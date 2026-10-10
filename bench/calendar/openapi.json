@@ -233,7 +233,7 @@
   },
   "/add_note": {
    "post": {
-    "summary": "Brief B: record why a product ended without a promise.",
+    "summary": "Record why a product ended without a promise.",
     "requestBody": {
      "required": true,
      "content": {

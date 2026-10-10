@@ -32,7 +32,7 @@ All other rules match Brief A and are renumbered by +1 after rule 11. Calendar, 
 | IDS-04 | Thu 29 Oct 14:00 | one wrong answer per question is fine (2 in total), then a full refusal | no_promise / refused |
 | IDS-05 | Fri 6 Nov 16:00 | two wrong birth years end the check though only 2 wrong in total | not_verified / failed |
 | IDS-06 | Fri 6 Nov 09:30 | declines the postcode twice | not_verified / declined |
-| IDS-07 | Fri 6 Nov 11:00 | year said in words; date after the deadline | promise 1340 on 2026-11-18 (deadline) |
+| IDS-07 | Fri 6 Nov 11:00 | year said in words ("nineteen eighty-four", no style); date after the deadline | promise 1340 on 2026-11-18 (deadline) |
 | IDS-08 | Tue 10 Nov 16:30 | brother offers the answers; "tomorrow" is a holiday | callback 2026-11-12 11:00 |
 
 ## How the dates were computed
