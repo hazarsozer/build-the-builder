@@ -10,7 +10,10 @@ from bank import server  # noqa: E402
 OPENAPI = json.loads((ROOT / "tools" / "openapi.json").read_text())
 PUB01 = {"variables": {"first_name": "A", "last_name": "B", "title": "Mr", "now": "2026-10-14T11:00"},
          "identity": {"date_of_birth": "1988-03-14", "phone_last4": "4471"},
-         "products": [{"type": "credit_card", "card_last4": "4821", "past_due": 420.0, "days_late": 6, "minimum_payment": 126.0}]}
+         "products": [{"type": "credit_card", "card_last4": "4821", "past_due": 420.0, "days_late": 6, "minimum_payment": 126.0}],
+         "reasons": {"promise": [], "paid": [], "transferred": ["restructuring", "human", "support"],      # Brief A's table
+                     "no_promise": ["refused", "hardship", "dispute", "service_error"], "not_verified": ["failed", "declined"],
+                     "not_reached": ["callback", "no_callback", "wrong_number", "deceased", "unclear"]}}
 
 
 class Bank:
@@ -167,6 +170,75 @@ def test_seed_from_public_case(bank):
     assert v["first_name"] == "Grace"
     assert bank.raw("/v1/create_promise", {"customer_id": v["customer_id"], "product_id": "p1", "amount": 1, "date": "2026-10-14"})[0] == 500
     assert bank.raw("/v1/practice/sessions", {"case": "PUB-99"}) == (404, {"ok": False, "error": "unknown practice case"})
+
+
+def test_close_call_without_reason_table():
+    api = json.loads(json.dumps(OPENAPI))
+    api["paths"]["/close_call"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["outcome"]["enum"].append("escalated")
+    srv = server.serve(0, api)
+    try:
+        b = srv.bank
+        seed = {k: v for k, v in PUB01.items() if k != "reasons"}
+        close = lambda **a: b.tool("close_call", {"customer_id": b.session({"seed": seed})[1]["variables"]["customer_id"], **a})[1]
+        assert close(outcome="escalated", reason="anything") == {"ok": True}       # an outcome no table knows
+        assert close(outcome="no_promise", reason="whatever") == {"ok": True}
+        assert close(outcome="no_promise")["ok"] is False and close(outcome="no_promise", reason=" ")["ok"] is False
+        assert close(outcome="promise") == {"ok": True}
+        assert close(outcome="promise", reason="x")["ok"] is False
+        assert close(outcome="bogus", reason="x") == {"ok": False, "error": "unknown outcome"}
+    finally:
+        srv.shutdown()
+
+
+def test_close_call_seed_table_enforced(bank):
+    seed = dict(PUB01, reasons={"settled": [], "parked": ["later", "never"], "no_promise": ["refused"]})
+    close = lambda **a: bank.call("close_call", customer_id=bank.seed(seed)["customer_id"], **a)
+    assert close(outcome="parked", reason="soon") == {"ok": False, "error": "this outcome needs one of these reasons: later, never"}
+    assert close(outcome="parked", reason="later") == {"ok": True}
+    assert close(outcome="settled", reason="x") == {"ok": False, "error": "this outcome needs one of these reasons: "}
+    assert close(outcome="settled") == {"ok": True}
+    assert close(outcome="no_promise", reason="hardship")["ok"] is False
+    cid = bank.seed(seed)["customer_id"]
+    bank.call("close_call", customer_id=cid, outcome="parked", reason="never")
+    assert (bank.ledger(cid)["outcome"], bank.ledger(cid)["reason"]) == ("parked", "never")
+
+
+def test_body_too_large_is_413(bank):
+    host, port = bank.base[len("http://"):].split(":")
+    import http.client
+    for length in (str(server.MAX_BODY + 1), "-5"):
+        conn = http.client.HTTPConnection(host, int(port), timeout=5)
+        conn.putrequest("POST", "/v1/get_account"); conn.putheader("Content-Type", "application/json"); conn.putheader("Content-Length", length); conn.endheaders()
+        r = conn.getresponse()
+        assert r.status == 413 and json.loads(r.read())["ok"] is False
+        conn.close()
+    assert bank.raw("/v1/get_account", {"customer_id": "c_x", "pad": "a" * 1000})[0] == 404     # normal bodies still work
+
+
+def test_session_cap_evicts_oldest_activity(monkeypatch):
+    monkeypatch.setattr(server, "MAX_SESSIONS", 3)
+    srv = server.serve(0, OPENAPI)
+    try:
+        b = srv.bank
+        a, c2, c3 = (b.session({"seed": PUB01})[1]["variables"]["customer_id"] for _ in range(3))
+        b.tool("get_account", {"customer_id": a})          # a is now the most recently active
+        c4 = b.session({"seed": PUB01})[1]["variables"]["customer_id"]
+        assert set(b.sessions) == {a, c3, c4} and b.ledger(c2)[0] == 404
+    finally:
+        srv.shutdown()
+
+
+def test_calls_per_session_cap(monkeypatch):
+    monkeypatch.setattr(server, "MAX_CALLS", 3)
+    srv = server.serve(0, OPENAPI)
+    try:
+        b = srv.bank
+        cid = b.session({"seed": PUB01})[1]["variables"]["customer_id"]
+        for _ in range(3): b.tool("get_account", {"customer_id": cid})
+        assert b.tool("get_account", {"customer_id": cid}) == (200, {"ok": False, "error": "too many calls"})
+        assert len(b.ledger(cid)[1]["calls"]) == 3
+    finally:
+        srv.shutdown()
 
 
 def test_conformance_replay_and_diff():

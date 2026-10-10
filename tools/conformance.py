@@ -26,6 +26,11 @@ from run_cases import persona_for
 from bank import server, tunnel
 
 OFFICIAL_V1 = "https://freya-bank-mock.freyavoice.workers.dev/v1"
+# Brief A's close_call table (test data: our bank takes it from the seed, the official mock has it built in).
+BRIEF_A_REASONS = {"promise": [], "paid": [], "transferred": ["restructuring", "human", "support"],
+                   "no_promise": ["refused", "hardship", "dispute", "service_error"], "not_verified": ["failed", "declined"],
+                   "not_reached": ["callback", "no_callback", "wrong_number", "deceased", "unclear"]}
+CASES = {c["id"]: c for c in json.loads((ROOT / "public-test-set.json").read_text())}
 FIELDS = ("outcome", "reason", "promises", "notes", "callbacks", "transfers")
 
 
@@ -43,11 +48,10 @@ def diff(a, b): return {k: (a[k], b[k]) for k in FIELDS if a[k] != b[k]}
 
 # ---- replay -------------------------------------------------------------------------------------------------------
 
-def local_caller(bank):
-    def call(path, body=None):
-        if path == "/v1/practice/sessions": return bank.session(body)[1]
-        return bank.tool(path[len("/v1/"):], body)
-    return call
+def ours_session(bank, case_id):
+    """A session on our bank seeded like the official practice case, with Brief A's reason table."""
+    seed = dict(server.seed_from_case(CASES[case_id]), reasons=BRIEF_A_REASONS)
+    return bank.session({"case": case_id, "seed": seed})[1]["variables"]
 
 
 def official_tool(path, body):
@@ -67,7 +71,7 @@ def replay(case_id, calls, target):
         cid = official("/v1/practice/sessions", {"case": case_id})["variables"]["customer_id"]
         run = lambda tool, args: official_tool("/v1/" + tool, {"customer_id": cid, **args})
     else:
-        cid = target.session({"case": case_id})[1]["variables"]["customer_id"]
+        cid = ours_session(target, case_id)["customer_id"]
         run = lambda tool, args: target.tool(tool, {"customer_id": cid, **args})
     bad = []
     for c in calls:
@@ -190,7 +194,7 @@ def main():
                 wf = json.loads(pathlib.Path(a.workflow).read_text().replace(OFFICIAL_V1, url + "/v1"))
                 agent = freya.save_workflow(a.slot, wf, state_file=a.state)["agent_id"]
                 print("agent", agent, flush=True)
-            ours = live(agent, cases, pids, lambda i: bank.session({"case": i})[1]["variables"], lambda cid: bank.ledger(cid)[1], "ours")
+            ours = live(agent, cases, pids, lambda i: ours_session(bank, i), lambda cid: bank.ledger(cid)[1], "ours")
             raw = pathlib.Path(a.out).with_suffix(".ours.json"); raw.write_text(json.dumps(ours, indent=1))
         replays = []
         for cid_, runs in offi.items():

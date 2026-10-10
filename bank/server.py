@@ -9,7 +9,10 @@ Routes (no key needed, unlike the official practice routes):
     GET  /v1/practice/ledger/<customer_id> the ledger, same shape as the official one (tools/score.py reads it)
 
 Seed: {"variables": {first_name, last_name, title, now}, "identity": {field: answer}, "products": [{...}],
-       "faults": {"create_promise": [1, 2]}}   # 1-based call numbers of that tool that return HTTP 500
+       "faults": {"create_promise": [1, 2]},   # 1-based call numbers of that tool that return HTTP 500
+       "reasons": {"no_promise": ["refused", ...], "promise": []}}   # close_call table from the brief; optional
+Without "reasons", close_call accepts any non-empty reason, and none for promise/paid.
+Limits (a tunnel exposes this): body <= 64 KiB (else 413), 2000 sessions (oldest activity evicted), 500 calls per session.
 
 Every response body, error text and the order of checks below was copied from probes of the official mock on
 2026-10-10 (see .superpowers/sdd/2026-10-10-spec-generator-builder/task-3-report.md).
@@ -20,10 +23,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CASES = ROOT / "public-test-set.json"
 
-# close_call reasons per outcome. The openapi only says "see the table in the brief"; this is the official table.
-REASONS = {"promise": [], "paid": [], "transferred": ["restructuring", "human", "support"],
-           "no_promise": ["refused", "hardship", "dispute", "service_error"], "not_verified": ["failed", "declined"],
-           "not_reached": ["callback", "no_callback", "wrong_number", "deceased", "unclear"]}
+# close_call reasons come from the brief, not the openapi, so a seed carries them: "reasons": {outcome: [allowed] | []}.
+# Without a table any non-empty reason is accepted, except for these outcomes, which take none.
+NO_REASON = ("promise", "paid")
+# Limits while a tunnel exposes the server to the internet.
+MAX_BODY = 64 * 1024
+MAX_SESSIONS = 2000
+MAX_CALLS = 500
 WRONG_ANSWERS = 3
 NOT_A_DATE = "answer is not a date. Send it as YYYY-MM-DD."
 FAULT = {"ok": False, "error": "service unavailable, nothing was recorded"}
@@ -98,12 +104,13 @@ class Bank:
         self.openapi, self.lock, self.sessions = openapi, threading.Lock(), {}
         self.tools = [p.strip("/") for p in openapi.get("paths", {})]
         self.fields = enum(openapi, "verify_identity", "field") or []
-        self.outcomes = enum(openapi, "close_call", "outcome") or list(REASONS)
+        self.outcomes = enum(openapi, "close_call", "outcome")
+        self.seq = 0
         self.note_reasons = enum(openapi, "add_note", "reason") or []
         self.queues = enum(openapi, "transfer_to_agent", "queue") or []
 
     def session(self, body):
-        if "seed" in body: seed, case = body["seed"], None
+        if "seed" in body: seed, case = body["seed"], body.get("case")
         else:
             cases = {c["id"]: c for c in json.loads(CASES.read_text())} if CASES.exists() else {}
             if body.get("case") not in cases: return 404, {"ok": False, "error": "unknown practice case"}
@@ -112,8 +119,12 @@ class Bank:
         variables = {"customer_id": cid, **(seed.get("variables") or {})}
         identity = dict(seed.get("identity") or {})
         products = [{"product_id": f"p{i}", **{k: num(v) for k, v in p.items()}} for i, p in enumerate(seed.get("products") or [], 1)]
+        reasons = seed.get("reasons")
         with self.lock:
-            self.sessions[cid] = {"case": case, "variables": variables, "identity": identity, "kinds": field_kinds(self.openapi, identity),
+            while len(self.sessions) >= MAX_SESSIONS:       # evict the session with the oldest last activity
+                del self.sessions[min(self.sessions, key=lambda k: self.sessions[k]["seq"])]
+            self.seq += 1
+            self.sessions[cid] = {"case": case, "reasons": dict(reasons) if isinstance(reasons, dict) else None, "seq": self.seq, "variables": variables, "identity": identity, "kinds": field_kinds(self.openapi, identity),
                                   "products": products, "faults": {t: set(ns) for t, ns in (seed.get("faults") or {}).items()},
                                   "tool_calls": {}, "verified": {}, "wrong": 0, "hinted": False, "promises": [], "notes": [],
                                   "callbacks": [], "transfers": [], "outcome": None, "reason": None, "failures": {}, "calls": [],
@@ -133,6 +144,8 @@ class Bank:
         with self.lock:
             s = self.sessions.get(cid) if isinstance(cid, str) else None
             if s is None: return 404, {"ok": False, "error": "unknown customer_id"}
+            self.seq += 1; s["seq"] = self.seq
+            if len(s["calls"]) >= MAX_CALLS: return 200, {"ok": False, "error": "too many calls"}
             args = {k: v for k, v in body.items() if k != "customer_id"}
             n = s["tool_calls"][tool] = s["tool_calls"].get(tool, 0) + 1
             s["failures"].setdefault(tool, 0)
@@ -207,11 +220,17 @@ class Bank:
 
     def t_close_call(self, s, a):
         outcome, reason = a.get("outcome"), a.get("reason")
-        if outcome not in self.outcomes: return {"ok": False, "error": "unknown outcome"}
-        need = REASONS.get(outcome, [])
-        if (reason not in need) if need else bool(reason):
+        table = s["reasons"]
+        known = (self.outcomes or []) + list(table or {})
+        if not isinstance(outcome, str) or (known and outcome not in known): return {"ok": False, "error": "unknown outcome"}
+        if table is not None and outcome in table: need = list(table[outcome] or [])
+        elif outcome in NO_REASON: need = []
+        else: need = None                                  # no table for this outcome: any non-empty reason
+        if need is None:
+            if not (isinstance(reason, str) and reason.strip()): return {"ok": False, "error": "this outcome needs a reason"}
+        elif (reason not in need) if need else bool(reason):
             return {"ok": False, "error": "this outcome needs one of these reasons: " + ", ".join(need)}
-        s["outcome"], s["reason"], s["closed"] = outcome, reason if need else None, True
+        s["outcome"], s["reason"], s["closed"] = outcome, reason if need != [] else None, True
         return {"ok": True}
 
 
@@ -226,6 +245,7 @@ def seed_from_case(case):
 def make_handler(bank):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        timeout = 15
 
         def log_message(self, *a): pass
 
@@ -245,7 +265,12 @@ def make_handler(bank):
 
         def do_POST(self):
             path = self.path.split("?")[0].rstrip("/")
-            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            try: length = int(self.headers.get("Content-Length") or 0)
+            except ValueError: length = -1
+            if length < 0 or length > MAX_BODY:
+                self.close_connection = True
+                return self.send(413, {"ok": False, "error": "request body too large"})
+            raw = self.rfile.read(length)
             try: body = json.loads(raw or b"{}")
             except ValueError: body = {}
             if not isinstance(body, dict): body = {}

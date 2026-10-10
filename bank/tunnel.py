@@ -4,6 +4,7 @@
     ...
     stop(proc)                   # kills by pid
 """
+from collections import deque
 import re, subprocess, threading, time, urllib.error, urllib.request
 
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
@@ -20,28 +21,31 @@ def start(port, timeout=30, ready_path="/health", ready_timeout=60):
     and, when ready_path is set, answers through the tunnel. cloudflared logs to stderr; a thread keeps draining it."""
     proc = subprocess.Popen([CLOUDFLARED, "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, bufsize=1)
-    found, lines = [], []
+    try:
+        found, lines = [], deque(maxlen=50)
 
-    def drain():
-        for line in proc.stderr:
-            lines.append(line)
-            if not found and parse_url(line): found.append(parse_url(line))
-    threading.Thread(target=drain, daemon=True).start()
-    t0 = time.time()
-    while not found and time.time() - t0 < timeout and proc.poll() is None: time.sleep(0.2)
-    if not found:
-        stop(proc)
-        raise RuntimeError("cloudflared printed no trycloudflare.com URL within %d s:\n%s" % (timeout, "".join(lines[-15:])))
-    url = found[0]
-    if ready_path:
+        def drain():
+            for line in proc.stderr:
+                lines.append(line)
+                if not found and parse_url(line): found.append(parse_url(line))
+        threading.Thread(target=drain, daemon=True).start()
         t0 = time.time()
-        while True:      # the hostname takes a few seconds to resolve and route
-            try:
-                urllib.request.urlopen(urllib.request.Request(url + ready_path, headers={"user-agent": "Mozilla/5.0 (bank-tunnel)"}), timeout=5).read()
-                break
-            except (urllib.error.URLError, OSError):
-                if time.time() - t0 > ready_timeout: stop(proc); raise RuntimeError(f"{url} did not answer within {ready_timeout} s")
-                time.sleep(1)
+        while not found and time.time() - t0 < timeout and proc.poll() is None: time.sleep(0.2)
+        if not found:
+            raise RuntimeError("cloudflared printed no trycloudflare.com URL within %d s:\n%s" % (timeout, "".join(list(lines)[-15:])))
+        url = found[0]
+        if ready_path:
+            t0 = time.time()
+            while True:      # the hostname takes a few seconds to resolve and route
+                try:
+                    urllib.request.urlopen(urllib.request.Request(url + ready_path, headers={"user-agent": "Mozilla/5.0 (bank-tunnel)"}), timeout=5).read()
+                    break
+                except (urllib.error.URLError, OSError):
+                    if time.time() - t0 > ready_timeout: raise RuntimeError(f"{url} did not answer within {ready_timeout} s")
+                    time.sleep(1)
+    except BaseException:
+        stop(proc)
+        raise
     return url, proc
 
 
