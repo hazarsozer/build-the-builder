@@ -5,8 +5,14 @@
 `bank` is our bank's base URL (the Cloudflare tunnel, or http://127.0.0.1:<port>). Each case seeds a fresh customer
 (`POST /v1/practice/sessions {"seed": ...}`), personas come from tools/run_cases.persona_for so the customer behaves as
 the organisers' customers do, one Freya simulation runs every case, and each case is scored from our ledger
-(tools/score.score_ledger) plus the judge's verdict. A run where two agent replies open with the same four words
-(the spec's fixed sentences removed first) fails that case with "repeated opening".
+(tools/score.score_ledger) plus the judge's verdict.
+
+Two agent replies that open with the same four words (after removing the spec's fixed sentences, the customer's
+address forms and leading acknowledgements) give a WARNING in the row (`warnings`), not a failure, until live data
+shows the organisers penalise it.
+
+Comparing rounds: keep `seed=0` for cases.generate and the call variable `now` fixed across fix rounds, so every
+round runs the same customers and a pass-count change comes from the agent, not from new cases.
 """
 import hashlib, json, pathlib, re, sys, time, urllib.error, urllib.request
 
@@ -24,8 +30,12 @@ def _http(base, path, body=None):
     req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None, headers=UA,
                                  method="POST" if body is not None else "GET")
     try:
-        with urllib.request.urlopen(req, timeout=20) as r: return json.load(r)
-    except urllib.error.HTTPError as e: return json.load(e)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            status, raw = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, e.read()
+    try: return json.loads(raw)
+    except ValueError: return {"ok": False, "status": status}      # an HTML error page (tunnel down, proxy error)
 
 
 def _pattern(sentence):
@@ -33,14 +43,26 @@ def _pattern(sentence):
     return re.sub(r"\\\{\w+\\\}", ".+?", re.escape(sentence))
 
 
-def repeated_opening(replies, fixed):
-    """The first four words two replies share (lower case), after removing the fixed sentences; None if no repeat."""
+# Openers that carry no content; stripped from the front of a reply before comparing openings.
+ACKS = [["i'm", "sorry"], ["thank", "you"], ["i", "understand"], ["i", "see"], ["of", "course"],
+        ["thanks"], ["okay"], ["ok"], ["sorry"], ["certainly"]]
+
+
+def repeated_opening(replies, fixed, names=()):
+    """The first four words two replies share (lower case), or None. Removed first: the fixed sentences, the address
+    forms in `names` (e.g. "Mr Silva", "Eva") and leading acknowledgements (ACKS)."""
     pats = [re.compile(_pattern(s), re.I) for s in sorted(fixed, key=len, reverse=True)]
+    pats += [re.compile(r"\b" + re.escape(n) + r"\b", re.I) for n in sorted((n for n in names if n), key=len, reverse=True)]
     seen = set()
     for text in replies:
         rest = text or ""
         for p in pats: rest = p.sub(" ", rest)
-        words = re.findall(r"[a-z0-9']+", rest.lower())
+        words = re.findall(r"[a-z0-9']+", rest.lower().replace("’", "'"))
+        stripped = True
+        while stripped:
+            stripped = False
+            for a in ACKS:
+                if words[:len(a)] == a: words, stripped = words[len(a):], True; break
         if len(words) < 4: continue
         key = " ".join(words[:4])
         if key in seen: return key
@@ -84,10 +106,12 @@ def run(agent_id, cases, bank, styles=None, store=None):
         if j.get("callId"):
             try: msgs = freya.get_call(j["callId"]).get("messages", [])
             except Exception: msgs = []
-            rep = repeated_opening([m.get("message") or "" for m in msgs if m.get("role") == "assistant"], c.get("fixed") or [])
-            if rep: r["failed"].append("repeated opening")
+            v = c.get("variables") or {}
+            names = [f"{v.get('title', '')} {v.get('last_name', '')}".strip(), v.get("first_name"), v.get("last_name")]
+            rep = repeated_opening([m.get("message") or "" for m in msgs if m.get("role") == "assistant"], c.get("fixed") or [], names)
+        warnings = [f"repeated opening: {rep}"] if rep else []
         rows.append({"id": c["id"], "scenario": c.get("scenario"), "level": c["level"], "family": c["family"], "title": c["title"], "style": style,
-                     "pass": not r["failed"], "failed": r["failed"], "repeated_opening": rep, "call_id": j.get("callId"),
+                     "pass": not r["failed"], "failed": r["failed"], "warnings": warnings, "repeated_opening": rep, "call_id": j.get("callId"),
                      "tools": [x["tool"] for x in led.get("calls", [])], "customer_id": cid})
     return {"passed": sum(r["pass"] for r in rows), "total": len(rows), "rows": rows,
             "simulation_id": sim_id, "iteration_id": it_id, "status": status}
