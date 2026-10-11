@@ -2,7 +2,19 @@
 
 Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date while the successor session, dev-2d ("builder orchestrator 2"), works overnight.
 
-## 0. Check this first (Sun 14:20, orchestrator-3)
+## 0. Check this first (Sun 15:30, orchestrator-3)
+
+- **Your call at 15:30:** no hard freeze at 16:00; keep measuring. **Hard freeze 19:00** (crash fixes only after). If nothing new has come in by then, the default is ours.
+- **Evidence so far:**
+
+  | | Brief A | Brief B | Under today's outage |
+  |---|---|---|---|
+  | Ours (gate-green-5 + A23) | 10/10 at 3 runs | 3/3 at 3 runs | budgeted builds; A23 retries Freya errors |
+  | Fallback | 10/10 at 3 runs | not tested | bench `insurance`: timed out after 1 h, no output (it competed for the slot) |
+- **`builder` @ 925ce08** = gate-green-5 + A22 + A23 + stderr fix, 1069 tests.
+- **A24** (branch `a24`, reviewed): its gate is running (Brief B now, then Brief A). Freya keeps failing to start simulations (504s), and three Brief A attempts were lost to it.
+
+Earlier (14:20):
 
 - **Freya staging has been flaky since ~13:00** (504s, 503 "API key validation temporarily unavailable"; your login showed "service unavailable"). It cost the bench ~45 min and killed one build (`sme`: final save got a 503).
 - **Three new fixes, all Opus-reviewed, on branch `a24` @ b6eb689 (1096 tests). Not merged yet:**
