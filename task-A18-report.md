@@ -85,3 +85,33 @@ The corpus-word test passes.
   the negotiate prompt before success. That is the A12/A17 area.
 - Possible overlap with A17: compile.py (event_values, support_nodes, system_prompt/build), multi.py (after_record,
   WRAP_CODE), lint.py, cases.py, spec_schema.json/extract.md/spec-guide.md.
+
+## Fix round 1 (commits 05e7a7f..790ddbc)
+1. **after_record routing.** The step now routes the same events the negotiate step does, from `stage_events("negotiate")`:
+   - `transfer`: goes to the transfer node.
+   - `insist_once_then_transfer` (human): `<id>_first_request` and `<id>_insists`, as at the read-back. The step uses
+     `ask_once_nodes("after_record", ...)` (after_record was added to EXTRACT_VAR/EXTRACT_DEFAULT). Insisting transfers;
+     anything else goes back to after_record, which is now `on_enter_first_entry_only`, so the recorded sentence is not repeated.
+   - `offer_transfer_else_close` (hardship): `support_nodes(ev, t, after="after_record_done")` builds its own
+     `<id>_offer_after_record` and `<id>_hold_after_record` nodes. A yes transfers (close `<id>_transfer`). Every other
+     reply, a named payment or the cap goes to after_record_done. The negotiation is not reopened (no mp_phase write)
+     and it never reaches the else-close.
+
+   On every transfer the recorded promises stay and no notes are written. Only `nothing` (no / thanks / goodbye) or the
+   turn cap goes to after_record_done. Any other reply is answered in place. The step is built when negotiate has any of
+   the three event kinds. Tests: human ask-once then transfer or back, hardship offer then transfer or after_record_done,
+   and the build gate per event kind. The outage harness got an entry state for nodes reached only through after_record.
+2. **Offer step order.** When the fixed sentence is the offer question, the "cannot offer" step comes before it, so the
+   turn ends on the question. Without a question the order is unchanged (say, cannot-offer, offer). Tested.
+3. **record\* before success.** `lint.safe_pre_success` rephrases "a/the/your... recorded X" -> "a X", "have recorded"
+   -> "have", "is (already) recorded" -> "is (already) noted", and any other record\* -> note\*.
+   `compile.safe_before_success` applies it to the engine line and to every quoted sentence of the opening, identity and
+   negotiate steps (the lint 1b scope), so it covers change_note in both negotiate prompts. It does not touch
+   `opening.first_sentence` when verbatim. after_record (after success) keeps the brief's change_note as written.
+   - Lint with no errors on all 12 bench specs in results/bench/*/, all 7 fixtures and spec-a/spec-b (bands3, calendar,
+     multi-raw, raw-a, raw-decoy and sme failed before).
+   - spec-a/spec-b compiled output is identical with or without the pass (tested).
+4. **Budget.** test_multi budgets went from 5500 to 5800 (both assertions). spec-a stays at 4800.
+
+Suite: 797 passed, 6 skipped.
+Fix-round concern: in the after-recording support offer, a named payment ends the call like a decline (no new promise is taken after recording).
