@@ -1,6 +1,34 @@
 # Our builder
 
-A builder reads one or more bank briefs and creates a phone agent on Freya. This one turns the brief into a
+This repo holds two builders. Both read an organisation's documents and create a phone agent on Freya.
+
+| | `builder/` (main, semi-deterministic) | `fallback/` (agentic) |
+|---|---|---|
+| How | LLM fills a validated policy spec; plain code compiles the workflow | a Claude agent reads the documents and writes the workflow itself, with our lint, helpers and test tools |
+| Built for | the kit's final as announced: "the same kind of call… the seven tool names stay the same" | a backup in case the main builder fell short on the final |
+| Run | `python3 builder/build.py <case_folder> <mock_url>` | `uv run python fallback/agent_builder.py <case_folder> <mock_url>` |
+
+## The final (2026-10-11): what was submitted
+
+The final case was a different call type from the practice (a Turkish inbound statement-debt line, seven new services,
+a prose service contract, no OpenAPI file). The main builder could not express it and built nothing; its run is kept
+unedited in `traces/final-main-builder.{log,jsonl,md}`. The submitted agent was made by the **fallback builder**:
+
+- Command: `uv run python fallback/agent_builder.py final/FreyaBank-Ekstre-Borc/ https://freya-bank-mock.pages-placeholder.workers.dev`
+  (needs `set -a; source env.sh; set +a` first; the case folder itself is not in the repo).
+- Output: `submission/final-freyabank-ekstre-borc.workflow.json` (exported with `freya.export_workflow`, no manual
+  edits). Trace: `traces/final.jsonl` (the full agent session log) and `traces/final.log` (everything it printed).
+- The only builder change after the final opened is commit `4c769a6`: the fallback accepts `<case_folder> <mock_url>`,
+  converts every document with `builder/doctext.py`, takes the tools from the case's own service contract at the mock
+  URL, tests on the case's own test customers (`fallback/case_sim_cli.py`) and exports. Nothing from the case is
+  written into the builder.
+- Our mock of the bank's services is `final-mock/` (Cloudflare Worker, table-driven from the case's test customers;
+  `final-mock/parity.py` replays every answer). Deploy: `cd final-mock && pnpm dlx --allow-build=workerd
+  --allow-build=esbuild wrangler deploy`.
+
+## The main builder
+
+The main builder turns the brief into a
 validated policy spec with LLM sessions, then compiles the spec into a workflow with plain code. It tests the
 agent against a mock bank we run ourselves, and exports the workflow.
 
@@ -110,10 +138,18 @@ Tests marked `live` call real services and run only on request (for example `RUN
 `fallback/agent_builder.py` is the kit's example agentic builder, hardened: no MCP servers, reads of `env.sh` and
 `.env*` denied, and output scrubbed. It uses the skill `.claude/skills/build-phone-agent-v2` and our tested parts.
 `fallback/lint_cli.py` lints a workflow file without a spec, and `fallback/selftest_cli.py` runs a case file against a workflow file on our bank.
+`fallback/case_sim_cli.py` runs the agent's own test cases (call variables + customer script + checks) in one Freya
+simulation whose tools reach the case's mock.
 
 ```bash
-uv run python fallback/agent_builder.py <brief files> [--dry]
+uv run python fallback/agent_builder.py <brief files> [--dry]          # a practice brief + the kit's tool API
+uv run python fallback/agent_builder.py <case_folder> <mock_url>       # a case folder with its own service contract
 ```
+
+In case-folder mode it converts every document to text under `out/<slot>/docs/`, tells the agent the slot and the mock
+base URL (the skill's "Case folder" section applies), and after the agent finishes exports the slot's workflow to
+`submission/<slot>.workflow.json`, records the workflow id, agent id, steps and tool URLs in the trace, and exits 1
+unless every tool URL is the mock. Slot = `final-<folder name>`.
 
 ## Bench
 

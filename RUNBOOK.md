@@ -1,5 +1,11 @@
 # Sunday runbook: hidden briefs, 20:00 to 23:00 (Istanbul)
 
+> **What actually happened (2026-10-11):** the final was one case folder of documents with a prose service contract
+> and our own Cloudflare Worker mock, a different call type from the practice. The steps below (main builder) were
+> run and built nothing (`traces/final-main-builder.*`). The submitted run used the fallback builder:
+> `uv run python fallback/agent_builder.py <case_folder> <mock_url> 2>&1 | tee traces/final.log`, then the secret scan
+> below on `traces/` and `submission/`, then submission.json with that command. See README "The final".
+
 The rules that bind this run (kit README, "The final" and "Rules"):
 - One unattended builder run per final brief, at most 30 minutes, with no manual step. We may re-run and submit any one run, together with that run's trace.
 - After 20:00, only crash fixes go into the builder. Nothing from a final brief may go in: no rule, no value, no name.
