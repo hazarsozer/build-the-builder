@@ -716,6 +716,7 @@ if words:
 for w in failed:
     said.append(FAIL_SAY + ' This concerns your ' + w + '.')
 vars['mp_said'] = ' '.join(x for x in said if x).strip()
+vars['mp_recorded'] = 'yes' if words else 'no'
 '''
 
 
@@ -911,6 +912,49 @@ class Multi:
                 trans.append(go(c.support_nodes(ev, t), "Support offer: " + eid, cond_any(eq("rb_answer", eid))))
         return values, desc, trans
 
+    def after_record(self, nodes):
+        """A transfer request after promises were recorded (recorded promises stay, the call is transferred, no notes):
+        the recorded sentence is spoken in a conversation step that asks whether there is anything else, before any
+        note is written. Without it the recorded sentence and the goodbye were one engine turn, so a request made after
+        the promise was recorded could never be heard. Only built when negotiate has a transfer event."""
+        c = self.c
+        evs = [e for e in c.stage_events("negotiate") if e["action"] == "transfer"]
+        if not evs:
+            return
+        values, desc, trans = [], [], []
+        for ev in evs:
+            values.append(ev["id"])
+            trig = ev["trigger"].rstrip(". ")
+            desc.append("%s: %s." % (ev["id"], trig if trig.lower().startswith("the customer ") else "the customer " + trig))
+            t = c.transfer_to(ev["queue"], c.close_key(ev["id"]), ev["id"])
+            trans.append(go(t, "After recording: " + ev["id"], cond_any(eq("ar_answer", ev["id"]))))
+        wrap = nodes["wrap_recorded"]
+        wrap["transitions"].insert(0, go("after_record", "Promises recorded: ask whether there is anything else",
+                                         cond_any(eq("mp_recorded", "yes"))))
+        first = "note_1" if self.notes_on else "finish"
+        nodes["after_record_done"] = code_node(
+            "after_record_done", "vars['mp_said'] = ''\n", "finish",
+            [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else [])
+        change = self.s["confirmation"].get("change_note")
+        nodes["after_record"] = {
+            "name": "after_record", "node_type": "conversation",
+            "on_enter": {"type": "tts", "text": "{{mp_said}} Is there anything else I can help you with?"},
+            "task_message": ("You just told the customer which promises are recorded and asked whether there is anything else. "
+                             "The negotiation is over: never propose an amount, a date or a plan. "
+                             + ("If they ask to change or cancel a recorded promise, say: \"%s\" " % change if change else "")
+                             + "If they ask a question, answer it in one sentence, then ask whether there is anything else. "
+                               "No tool call is allowed in this step."),
+            "extraction_schema": [{
+                "name": "ar_answer", "type": "string", "min_confidence": 0.6,
+                "enum_values": ["pending", "nothing"] + values + ["question", "other"],
+                "description": " ".join(["The customer's LATEST message, a reply to \"Is there anything else I can help you with?\"."]
+                                        + desc + ["question: they only ask a question.",
+                                                  "nothing: no, nothing else, thanks, goodbye.",
+                                                  "other: anything else.", "pending: no reply yet."])}],
+            "max_node_turns": 3, "max_turn_transition": "after_record_done",
+            "transitions": trans + [go("after_record_done", "Nothing else",
+                                       cond_any(eq("ar_answer", "nothing"), eq("ar_answer", "other")))]}
+
     def build(self, nodes):
         c = self.c
         # records
@@ -979,6 +1023,7 @@ class Multi:
         # wraps; a turn cap, goodbye or "nothing to confirm" after a support offer ends with that event's wrap (A10)
         c.latch_gate("wrap_done")
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
+        self.after_record(nodes)
         refused = c.events.get("refused") or {}
         nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
                                        fallback=(refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note))
