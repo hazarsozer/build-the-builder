@@ -205,7 +205,10 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 - [ ] A12, in review: the date verdict for a single product moves into code, through a check_date tool. This fixes PUB-07, where the customer said "Monday the twenty-sixth" and the agent offered 2 Nov.
 - [x] **Dress rehearsal on Brief A+B, on `gate-green-2`:** the full builder exported in 631 s, using the extracted spec and the full self-test. **PUB-B on that agent, 3 runs: 3/3.**
 - [x] A13, merged (`builder` @ 29369d5, 606 tests): removes a false "account" check that forced an unneeded fix round. This should cut about 3.5 min from each build.
-- [ ] A12, reviewed clean and now on its live gate: date checks for a single product move into code, and the create_promise guard now fails closed. Two security flags required that.
+- [x] A12 (date checks for a single product in code; the promise guard fails closed): 5 fix rounds, final review clean.
+  - Gate on an earlier A12 build, 3 runs: **PUB-A 10/10, PUB-B 2/3.** The PUB-12 run had the right records, but the judge failed it: the model refused one product without making it any offer.
+  - Fix A14 (a refusal counts only after an offer) is in progress.
+  - The A12 final gate (a12c) is pending, and the merge waits for the bench.
 - [ ] Bench over the 10 test briefs
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
 - [ ] Customer styles at 3 runs, different "today" dates, variance at 5 runs
