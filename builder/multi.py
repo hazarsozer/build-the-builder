@@ -20,6 +20,10 @@ a post-hook sees vars but not <tool>_args.
 Verified 11 Oct (chat-API probe, call 26dc5ce1): SET_POST's rewrite of result['data'] is the tool result the model
 reads (it spoke a token that existed only in what_to_do_next). A code_exec tool returns data null instead, so the
 model never sees a rejection: api is the default. A non-2xx response is a function_call_error and skips the post-hook.
+Body leaves need a {{sp_<field>}} default to be model-filled: without one only customer_id was sent (regate-a9-B).
+Verified 11 Oct (chat-API probe, call b17bfc2f, seeded and verified PUB-13 customer): the model's product_id, outcome,
+amount and date reach config['body']; the pre-hook rejected a date after the deadline, then stored the product as agreed
+on its deadline in mp_state; the model spoke both answers (the deadline, then the next product's attempt 1).
 """
 from builder.lib import dates, embed, money
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
@@ -28,6 +32,7 @@ SLOTS = 3          # products per call the engine can record / note (the brief a
 SET_TOOL = "set_product"
 SET_MODE = "api"   # "api" (get_account route + pre/post hooks; the model reads what_to_do_next) or "code" (code_exec, data null)
 PHASE = "mp_phase"
+ARG_VAR = "sp_"    # set_product body field f defaults to {{sp_f}}; no sp_* variable is ever set, so the model fills it
 PROMISE_FIELDS = ("product_id", "amount", "date")
 
 
@@ -629,7 +634,10 @@ class Multi:
         desc = ("Report a product's answer. CALL it after EVERY refusal of an offer (refused, before you speak), and when a product "
                 "is agreed or settled (agreed, " + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
         if mode == "api":
-            return self.c.tool(SET_TOOL, props, ["product_id", "outcome"], path="get_account", description=desc,
+            # api_call body leaves are model-filled only through a {{var}} default naming a variable that is never set
+            # (docs/tools-and-code.md "One key decides"); a leaf without default never reached the request (regate-a9-B)
+            body = {k: dict(v, default="{{%s%s}}" % (ARG_VAR, k)) for k, v in props.items()}
+            return self.c.tool(SET_TOOL, body, ["product_id", "outcome"], path="get_account", description=desc,
                                mapping=[{"path": "data.phase", "variable": PHASE}], pre=head + API_ARGS + SET_PRE, post=SET_POST)
         code = head + CODE_ARGS + SET_PRE + CODE_RESULT
         assert_no_braces(code, SET_TOOL)

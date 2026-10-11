@@ -467,7 +467,39 @@ def test_set_product_code_needs_no_datetime_and_no_braces():
     assert "datetime" not in code and "{{" not in code and "}}" not in code
     props = t["function"]["parameters"]["properties"]["body"]["properties"]
     for k in ("product_id", "outcome", "amount", "date"):
-        assert "default" not in props[k], k
+        # fix round 3: a body leaf reaches the model only through a {{var}} default whose variable is never set
+        assert props[k]["default"] == "{{sp_%s}}" % k, k
+
+
+def test_fix3_multi_prompt_noted_only_after_a_noted_result():
+    """regate-a9-B: after "Unknown outcome" the model said the promises were noted and read them back itself."""
+    w = wf()
+    t = w["nodes"]["negotiate"]["task_message"]
+    assert 'Say a product is noted only after a result that starts with "Noted"' in t
+    assert '"NOT accepted", "Not counted yet" or any other result, nothing is noted' in t
+    assert "Never read promises back or ask for confirmation yourself." in t
+    assert "unless the tool result says so" in w["system_prompt"]
+    s = Sim("PUB-13")
+    assert s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-20").startswith("Noted")
+    assert s.say(product_id="p2", outcome="bogus").startswith("Unknown outcome")
+
+
+def test_fix3_no_sp_variable_is_ever_set():
+    """A set sp_* variable would be baked at node entry and the model would never fill that field."""
+    w = wf()
+    for name, n in w["nodes"].items():
+        for e in n.get("extraction_schema") or []:
+            assert not e["name"].startswith("sp_"), name
+        for t in (n.get("tools") or []) + (n.get("pre_actions") or []):
+            for m in t.get("response_mapping") or []:
+                assert not m["variable"].startswith("sp_"), name
+            for h in ("pre_process_code", "post_process_code"):
+                assert "vars['sp_" not in (t.get(h) or ""), name
+            code = t["function"]["parameters"]["properties"].get("code", {}).get("default", "")
+            assert "vars['sp_" not in code, name
+        for m in n.get("response_mapping") or []:
+            assert not m["variable"].startswith("sp_"), name
+    assert not any(k.startswith("sp_") for k in Sim("PUB-11").v)
 
 
 def test_a9_set_product_is_api_mode_and_model_reads_the_answer():
@@ -732,7 +764,7 @@ def test_notes_in_get_account_order():
 def test_multi_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
     # A9 raised it from 4600 for the per-refusal set_product call and the day-number and cut-off rules.
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 5300
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 5500
 
 
 def test_spec_b_hardship_conflict_matches_code():
