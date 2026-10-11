@@ -1617,7 +1617,7 @@ HOW TO GET A PROMISE
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else [])
-        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else."]
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") is never cannot_pay_or_too_much: it is continue."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         retries = conf.get("retries", 1)
@@ -1740,7 +1740,7 @@ HOW TO RUN THE CALL
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else []) + ["goodbye"]
-        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else."]
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") is never cannot_pay_or_too_much: it is continue."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         sdesc.append("goodbye: they only say goodbye or end the conversation (\"thank you, goodbye\"), with no date, amount, refusal or question.")

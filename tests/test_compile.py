@@ -443,6 +443,14 @@ def test_a9_day_number_and_cut_off_rules_in_both_templates():
         assert '"Monday the."' in t and 'say only "Go on."' in t and "uses no attempt" in t
 
 
+def test_fix1_cut_off_fragment_is_not_cannot_pay_in_extraction():
+    """Fix round 1, item 5: neg_event never reads a cut-off fragment as cannot_pay_or_too_much."""
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        ex = [e for e in w["nodes"]["negotiate"]["extraction_schema"] if e["name"] == "neg_event"][0]
+        assert "cannot_pay_or_too_much" in ex["enum_values"]
+        assert '"you tell me what the"' in ex["description"] and "is never cannot_pay_or_too_much: it is continue" in ex["description"]
+
+
 def test_a9_date_only_takes_the_current_attempt_amount():
     """PUB-04: a date accepted without an amount gets the current offer's amount, no open "what amount?"."""
     for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
