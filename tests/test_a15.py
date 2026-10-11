@@ -98,3 +98,72 @@ def test_renamed_no_promise_outcome_is_used():
 def test_ins_compiles_lint_clean():
     w = C(INS, INS_OA, base_url="https://bank.example/v1")
     assert [p for p in lint(w, INS) if not p.startswith("warning:")] == []
+
+
+# ---------------------------------------------------------------- 2. the brief's wrong-answer limit, counted in the hook
+
+def _verify(w):
+    n = w["nodes"]["identity"]
+    return [t for t in n["tools"] if t["function"]["name"] == "verify_identity"][0]
+
+
+def _answer(t, v, field, answer, data):
+    """One verify_identity call: the pre-hook on the model's body, then the post-hook on the bank's result."""
+    exec(t["pre_process_code"], {"vars": v, "config": {"url": "x", "body": {"field": field, "answer": answer}}})
+    r = {"status": "success", "data": dict(data)}
+    exec(t["post_process_code"], {"vars": v, "result": r})
+    return r["data"]
+
+
+WRONG = {"ok": True, "verified": False, "all_verified": False}
+
+
+def test_ids_two_wrong_postcodes_end_the_check_though_the_bank_allows_more():
+    """IDS-03: per_question, max 2. Our bank counts 3 in total and said wrong_answers_left 1 after two wrong postcodes."""
+    w = C(IDS, IDS_OA, base_url="https://bank.example/v1")
+    t, v = _verify(w), {"now": "2026-10-29T10:15"}
+    d = _answer(t, v, "postcode", "BS3 4NF", dict(WRONG, wrong_answers_left=2))
+    assert d["wrong_answers_left"] == 1 and "SAME question" in d["what_to_do_next"]
+    d = _answer(t, v, "postcode", "BS4 3NE", dict(WRONG, wrong_answers_left=1))
+    assert d["wrong_answers_left"] == 0 and "check has ended" in d["what_to_do_next"]
+    fail = [x for x in w["nodes"]["identity"]["transitions"] if x["target_node"] == "close_failed"][0]
+    assert "id_left" in json.dumps(fail)
+
+
+def test_ids_per_question_one_wrong_on_each_is_fine():
+    """IDS-04 / IDS-05: one wrong postcode, then the year: the year keeps its own two answers."""
+    w = C(IDS, IDS_OA, base_url="https://bank.example/v1")
+    t, v = _verify(w), {"now": "2026-11-06T16:00"}
+    d = _answer(t, v, "postcode", "BS3 4NF", dict(WRONG, wrong_answers_left=2))
+    assert d["wrong_answers_left"] == 1
+    d = _answer(t, v, "postcode", "BS3 4NE", {"ok": True, "verified": True, "all_verified": False, "wrong_answers_left": 2})
+    assert "correct" in d["what_to_do_next"]
+    d = _answer(t, v, "birth_year", "1983", dict(WRONG, wrong_answers_left=1))
+    assert d["wrong_answers_left"] == 1 and "SAME question" in d["what_to_do_next"], d
+    d = _answer(t, v, "birth_year", "1982", dict(WRONG, wrong_answers_left=0))
+    assert d["wrong_answers_left"] == 0
+
+
+def test_hints_and_unreadable_answers_are_not_counted():
+    w = C(IDS, IDS_OA, base_url="https://bank.example/v1")
+    t, v = _verify(w), {"now": "2026-10-29T10:15"}
+    for _ in range(3):
+        d = _answer(t, v, "postcode", "BS3 4NF", dict(WRONG, wrong_answers_left=2, hint="partial_postcode"))
+        assert d["wrong_answers_left"] == 2
+    for _ in range(3):
+        d = _answer(t, v, "postcode", "BS3 4NF", {"ok": False, "verified": False, "wrong_answers_left": 2})
+        assert d["wrong_answers_left"] == 2
+    d = _answer(t, v, "postcode", "BS3 4NF", dict(WRONG, wrong_answers_left=2))
+    assert d["wrong_answers_left"] == 1
+
+
+def test_total_scope_counts_across_questions():
+    """Brief A shape (3 in total): a bank that never lowers wrong_answers_left still ends at the third wrong answer."""
+    w = C(INS, INS_OA, base_url="https://bank.example/v1")
+    t, v = _verify(w), {"now": "2026-10-26T10:00"}
+    d = _answer(t, v, "date_of_birth", "1 March 1980", dict(WRONG, wrong_answers_left=9))
+    assert d["wrong_answers_left"] == 2
+    d = _answer(t, v, "postcode", "LS6 2TQ", dict(WRONG, wrong_answers_left=9))
+    assert d["wrong_answers_left"] == 1
+    d = _answer(t, v, "postcode", "LS6 3QT", dict(WRONG, wrong_answers_left=9))
+    assert d["wrong_answers_left"] == 0 and "check has ended" in d["what_to_do_next"]

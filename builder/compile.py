@@ -670,6 +670,7 @@ try:
     b = config.get('body')
     if isinstance(b, dict):
         fld = str(b.get('field') or '')
+        vars['id_field_cur'] = fld
         q = FORMATS.get(fld)
         a = str(b.get('answer') if b.get('answer') is not None else '').strip()
         part = str(vars.get('id_partial') or '').strip()
@@ -741,6 +742,18 @@ try:
             vars['id_partial_spent'] = str(vars.get('id_partial_seen') or '')
             vars['id_partial'] = ''
             vars['id_partial_field'] = ''
+        if not (incomplete or technical) and d.get('verified') is False and d.get('ok') is not False and d.get('all_verified') is not True \
+                and not (hint and hint in HINTS):
+            # A15: the brief's own limit (identity.max_wrong, wrong_scope), counted here; the bank's count wins when lower
+            key = 'id_wrong_' + (str(vars.get('id_field_cur') or '') if SCOPE == 'per_question' else 'all')
+            n = int(str(vars.get(key) or '0')) + 1
+            vars[key] = str(n)
+            own = max(MAX_WRONG - n, 0)
+            try:
+                left = min(int(left), own)
+            except Exception:
+                left = own
+            d['wrong_answers_left'] = left
         if incomplete or technical:
             pass
         elif d.get('all_verified') is True:
@@ -1930,7 +1943,8 @@ HOW TO GET A PROMISE
             next_q = "Say only: Thank you."
         not_yet = "Do not mention %s yet." % (join_or(self.s["opening"].get("banned_before_verify", []), "or") or "why you are calling")
         post = ("import json\n" + _const("HINTS", idn.get("non_counting_hints") or {}) + "UNREADABLE = %r\nNEXT_Q = %r\nNOT_YET = %r\n"
-                % (unreadable, next_q, not_yet) + VERIFY_POST)
+                % (unreadable, next_q, not_yet) + "MAX_WRONG = %d\nSCOPE = %r\n" % (idn["max_wrong"], idn.get("wrong_scope", "total"))
+                + VERIFY_POST)
         pre = "import json\n" + _const("FORMATS", {x["field"]: {k: v for k, v in x.items() if k in ("format", "length", "date_order")} for x in qs}) + VERIFY_PRE
         answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
