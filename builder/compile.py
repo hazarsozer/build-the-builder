@@ -21,7 +21,7 @@ import sys
 
 from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
-from builder import multi as multi_mod
+from builder import layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
                            cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
@@ -34,8 +34,6 @@ STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity
                "negotiate": {"create_promise"}, "any": set()}
 STAGE_TOOLS_ALL = set().union(*STAGE_TOOLS.values())
 PROMISE_FIELDS = ("product_id", "amount", "date")
-# Call variables every brief so far has; any other spec.call_variables entry is declared in test_variables.
-STANDARD_VARS = ("customer_id", "first_name", "last_name", "title", "now")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
@@ -2314,20 +2312,17 @@ HOW TO RUN THE CALL
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
-        test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
-        # call variables beyond the usual ones (e.g. a company name): declared with an empty default, so a call
-        # that does not pass one never speaks a raw placeholder
-        for name in self.s.get("call_variables", []):
-            if name not in STANDARD_VARS and name not in test_vars:
-                test_vars[name] = ""
-        return {
+        wf = {
             "initial_node": "setup",
             "system_prompt": self.system_prompt(),
             "nodes": n,
             "global_nodes": {},
             "tools": [self.close_call_tool()],
-            "test_variables": test_vars,
         }
+        # dashboard presentation only (builder/layout.py): samples for the call variables, node positions
+        wf["test_variables"] = layout.sample_call_variables(self.s, wf)
+        layout.place(wf)
+        return wf
 
 
 def prune_unreachable(nodes, start):
