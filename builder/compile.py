@@ -805,12 +805,22 @@ SUPPORT_TURNS_SEEN = 0
 
 # A10: identity's decline route. A message whose extracted answer parts are new (not the parts the last checked call
 # used, not the parts this gate already sent back) carries an answer: back to identity to check it, once per parts.
+# A21: a decline closes only after the one explanation was spoken (id_explain_said, read from the agent's own words,
+# kept once seen); before that it goes back to identity, which explains (a cut-off message read as a decline in
+# PUB-03/PUB-07 closed the call before any explanation).
 ID_DECLINE_GATE = r'''
+if str(vars.get('id_explain_said') or '') == 'yes':
+    vars['id_explained'] = 'yes'
 part = str(vars.get('id_partial') or '').strip()
 if part and part != str(vars.get('id_partial_spent') or '').strip() and part != str(vars.get('id_gate_part') or ''):
     vars['id_gate_part'] = part
     vars['id_event'] = 'continue'
     vars['id_gate'] = 'answer'
+elif str(vars.get('id_explained') or '') != 'yes' and int(str(vars.get('id_explain_n') or '0')) < 3:
+    # bounded on its own: a return to identity may restart the node's turn cap
+    vars['id_explain_n'] = str(int(str(vars.get('id_explain_n') or '0')) + 1)
+    vars['id_event'] = 'continue'
+    vars['id_gate'] = 'explain'
 else:
     vars['id_gate'] = 'close'
 '''
@@ -1914,8 +1924,9 @@ class _Compiler:
             'If the customer corrects themselves in the same message ("the 21st, sorry, I mean the 20th"): use the corrected value and call verify_identity once.',
             "Before all answers are verified: never say why you are calling. Never say %s, the product or an amount. "
             "Do not tell the customer how many wrong answers are left." % self.banned_words(),
-            "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time."
-            % q(idn["decline_explanation"]),
+            "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time. "
+            "Small talk is not a refusal: never explain for it; ask your question again in a few words." % q(idn["decline_explanation"]),
+            CUT_OFF,
         ]
         if self.id_fail:
             lines.append(ID_TOOL_FAIL)
@@ -2090,7 +2101,8 @@ HOW TO GET A PROMISE
             # identity once, so the answer is checked (a third wrong answer then closes as failed, not declined)
             gate = "id_decline_gate"
             self.nodes[gate] = code_node(gate, ID_DECLINE_GATE, self.close_key("declined"),
-                                         [go("identity", "The message carried an answer to check", cond_any(eq("id_gate", "answer")))])
+                                         [go("identity", "The message carried an answer to check, or the one explanation was not given yet",
+                                             cond_any(eq("id_gate", "answer"), eq("id_gate", "explain")))])
             for t in trans:
                 if t["target_node"] == self.close_key("declined") and not t.get("is_tool_call"):
                     t["target_node"] = gate
@@ -2112,8 +2124,12 @@ HOW TO GET A PROMISE
                 "description": " ".join(desc + ["continue: anything else, including a first refusal. A partial answer (only part of a date, "
                                                 "some of the digits), \"give me a second\", a self-correction or a question back is continue, never a refusal. "
                                                 "A message that gives an answer to the security question (in digits or in words, right or wrong) is continue, "
-                                                "never a decline, even if it also complains or asks what the call is about."]),
-            }, {
+                                                "never a decline, even if it also complains or asks what the call is about. "
+                                                "A message cut off mid-phrase, or only small talk with no refusal words, is continue, never declined."]),
+            }] + ([{
+                "name": "id_explain_said", "type": "string", "min_confidence": 0.6, "enum_values": ["no", "yes"],
+                "description": "yes if an earlier agent message in this conversation said %s. Otherwise no." % q(idn["decline_explanation"]),
+            }] if self.has("declined") else []) + [{
                 "name": "id_partial", "type": "string", "min_confidence": 0.5,
                 "description": ("The parts of the answer to the security question currently being asked, as said so far across the customer's "
                                 "messages, combined in the order said (e.g. \"14 March\" then \"1988\" gives \"14 March 1988\"; \"44\" then \"10\" gives \"4410\"). "
