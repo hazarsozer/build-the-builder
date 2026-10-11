@@ -386,7 +386,7 @@ def _refuse(st, b, clock):
             if q == cur:
                 why = 'no offer for it was made before this answer; a no before an offer uses no attempt.'
             else:
-                why = 'its offer is not made yet (it comes later in the order); this no uses no attempt.'
+                why = 'its offer is not made yet; this no uses no attempt.'
             if not P.get('tried') and not every:
                 P['no'] = True
             acks[q] = 'Not counted: ' + why

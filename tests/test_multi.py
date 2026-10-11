@@ -153,11 +153,13 @@ class Sim:
         assert self.v["account_state"] == "ok", self.v.get("account_error")
         self.t = _tool(self.w["nodes"]["negotiate"], "set_product")
         self.turn = 0
+        self.turns = True  # False: no turn variable (the hooks fall back to the batch counter)
 
     def next_turn(self):
         """A new customer message in negotiate: the platform's negotiate.total_turns (an int, chat-API probe 4c48412b)."""
         self.turn += 1
-        self.v["negotiate.total_turns"] = self.turn
+        if self.turns:
+            self.v["negotiate.total_turns"] = self.turn
 
     def run(self, node):
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
@@ -639,7 +641,7 @@ def test_fix1_refusal_before_any_offer_is_not_counted():
     p3 = load_state(s.v)["p"]["p3"]
     assert p3["status"] == "pending" and not p3.get("tried") and "Make attempt" not in msg
     # A14: no "call refused again" invitation; the instruction is the current product's (the credit card, attempt 1)
-    assert msg.startswith("The car loan: Not counted: its offer is not made yet (it comes later in the order); this no uses no attempt.")
+    assert msg.startswith("The car loan: Not counted: its offer is not made yet; this no uses no attempt.")
     assert "again" not in msg.split("Next is")[0] and "Next is the credit card ending 9015" in msg and "attempt 1 of its plan" in msg
     assert 'A "no" to the today question uses no attempt' in s.w["nodes"]["negotiate"]["task_message"]
     # the second report of the same no (the live call's escape) still counts nothing: the car loan was never offered
@@ -958,3 +960,167 @@ def test_a11_confirmed_product_is_never_noted_refused_by_any_wrap():
         exec(_code(s.w["nodes"][k]), {"vars": v})
         notes = {v["note%d_pid" % i]: v["note%d_reason" % i] for i in range(1, 4) if v.get("note_has_%d" % i) == "yes"}
         assert notes.get("p1") not in (None, "refused"), (k, notes)
+
+
+# ---------------------------------------------------------------- A14: a refusal counts only for the product the code named
+
+def _st(s, pid):
+    return load_state(s.v)["p"][pid]
+
+
+def _no_escape(msg):
+    """No result invites a second report of the same refusal (the escape the live call used on the car loan)."""
+    assert "Not counted yet" not in msg and "call set_product with outcome refused for it again" not in msg, msg
+    assert "If you already made attempt" not in msg, msg
+
+
+LIVE_A12B = ({"product_id": "p2", "outcome": "refused"},
+             {"product_id": "p3", "outcome": "refused"},
+             {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-15"})
+
+
+def test_a14_replay_live_call_01176716_every_product_gets_its_attempts():
+    """Gate a12b, PUB-12 (call 01176716): "I will pay the credit card tomorrow. I am not paying the personal loan or the
+    car loan." -> three parallel calls. Then two personal-loan offers refused; then the model reported the car loan
+    refused again in the same turn, without offering it: that call used to count (the car loan got no offer at all)."""
+    s = Sim("PUB-12")
+    res = s.batch(*LIVE_A12B)                                                       # turn 1: the today question's answer
+    assert _st(s, "p2").get("tried") is None and _st(s, "p3").get("tried") is None
+    assert _st(s, "p2")["no"] and _st(s, "p3")["no"] and _st(s, "p1")["status"] == "agreed"
+    for msg in res:
+        _no_escape(msg)
+        assert "The personal loan: Not counted: its offer is not made yet" in msg
+        assert "Next is the personal loan (product_id p2). The customer already said no to it before any offer" in msg
+        assert "make attempt 1 of its plan now: propose the full amount 1320.00" in msg
+    msg = s.say(product_id="p2", outcome="refused")                                 # turn 2: attempt 1 refused
+    assert "attempt 1 of 2 for the personal loan" in msg and "Make attempt 2 now: propose the lower amount 440.00" in msg
+    msg = s.say(product_id="p2", outcome="refused")                                 # turn 3: attempt 2 refused
+    assert "last attempt for the personal loan" in msg
+    assert "Next is the car loan (product_id p3)" in msg and 'I understand you said no to the car loan' in msg
+    assert "make attempt 1 of its plan now: propose the full amount 140.00" in msg
+    msg = s.say(product_id="p3", outcome="refused", same_turn=True)                 # the live call's extra call: no count
+    _no_escape(msg)
+    assert _st(s, "p3")["status"] == "pending" and _st(s, "p3").get("tried") is None and s.v["mp_phase"] == "open"
+    assert msg.startswith("The car loan: Not counted: no offer for it was made before this answer")
+    assert "make attempt 1 of its plan now: propose the full amount 140.00" in msg
+    msg = s.say(product_id="p3", outcome="refused")                                 # turn 4: the car loan's offer refused
+    assert "last attempt for the car loan" in msg and _st(s, "p3")["tried"] == 1 and _st(s, "p2")["tried"] == 2
+    assert s.v["mp_phase"] == "readback"
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")] and notes == [("p2", "refused"), ("p3", "refused")]
+    assert (outcome, reason) == ("promise", None)
+
+
+def test_a14_same_replay_without_the_turn_variable_uses_the_batch_counter():
+    """Offline / code mode: no negotiate.total_turns; the batch counter is the clock. Parallel siblings still never count."""
+    s = Sim("PUB-12")
+    s.turns = False
+    s.batch(*LIVE_A12B)
+    assert _st(s, "p2").get("tried") is None and _st(s, "p3").get("tried") is None
+    s.refuse("p2", 2)
+    assert _st(s, "p2")["tried"] == 2 and _st(s, "p3").get("tried") is None
+    s.refuse("p3", 1)
+    assert _st(s, "p3")["tried"] == 1 and s.v["mp_phase"] == "readback"
+
+
+def test_a14_parallel_duplicate_refusal_counts_once():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    res = s.batch({"product_id": "p2", "outcome": "refused"}, {"product_id": "p2", "outcome": "refused"})
+    assert _st(s, "p2")["tried"] == 1 and all("Make attempt 2 now" in m for m in res)
+    msg = s.say(product_id="p2", outcome="refused", same_turn=True)  # once more before the customer spoke: no count
+    assert _st(s, "p2")["tried"] == 1 and "Not counted: no offer for it was made before this answer" in msg
+
+
+def test_a14_refusal_of_a_later_product_mid_negotiation_keeps_the_current_one():
+    """A no about another product while one is being negotiated: no attempt, and the result's instruction is the
+    current product's (no invitation to report it again)."""
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")      # names p2 attempt 1
+    msg = s.say(product_id="p3", outcome="refused")
+    _no_escape(msg)
+    assert msg.startswith("The car loan: Not counted: its offer is not made yet; this no uses no attempt.")
+    assert "Next is the personal loan" in msg and "attempt 1 of its plan" in msg and _st(s, "p3").get("tried") is None
+    assert "I understand" not in msg  # the personal loan itself was never refused up front
+    msg = s.say(product_id="p2", outcome="refused")
+    assert "attempt 1 of 2 for the personal loan" in msg
+
+
+def test_a14_up_front_no_for_product_one_gets_its_attempt_one_acknowledged():
+    """Product 1 is named by the prompt for the today answer: a no in that answer uses no attempt."""
+    s = Sim("PUB-13")  # p1 credit card: early band, one attempt; p2 personal loan: late band, two
+    msg = s.say(product_id="p1", outcome="refused")
+    _no_escape(msg)
+    assert _st(s, "p1").get("tried") is None and "I understand you said no to the credit card ending 6604" in msg
+    assert "make attempt 1 of its plan now: propose the full amount 300.00" in msg
+    msg = s.say(product_id="p1", outcome="refused")
+    assert _st(s, "p1")["status"] == "refused" and "Next is the personal loan" in msg and "I understand" not in msg
+
+
+def test_a14_plain_no_then_prompt_offer_counts_on_the_next_turn():
+    """"I cannot pay today" needs no call: the prompt's attempt 1 of product 1 is refused on the next turn and counts."""
+    s = Sim("PUB-12")
+    s.next_turn()                                                   # the today answer, no set_product call
+    msg = s.say(product_id="p1", outcome="refused")                 # the credit card's attempt 1 refused
+    assert _st(s, "p1")["tried"] == 1 and "Make attempt 2 now" in msg
+
+
+def test_a14_pub11_and_pub13_sequences():
+    s = Sim("PUB-11")
+    s.next_turn()                                                   # "Cannot pay today."
+    s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-16")
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 220.0, "2026-10-16"), ("p2", 640.0, "2026-10-16"), ("p3", 75.0, "2026-10-16")] and notes == []
+    s = Sim("PUB-13")
+    s.next_turn()
+    s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-30")
+    assert "Friday 23 October 2026, because that is the latest date I can accept for it" in s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 300.0, "2026-10-30"), ("p2", 900.0, "2026-10-23")] and notes == [] and outcome == "promise"
+
+
+def test_a14_pub12_sequences_one_by_one():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.refuse("p2", 2)
+    s.refuse("p3", 1)
+    assert (_st(s, "p2")["tried"], _st(s, "p3")["tried"]) == (2, 1)
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")] and notes == [("p2", "refused"), ("p3", "refused")]
+
+
+def test_a14_up_front_paid_and_dispute_settle_at_once_in_parallel():
+    """Item 3: agreed / paid / dispute given up front settle the product immediately; each call writes only its own
+    product variable (A11 parallel safety)."""
+    s = Sim("PUB-12")
+    s.batch({"product_id": "p2", "outcome": "dispute"}, {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-15"},
+            {"product_id": "p3", "outcome": "paid"})
+    assert [_st(s, p)["status"] for p in ("p1", "p2", "p3")] == ["agreed", "dispute", "paid"]
+    assert sorted(set(k for w in s.batch_writes for k in w)) == ["mp_p1", "mp_p2", "mp_p3", "mp_seq"]
+    assert s.v["mp_phase"] == "readback"
+
+
+def test_a14_refused_all_counts_only_the_current_product():
+    s = Sim("PUB-12")
+    msg = s.say(product_id="ALL", outcome="refused")                # the today answer: nothing counted, no stance kept
+    assert all(_st(s, p).get("tried") is None and not _st(s, p).get("no") for p in ("p1", "p2", "p3"))
+    assert "Next is the credit card ending 9015" in msg and "attempt 1 of its plan" in msg
+    msg = s.say(product_id="ALL", outcome="refused")                # after attempt 1 of the credit card
+    assert (_st(s, "p1")["tried"], _st(s, "p2").get("tried"), _st(s, "p3").get("tried")) == (1, None, None)
+    assert "The credit card ending 9015: Refusal noted (attempt 1 of 2" in msg and "The personal loan: Not counted" in msg
+
+
+def test_a14_hooks_read_the_negotiate_turn_counter_and_the_prompt_says_so():
+    w = wf()
+    t = _tool(w["nodes"]["negotiate"], "set_product")
+    assert "TURNS = 'negotiate.total_turns'" in t["pre_process_code"] and "TURNS = 'negotiate.total_turns'" in t["post_process_code"]
+    assert w["nodes"]["negotiate"]["name"] == "negotiate"
+    for code in (t["pre_process_code"], t["post_process_code"]):
+        assert "Not counted yet" not in code and "If you already made attempt" not in code
+    task = w["nodes"]["negotiate"]["task_message"]
+    assert ("Only the product the last result (or step 1) told you to offer counts; report a no about another product too: "
+            "it uses no attempt.") in task
+    assert len(task) <= 5500
