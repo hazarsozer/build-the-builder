@@ -286,9 +286,21 @@ class Ctx:
 
     def deadline(self, p): return D.deadline(self.today, _band(self.spec, _late(self.spec, p))["deadline"], self.cal)
 
+    def today_open(self):
+        """False after negotiation.same_day_cutoff (HH:MM) on the case's clock: today can no longer be promised."""
+        cut = self.spec["negotiation"].get("same_day_cutoff")
+        return not (cut and len(self.now) >= 16 and self.now[11:16] >= cut)
+
+    def attempt(self, kind, dl):
+        """An attempt's date as the compiled plan computes it: a "today" past the cut-off is the next business day."""
+        d = D.attempt_date(self.today, kind, dl, self.cal)
+        if d == self.today and not self.today_open() and D.next_bd(d, self.cal) <= dl:
+            d = D.next_bd(d, self.cal)
+        return d
+
     def promise_day(self, p, kind="today"):
         dl = self.deadline(p)
-        d = D.attempt_date(self.today, kind, dl, self.cal)
+        d = self.attempt(kind, dl)
         return d if D.is_bd(d, self.cal) else min(D.next_bd(d, self.cal), dl)
 
     def say(self, s): return f'the agent says "{s}"'
@@ -327,7 +339,7 @@ def s_floor_after_too_much(c, **o):
     b = _band(c.spec, _late(c.spec, p))
     if not b["attempts"]: return None
     floor = _floor(c.spec, p)
-    d = D.attempt_date(c.today, b["attempts"][0], c.deadline(p), c.cal)
+    d = c.attempt(b["attempts"][0], c.deadline(p))
     n = c.spec["negotiation"]
     checks = [f"the lowest amount ({_money(floor)}) is offered once" + (f', with "{n["floor_offer"]["sentence_suffix"]}"' if n["floor_offer"].get("sentence_suffix") else ""),
               f"promise for {_money(floor)} on {_day(d)}"]

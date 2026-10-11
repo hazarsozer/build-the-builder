@@ -383,7 +383,9 @@ def weekday_text():
     return '\n'.join(out)
 
 
-try:
+'''
+
+ACCOUNT_MAIN = r'''try:
     products = [p for p in find_products()
                 if pfield(p, product_cfg_of(p, PRODUCTS), 'amount_field', 'past_due') not in (None, '')]
     if not products:
@@ -418,6 +420,60 @@ except Exception as e:
     vars['account_state'] = 'error'
     vars['account_error'] = str(e)[:200]
 '''
+ACCOUNT_DEFS = ACCOUNT_CODE
+ACCOUNT_CODE = ACCOUNT_DEFS + ACCOUNT_MAIN
+
+# final-review-2 I3: negotiation.same_day_cutoff in the account facts, added only when the spec sets one (between
+# ACCOUNT_DEFS and ACCOUNT_MAIN). After the cut-off a "today" attempt moves to the next business day (as check_date
+# and create_promise judge it), today leaves the allowed dates and the calendar says why.
+CUTOFF_DEFS = r'''
+TODAY_OPEN = not (CUTOFF and nowdt.strftime('%H:%M') >= CUTOFF)
+_attempt_date_any = attempt_date
+
+
+def attempt_date(t, kind, dl, cal):
+    d = _attempt_date_any(t, kind, dl, cal)
+    if d == today and not TODAY_OPEN and next_bd(today, cal) <= dl:
+        d = next_bd(today, cal)
+    return d
+
+
+_product_facts_any = product_facts
+
+
+def product_facts(p):
+    f = _product_facts_any(p)
+    if not TODAY_OPEN:
+        f['allowed'] = [x for x in f['allowed'] if x != today]
+    return f
+
+
+_calendar_text_any = calendar_text
+
+
+def calendar_text(dl):
+    t = _calendar_text_any(dl)
+    if TODAY_OPEN:
+        return t
+    return t.replace(' (today)', ' (today; it is after ' + CUTOFF + ', too late for a payment today)', 1)
+
+
+'''
+# after the account facts: the word "today" in the first ask is {{pay_day_text}} (the next business day after the cut-off)
+CUTOFF_MAIN = r'''
+try:
+    nb = next_bd(today, CAL)
+    vars['pay_day_text'] = 'today' if TODAY_OPEN else 'on ' + say_date(nb)
+    if not TODAY_OPEN and vars.get('first_ask_text'):
+        vars['first_ask_text'] = re.sub(r'\btoday\b', vars['pay_day_text'], str(vars['first_ask_text']))
+    if not TODAY_OPEN and vars.get('mp_state'):
+        mst = json.loads(vars['mp_state'])
+        mst['closed'] = CUTOFF
+        vars['mp_state'] = json.dumps(mst)
+except Exception:
+    vars['pay_day_text'] = 'today'
+'''
+TODAY_RX = re.compile(r"\btoday\b")
 
 # A15: the first product (get_account order) in a band with an event: that event fires; product_words names it
 ACCOUNT_EVENT_CODE = r'''
@@ -2045,7 +2101,7 @@ class _Compiler:
                   "refusing the deadline) uses one persuasion attempt of the plan. Make the next one. Never repeat an offer the customer already refused.")
         if self.has("refused"):
             refuse += " When all attempts in the plan are used and the customer still refuses, call transition_to_close_refused."
-        first_ask = tpl(neg["first_ask"])
+        first_ask = self.first_ask()
         t = """The customer is verified. You have already said: "{{debt_statement_text}} %s"
 
 FACTS (computed, use them exactly)
@@ -2268,8 +2324,10 @@ HOW TO GET A PROMISE
         code = (self.prelude() + self.support_init_code() + "ACCOUNT_OK = %r\n" % ("facts" if self.multi else "ok") +
                 _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
                 _const("NEG", {k: neg.get(k) for k in ("debt_statement", "debt_statement_per_product", "weekday_words", "non_business_day", "first_ask", "first_ask_all") if neg.get(k) is not None}) +
-                _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_CODE +
-                (self.multi.account_code() if self.multi else "") + (ACCOUNT_EVENT_CODE if self.account_events else ""))
+                _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_DEFS +
+                (("CUTOFF = %r\n" % self.cutoff() + CUTOFF_DEFS) if self.cutoff() else "") + ACCOUNT_MAIN +
+                (self.multi.account_code() if self.multi else "") + (ACCOUNT_EVENT_CODE if self.account_events else "") +
+                (CUTOFF_MAIN if self.cutoff() else ""))
         # A15: a product in a band with an event fires it before the debt is stated
         tr = [go(self.account_event_entry(self.events[eid]), "Account event: " + eid,
                  all_of(eq("account_state", "ok"), eq("account_event", eid))) for eid in self.account_events]
@@ -2323,7 +2381,7 @@ HOW TO GET A PROMISE
                                      "description": sentence("the customer", ev["trigger"]) + "." + trigger_rest(ev["trigger"])}})
         return {
             "name": "negotiate", "node_type": "conversation",
-            "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
+            "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + self.first_ask()},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_task(),
             "tools": [self.check_tool(), self.safe_route(self.tool("create_promise", {
@@ -2342,6 +2400,16 @@ HOW TO GET A PROMISE
             "max_node_turns": 40, "max_turn_transition": self.latch_gate(self.fallback_close("negotiate", ["refused"])),
             "transitions": tr,
         }
+
+    def cutoff(self):
+        """negotiation.same_day_cutoff (HH:MM) or ''."""
+        return self.s["negotiation"].get("same_day_cutoff") or ""
+
+    def first_ask(self):
+        """The first ask as spoken (single product). With a same-day cut-off its "today" is {{pay_day_text}}, the next
+        business day once the cut-off has passed (I3: the agent asked for a day create_promise then refused)."""
+        t = tpl(self.s["negotiation"]["first_ask"])
+        return TODAY_RX.sub("{{pay_day_text}}", t) if self.cutoff() else t
 
     def date_rules(self):
         """Prelude (dates, CAL, today) plus the spec's date policies, for the hooks that judge a named date (A12)."""

@@ -547,6 +547,23 @@ except Exception as e:
     vars['mp_msg'] = 'There was a technical problem with that step (' + str(e)[:60] + '). Call ' + TOOL + ' again with the same values.'
 '''
 
+# final-review-2 I3: after negotiation.same_day_cutoff (prepare_account writes it to mp_state as `closed` once the time
+# has passed) today is not accepted, as check_date and create_promise judge it on a single-product call. Inserted only
+# when the spec sets a cut-off, so a spec without one compiles as before.
+_AGREE_AT = "    raw = str(b.get('amount') if b.get('amount') is not None else 'full').strip().lower()\n"
+_AGREE_CUTOFF = r'''    if d == today and st.get('closed'):
+        return None, ('NOT accepted: it is after ' + str(st['closed']) + ', too late for a payment today. Offer the next business day, ' +
+                      _say(DAYS[d][2]) + '.')
+'''
+
+
+def set_lib(cutoff):
+    if not cutoff:
+        return SET_LIB
+    assert SET_LIB.count(_AGREE_AT) == 1
+    return SET_LIB.replace(_AGREE_AT, _AGREE_CUTOFF + _AGREE_AT)
+
+
 API_ARGS = r'''
 def ARGS():
     b = config.get('body') if isinstance(config, dict) else None
@@ -863,6 +880,7 @@ class Multi:
             if p.get("enum"):
                 xprops[f]["enum"] = list(p["enum"])
         head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\nTURNS = %r\n" % (SET_TOOL, NODE + ".total_turns") + _const("DYN", list(DYN))
+        SET_LIB = set_lib(neg.get("same_day_cutoff"))
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
             "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: the customer refused the current persuasion attempt for it (call it after EVERY refusal; the result says whether another attempt is allowed). "

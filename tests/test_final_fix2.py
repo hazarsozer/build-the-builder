@@ -139,6 +139,103 @@ def test_i2_cases_check_the_stage_sentence():
     assert 'the agent says "I am very sorry to hear that."' in case["checks"]
 
 
+# ---------------------------------------------------------------- I3: same_day_cutoff in the plan, multi and cases
+
+LOAN = {"product_id": "p1", "type": "personal_loan", "past_due": 540.0, "days_late": 5, "instalment_amount": 180.0}
+
+
+def _cut(base, cutoff="18:00"):
+    s = copy.deepcopy(base)
+    s["negotiation"]["same_day_cutoff"] = cutoff
+    for b in s["bands"]:
+        if b["attempts"]:
+            b["attempts"][0] = dict(b["attempts"][0], date="today")
+    return s
+
+
+def _account(spec, now, product=LOAN):
+    w = C(spec, OA)
+    v = {"now": now, "title": "Mr", "last_name": "Ortiz", "acct_first_json": json.dumps(product)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    assert v["account_state"] == "ok", v.get("account_error")
+    return w, v
+
+
+def test_i3_single_plan_moves_today_after_the_cutoff():
+    s = _cut(A)
+    w, v = _account(s, "2026-10-14T19:30")
+    assert v["offer_dates"].split(",")[0] == "2026-10-15"
+    assert "2026-10-14" not in v["allowed_dates_text"]
+    assert v["attempt1_text"].startswith("Thursday 15 October")
+    assert "too late for a payment today" in v["calendar_text"]
+    assert v["pay_day_text"] == "on Thursday 15 October 2026"
+    first = w["nodes"]["negotiate"]["on_enter"]["text"]
+    assert "{{pay_day_text}}" in first and "today" not in first.split("{{debt_statement_text}}")[1]
+    assert "{{pay_day_text}}" in w["nodes"]["negotiate"]["task_message"]
+    # before the cut-off nothing moves
+    w, v = _account(s, "2026-10-14T11:00")
+    assert v["offer_dates"].split(",")[0] == "2026-10-14" and "2026-10-14" in v["allowed_dates_text"]
+    assert v["pay_day_text"] == "today" and "too late" not in v["calendar_text"]
+    assert _errors(w, s) == []
+
+
+def test_i3_cutoff_code_has_no_brace_pairs_and_reference_specs_have_none():
+    w = C(_cut(A), OA)
+    code = _code(w["nodes"]["prepare_account"])
+    assert "{{" not in code and "}}" not in code and "TODAY_OPEN" in code
+    for spec in (A, B):
+        assert "TODAY_OPEN" not in _code(C(spec, OA)["nodes"]["prepare_account"])
+
+
+class _MultiSim:
+    def __init__(self, spec, now):
+        from tests.test_multi import CASES, _products, _tool as tool
+        self.w = C(spec, OA, base_url=URL)
+        self.v = dict(CASES["PUB-11"]["variables"], now=now, customer_id="c1",
+                      acct_products_json=json.dumps(_products("PUB-11")))
+        for n in ("setup", "prepare_account"):
+            exec(_code(self.w["nodes"][n]), {"vars": self.v})
+        assert self.v["account_state"] == "ok", self.v.get("account_error")
+        self.t = tool(self.w["nodes"]["negotiate"], "set_product")
+
+    def say(self, **body):
+        self.v["negotiate.total_turns"] = int(self.v.get("negotiate.total_turns") or 0) + 1
+        cfg = {"url": "x", "body": dict(body)}
+        exec(self.t["pre_process_code"], {"vars": self.v, "config": cfg})
+        r = {"status": "success", "data": {"ok": True, "products": []}, "header": {}}
+        exec(self.t["post_process_code"], {"vars": self.v, "result": r})
+        return self.v["mp_msg"]
+
+
+def test_i3_multi_rejects_today_after_the_cutoff():
+    s = copy.deepcopy(B)
+    s["negotiation"]["same_day_cutoff"] = "18:00"
+    m = _MultiSim(s, "2026-10-14T19:30")
+    msg = m.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-14")
+    assert "too late for a payment today" in msg and "Thursday 15 October" in msg
+    assert m.v["mp_phase"] == "open"
+    assert "today" not in m.v["first_ask_text"] and "on Thursday 15 October 2026" in m.v["first_ask_text"]
+    m.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-15")
+    assert m.v["mp_phase"] == "readback"
+    # before the cut-off today is accepted
+    m = _MultiSim(s, "2026-10-14T11:00")
+    m.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-14")
+    assert m.v["mp_phase"] == "readback"
+    assert _errors(m.w, s) == []
+
+
+def test_i3_cases_expect_the_next_business_day_after_the_cutoff():
+    from builder import cases
+    s = _cut(A)
+    late = cases.build(s, OA, "happy_full_today", "2026-10-14T19:30", products=[LOAN])
+    early = cases.build(s, OA, "happy_full_today", "2026-10-14T11:00", products=[LOAN])
+    assert "2026-10-15" in json.dumps(late["expected"]) and "2026-10-14" not in json.dumps(late["expected"])
+    assert "2026-10-14" in json.dumps(early["expected"])
+    fl = cases.build(s, OA, "floor_after_too_much", "2026-10-14T19:30", products=[LOAN])
+    assert fl and not any("14 October" in c for c in fl["checks"])
+
+
 def test_i2_reference_specs_have_no_stage_variants():
     stages = ("_opening", "_identity", "_negotiate", "_third_party")
     for s in (A, B):
