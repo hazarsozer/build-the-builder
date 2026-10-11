@@ -2,7 +2,13 @@
 
 Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date while the successor session, dev-2d ("builder orchestrator 2"), works overnight.
 
-## 0. Check this first (Sun 10:15)
+## 0. Check this first (Sun 11:30)
+
+- **Latest safe version: `builder` @ 1167f06, tag `gate-green-5`** (1019 tests). It adds A17–A21 and the fixes from the second whole-branch review. On the organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3.**
+- **Fallback builder:** built Brief A in 912 s and scored **10/10 over 3 runs**.
+- **The spend limit hit again mid-bench**: 10 of 12 builds failed. After you logged in again, the bench is re-running on gate-green-5, due around 12:45. Then: the fallback bench on 4 briefs, cleanup, and the `final-candidate` tag before 16:00.
+
+Earlier (10:15):
 
 - **The Claude account limit matters for the final build.** Around 09:00 the fallback build failed with a Claude SDK error about a "monthly spend limit", and dev-2d also hit its usage limit. After the 10:10 reset the SDK works again. But `builder.main` runs its extraction through **your Claude account**, so if the limit hits during 20:00–23:00, no final build can run. **Please check your Claude plan or spend limit and make sure there's enough headroom for Sunday evening.** Each build uses about $3–6 of extraction, plus the fix round.
 - **New safe version: `builder` @ 89bb9e3, tag `gate-green-4`.** It adds A17–A21: the sme fixes, double sympathy, restructuring routing, workflow readability, wording cleanup, and the talkative-style and guessed-close fixes. Gate on the organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3, with 0 sandbox errors.**
