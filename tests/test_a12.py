@@ -81,7 +81,7 @@ def test_pub07_holiday_in_any_form_offers_the_next_business_day(said):
     assert d["verdict"] == "not_business_day" and d["date"] == "2026-10-27"
     m = d["what_to_do_next"]
     assert "Monday 26 October 2026 is a bank holiday, not a business day" in m
-    assert "offer the next business day, Tuesday 27 October 2026 with the amount of your current attempt" in m
+    assert "offer the next business day, Tuesday 27 October 2026, as a yes/no question, for the amount of your current attempt" in m
     assert "create_promise date: 2026-10-27" in m
     assert "2 November" not in m
     # the promise then uses the code's date
@@ -94,7 +94,7 @@ def test_after_deadline_offers_the_deadline_with_the_current_amount():
     w, v = account("2026-10-14T11:00")
     d = check(w, v, "the 6th of November")
     assert d["verdict"] == "after_deadline" and d["date"] == "2026-11-02"
-    assert ("Say the latest date you can accept is Monday 2 November 2026 and offer it with the amount of your current attempt"
+    assert ("Say the latest date you can accept is Monday 2 November 2026 and offer it, as a yes/no question, for the amount of your current attempt"
             in d["what_to_do_next"])
     assert "Their own date is never a refusal." in d["what_to_do_next"]
     s = copy.deepcopy(A)
@@ -294,6 +294,56 @@ def test_fix2_retry_reuses_only_a_date_the_guard_accepted():
     # the retry node's success route needs data.ok from create_promise; get_account's answer has none
     tr = json.dumps(w["nodes"]["retry_promise"]["transitions"])
     assert "retry_ok" in tr
+
+
+# ---------------------------------------------------------------- fix round 3: an accepted offer is confirmed, not re-offered
+
+def test_fix3_pub06_accepting_the_offered_date_is_confirmed_not_offered_again():
+    """PUB-06 (regate-a12-A): "I can do that on Friday" after the offer of Friday 16 Oct must not bring a second offer."""
+    w, v = account("2026-10-14T11:00")
+    assert v["offer_dates"] == "2026-10-16"
+    for said in ("I can do that on Friday.", "Friday", "the 16th"):
+        d = check(w, v, said)
+        m = d["what_to_do_next"]
+        assert d["verdict"] == "ok" and d["date"] == "2026-10-16", said
+        assert m.startswith("ACCEPTED OFFER: Friday 16 October 2026 is a date you proposed")
+        assert "The customer accepted your offer: do not propose it again." in m
+        assert 'read back the product, the amount and the date once and ask "Do you confirm?", then record' in m
+        assert "propose this date" not in m and "current attempt" not in m
+
+
+def test_fix3_dates_from_a_result_and_the_deadline_count_as_offers():
+    w, v = account("2026-10-14T11:00")
+    check(w, v, "Monday the twenty-sixth")                     # result: offer Tuesday 27 October
+    assert v["cd_offered"] == "2026-10-27"
+    assert check(w, v, "Tuesday is fine")["what_to_do_next"].startswith("ACCEPTED OFFER: Tuesday 27 October 2026")
+    assert check(w, v, "the second of November")["what_to_do_next"].startswith("ACCEPTED OFFER: Monday 2 November 2026")
+
+
+def test_fix3_a_new_date_named_by_the_customer():
+    w, v = account("2026-10-14T11:00")
+    m = check(w, v, "the 23rd")["what_to_do_next"]
+    assert m.startswith("OK: Friday 23 October 2026 can be accepted.")
+    assert 'If an amount is already agreed, read back the product, the amount and the date once and ask "Do you confirm?".' in m
+    assert ("If not, propose this date, as a yes/no question, for the amount of your current attempt "
+            "(never say a figure the customer already heard)") in m
+
+
+@pytest.mark.parametrize("now", NOWS)
+def test_fix3_no_verdict_restates_an_amount_already_heard(now):
+    w, v = account(now)
+    for said in ("Friday", "the 23rd", "Monday the twenty-sixth", "the 20th of November", "tomorrow", "the 31st", "today"):
+        m = check(w, v, said)["what_to_do_next"]
+        assert "with the amount" not in m and "Can you pay" not in m, (now, said, m)
+        if "current attempt" in m:
+            assert "never say a figure the customer already heard" in m, (now, said, m)
+
+
+def test_fix3_prompt_checks_only_days_the_customer_names():
+    t = C(A, OA)["nodes"]["negotiate"]["task_message"]
+    assert "A day the customer names themselves" in t
+    assert "A yes to a date you proposed needs no check: go to the read-back." in t
+    assert len(t) <= 4800
 
 
 def test_retry_uses_the_date_sent_to_the_bank():

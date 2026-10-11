@@ -48,9 +48,9 @@ DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a v
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
            'say only "Go on." and read it with the next message.')
 # A12 (one product): a named day is judged by check_date in code, never by the model
-CHECK_DAY = ('A day ("the 26th", "twenty-sixth", "next Friday", "tomorrow"): before you answer, call %s with their latest words for it '
+CHECK_DAY = ('A day the customer names themselves ("the 26th", "twenty-sixth", "next Friday", "tomorrow"): before you answer, call %s with their latest words for it '
              '(a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th."). Never judge a date yourself: say what the result says, use its date in create_promise. '
-             'Their own date, even after a "no", is never a refusal.')
+             'Their own date, even after a "no", is never a refusal. A yes to a date you proposed needs no check: go to the read-back.')
 DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
              'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
 MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?", "how much?"): "That is the <minimum payment / amount> I '
@@ -385,6 +385,8 @@ try:
     vars['deadline_iso'] = f['deadline'].isoformat()
     for i, a in enumerate(f['attempts']):
         vars['attempt' + str(i + 1) + '_text'] = speak(a['date'])
+    # A12 fix 3: the dates the agent itself proposes (plan attempts); check_date adds the dates it tells it to offer
+    vars['offer_dates'] = ','.join(a['date'].isoformat() for a in f['attempts'])
     vars['attempt_plan'] = f['plan']
     vars['allowed_dates_text'] = ', '.join(x.isoformat() for x in f['allowed'])
     vars['calendar_text'] = calendar_text(f['deadline'])
@@ -908,14 +910,24 @@ try:
     said = _cd_arg(b, 'said')
     iso = _cd_arg(b, 'date')[:10]
     dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
-    d, why = resolve_said(said, today, WW)
+    # the agent's own proposals: plan attempts, the deadline, dates an earlier result told it to offer (A12 fix 3)
+    offered = set(x for x in (str(vars.get('offer_dates') or '') + ',' + str(vars.get('cd_offered') or '')).split(',') if x)
+    offered.add(dl.isoformat())
+    prefer = []
+    for x in offered:
+        try:
+            prefer.append(datetime.date.fromisoformat(x))
+        except ValueError:
+            pass
+    d, why = resolve_said(said, today, WW, prefer)
     if d is None and why != 'vague' and re.match(r'^\d{4}-\d{2}-\d{2}$', iso):
         try:
             d = datetime.date.fromisoformat(iso)
         except ValueError:
             d = None
     off = None
-    cur = ' with the amount of your current attempt, as a yes/no question'
+    cur = ', as a yes/no question, for the amount of your current attempt (never say a figure the customer already heard)'
+    readback = 'read back the product, the amount and the date once and ask ' + repr(CONFIRM).replace("'", '"')
     never = ' Their own date is never a refusal.'
     if d is None:
         kind = 'vague' if why == 'vague' else 'no_day'
@@ -926,9 +938,12 @@ try:
                    'otherwise ask for the exact day.')
     else:
         kind, off, bad, todo = _cd_judge(d, dl)
-        if kind == 'ok':
-            msg = ('OK: ' + say_date(d) + ' can be accepted. Propose it' + cur + ' unless they already gave an amount. '
-                   'create_promise date: ' + d.isoformat() + '.')
+        if kind == 'ok' and d.isoformat() in offered:
+            msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. The customer accepted your offer: '
+                   'do not propose it again. As a confirmation, ' + readback + ', then record (create_promise date: ' + d.isoformat() + ').')
+        elif kind == 'ok':
+            msg = ('OK: ' + say_date(d) + ' can be accepted. If an amount is already agreed, ' + readback + '. If not, propose this date' +
+                   cur + '. create_promise date: ' + d.isoformat() + '.')
         elif kind == 'past':
             msg = 'IN THE PAST: ' + bad + '. Say so and ' + todo + '.'
         else:
@@ -939,6 +954,8 @@ try:
                 msg += ' If they accept, create_promise date: ' + off.isoformat() + '.'
     vars['cd_kind'] = kind
     vars['cd_date'] = off.isoformat() if off is not None else ''
+    if off is not None and off != d:
+        vars['cd_offered'] = (str(vars.get('cd_offered') or '') + ',' + off.isoformat()).strip(',')
     vars['cd_msg'] = msg
 except Exception as e:
     vars['cd_kind'] = 'error'
@@ -2016,9 +2033,9 @@ HOW TO GET A PROMISE
         """Prelude (dates, CAL, today) plus the spec's date policies, for the hooks that judge a named date (A12)."""
         neg = self.s["negotiation"]
         return (self.prelude() + _const("WW", neg.get("weekday_words") or {}) +
-                "NBD = %r\nAFTER = %r\nCUTOFF = %r\nTOOL = %r\n" % (neg.get("non_business_day", "next_business_day"),
-                                                                   neg.get("after_deadline", "offer_deadline"),
-                                                                   neg.get("same_day_cutoff") or "", CHECK_TOOL) + CHECK_LIB)
+                "NBD = %r\nAFTER = %r\nCUTOFF = %r\nTOOL = %r\nCONFIRM = %r\n" % (
+                    neg.get("non_business_day", "next_business_day"), neg.get("after_deadline", "offer_deadline"),
+                    neg.get("same_day_cutoff") or "", CHECK_TOOL, self.s["confirmation"]["question"]) + CHECK_LIB)
 
     def routes(self):
         """The constants of the fail-closed promise guard: the read-only route and the promise route (A12 fix 2)."""

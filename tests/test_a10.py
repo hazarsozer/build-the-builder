@@ -314,7 +314,7 @@ def test_self04_after_deadline_keeps_the_current_attempt_amount():
     for spec in (A, json.load(open(DRESS_A))):
         t = C(spec, OA)["nodes"]["negotiate"]["task_message"]
         m = _after_deadline_verdict(spec)
-        assert "offer it with the amount of your current attempt" in m and "Their own date is never a refusal." in m
+        assert "offer it, as a yes/no question, for the amount of your current attempt" in m and "Their own date is never a refusal." in m
         assert 'Their own date, even after a "no", is never a refusal.' in t
         # A9 rules the candidate-1 build lacked, which the SELF-04 cut-off corrections needed
         assert 'say only "Go on."' in t and "never ask them to name an amount" in t
