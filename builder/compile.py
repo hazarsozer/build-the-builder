@@ -21,7 +21,7 @@ import sys
 
 from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
-from builder import layout, multi as multi_mod
+from builder import labels, layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.triggers import verb_led, bare_trigger, split_trigger, subj, trigger_rest
 from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
@@ -2322,7 +2322,9 @@ HOW TO RUN THE CALL
             "global_nodes": {},
             "tools": [self.close_call_tool()],
         }
-        # dashboard presentation only (builder/layout.py): samples for the call variables, node positions
+        # dashboard presentation only (builder/labels.py, builder/layout.py): step and edge labels, samples for the
+        # call variables, node positions
+        labels.describe(wf)
         wf["test_variables"] = layout.sample_call_variables(self.s, wf)
         layout.place(wf)
         return wf

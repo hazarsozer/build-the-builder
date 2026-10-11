@@ -131,3 +131,46 @@ def test_not_talk_edge_reads_cleanly():
 def test_spec_a_negotiate_within_budget():
     for bu in (None, "https://bank.example/v1"):
         assert len(C(SPECS["a"], OA, base_url=bu)["nodes"]["negotiate"]["task_message"]) <= 4800
+
+
+# ---------------------------------------------------------------- 4/5. edge labels, step descriptions
+
+def test_no_bare_always_label(compiled):
+    name, _, wf = compiled
+    for g in ("nodes", "global_nodes"):
+        for n, nd in (wf.get(g) or {}).items():
+            for t in nd.get("transitions") or []:
+                assert t.get("description") != "always", (name, n)
+                if (t.get("condition") or {}).get("operator") == "always":
+                    assert t["description"].startswith(("Next: ", "Otherwise: ")), (name, n, t)
+
+
+def test_fallback_edge_says_otherwise():
+    wf = C(SPECS["b"], OA, base_url="https://bank.example/v1")
+    last = wf["nodes"]["finish"]["transitions"][-1]
+    assert last["condition"] == {"operator": "always"}
+    assert last["description"] == "Otherwise: close the call (service error)"
+    assert wf["nodes"]["load_account"]["transitions"][-1]["description"] == "Next: prepare account"
+
+
+def test_every_step_has_a_description(compiled):
+    name, _, wf = compiled
+    for n, nd in wf["nodes"].items():
+        for pa in nd.get("pre_actions") or []:
+            fn = pa["function"]
+            d = fn.get("description") or ""
+            assert d and d != fn["name"] and not d.startswith("Code step:"), (name, n, d)
+            assert "{{" not in d and "}}" not in d
+
+
+def test_labels_are_presentation_only(compiled):
+    """describe() touches only labels: running it again changes nothing, and transitions keep their own keys."""
+    import copy
+    from builder import labels
+    _, _, wf = compiled
+    w = copy.deepcopy(wf)
+    labels.describe(w)
+    assert w == wf
+    for nd in wf["nodes"].values():
+        for t in nd.get("transitions") or []:
+            assert set(t) <= {"target_node", "description", "condition", "is_tool_call"}
