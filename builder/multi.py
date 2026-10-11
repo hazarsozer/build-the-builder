@@ -748,7 +748,7 @@ class Multi:
         self.refused_note = self.note_for(c.events.get("refused"), "refused")
         fe = c.events.get(self.fail_ev) or {}
         self.fail_note = fe.get("per_product_note") or "service_error"
-        # the brief's own outcome names, never literals (A15: insurance renamed promise to promise_to_pay)
+        # the brief's own outcome names, never literals (A15: a brief may rename the promise outcome)
         prow = next((o for o in self.s["outcomes"] if o["event"] == "promise_recorded"), None)
         pev = c.events.get("promise_recorded") or {}
         self.promise_row = ((prow["outcome"], prow.get("reason")) if prow else

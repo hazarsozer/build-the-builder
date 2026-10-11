@@ -150,3 +150,21 @@ alone and the correction only after the agent says it is not correct (`bench/fie
   lesson), although the insurance brief says the first sentence "word for word". The judge did not fail it this run.
 - The insurance event sentence "Your {product_words} policy has lapsed" reads "Your life insurance policy ending 4410
   policy has lapsed" with this brief's product words (an extraction choice); left as is.
+
+## Fix round 1
+
+- I-1 (corpus wording in generic text): `builder/spec_schema.json` (attempt date `nth_business_day`, `bands[].event`),
+  regenerated `docs/spec-guide.md`, and `builder/prompts/extract.md` now say "an attempt dated a count of business days
+  after today" and "a product status that ends negotiation (no payment may be asked)". A grep of schema, guide, prompts,
+  `builder/*.py` and `builder/lib/*.py` for corpus-only words (lapse, premium, Brightwater, Harbourline, Northwind,
+  retention, insurance, reinstat, policyholder, "5th business day"; checked absent from briefs A/B) also found the
+  A15 comment in `builder/multi.py` ("insurance renamed ..."), now neutral. "policy" stays: it predates A15 as
+  "policy spec" and is generic.
+- M-1: `compile.py` gets `no_promise_outcome()` (the refused event's outcome, as `Multi` and the oracle read it), used by
+  the else-close fallback in `build_closes` and by the service-failure close fallback. `cases.py`: `_note_row` and the
+  multi expectation take the no-promise outcome from the refused event and skip the outcomes of the brief's transfer
+  events instead of the literals `no_promise` / `transferred`.
+- M-2: the `compile.py` comment now says "(bands[].event)".
+- Tests: `test_no_corpus_words_in_generic_text`, `test_else_close_and_cases_take_outcome_names_from_the_spec`
+  (no_promise -> unpaid, transferred -> handed_over). Suite 751 passed, 6 skipped. spec-a / spec-b compiled output
+  identical to before this round.

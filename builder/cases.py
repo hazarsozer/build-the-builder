@@ -59,11 +59,23 @@ def _row(spec, eid, alt=False):
     return want if want[0] else None
 
 
+def _no_promise(spec):
+    """The brief's no-promise outcome: the refused event's outcome (A15: never a literal)."""
+    return (_event(spec, "refused") or {}).get("outcome") or "no_promise"
+
+
+def _transfer_outcomes(spec):
+    """Outcomes the brief's transfer events close with."""
+    return {e.get("outcome") for e in spec["events"] if e["action"] in ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")}
+
+
 def _note_row(spec, reason):
     rows = [(o["outcome"], o["reason"]) for o in spec["outcomes"] if o["reason"] == reason]
+    np = _no_promise(spec)
     for r in rows:
-        if r[0] == "no_promise": return r
-    return next((r for r in rows if r[0] != "transferred"), ("no_promise", reason))
+        if r[0] == np: return r
+    tr = _transfer_outcomes(spec)
+    return next((r for r in rows if r[0] not in tr), (np, reason))
 
 
 def reasons_table(spec):
@@ -246,7 +258,7 @@ def _multi_expected(spec, products, results):
     else:
         non_paid = [n for n in notes if n["reason"] != paid] or notes
         pick = notes[-1] if mp["no_promise_reason"] == "last_note" else (non_paid[0] if non_paid else None)
-        outcome, reason = _note_row(spec, rmap.get(pick["reason"], pick["reason"])) if pick else ("no_promise", None)
+        outcome, reason = _note_row(spec, rmap.get(pick["reason"], pick["reason"])) if pick else (_no_promise(spec), None)
     return _exp(outcome, reason, promises, notes)
 
 
