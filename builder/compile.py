@@ -1841,7 +1841,7 @@ class _Compiler:
         for the opening: "A recorded promise cannot be changed" -> "A promise cannot be changed". A first sentence the
         brief requires word for word (opening.verbatim) is left as it is."""
         op = self.s["opening"]
-        keep = op["first_sentence"] if op.get("verbatim") and op.get("first_sentence") else None
+        keep = tpl(op["first_sentence"]) if op.get("verbatim") and op.get("first_sentence") else None   # as spoken
 
         def fix(text):
             if keep and keep in text:
@@ -2085,7 +2085,8 @@ HOW TO GET A PROMISE
                                             [go(unclear, "Still not confirmed after the last ask", cond_any(eq("op_gate", "close")))])
         return {
             "name": "opening", "node_type": "conversation",
-            "on_enter": {"type": "tts", "text": first + " " + tpl(op["confirm_question"])},
+            # tpl: a placeholder in the first sentence ("Hello {first_name}, ...") is rendered like the question's
+            "on_enter": {"type": "tts", "text": tpl(first) + " " + tpl(op["confirm_question"])},
             "on_enter_first_entry_only": True,
             "task_message": self.opening_task(),
             "extraction_schema": [{

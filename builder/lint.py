@@ -23,6 +23,19 @@ _CALL_RECORDED = re.compile(
     r"(?:being\s+)?recorded\b.*$", re.I)
 
 
+# a spec placeholder ({first_name}); the compiler renders it as {{var}} (or prose for amount/date, see compile.tpl)
+_SPEC_PH = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# a single-brace placeholder left in spoken text: the platform reads it out literally
+_RAW_PH = re.compile(r"(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*\}(?!\})")
+
+
+def _as_spoken(sentence):
+    """A spec sentence as a pattern over its compiled text: each {x} matches whatever the compiler put there
+    ({{var}} or a few words of prose). lint cannot import compile (compile imports lint)."""
+    lit = [re.escape(p) for p in _SPEC_PH.split(sentence)[0::2]]
+    return re.compile(r"(?:\{\{[A-Za-z_][A-Za-z0-9_]*\}\}|[\w ]{1,40}?)".join(lit))
+
+
 def opening_warnings(sentence):
     """Banned words in an opening sentence, ignoring the one safe recording sentence."""
     rest = _SAFE_RECORDING.sub(" ", sentence or "")
@@ -207,16 +220,23 @@ def lint(workflow, spec):
                  for w in opening_warnings(first)]
     opening = nodes.get("opening", {})
     text = (opening.get("on_enter") or {}).get("text", "")
-    # the verbatim sentence is the one part of the opening line that is exempt from the word checks
-    checked = text.replace(first, " ", 1) if verbatim and first else text
+    # the verbatim sentence is the one part of the opening line that is exempt from the word checks; it is compared
+    # as rendered (a {first_name} in it is spoken as {{first_name}})
+    first_rx = _as_spoken(first) if verbatim and first else None
+    checked = first_rx.sub(" ", text, count=1) if first_rx else text
+    # a placeholder the compiler did not render is read out literally ("Hello {first_name}")
+    for k, n in nodes.items():
+        m = _RAW_PH.search((n.get("on_enter") or {}).get("text") or "") if (n.get("on_enter") or {}).get("type") == "tts" else None
+        if m:
+            errs.append("node %s: spoken text has a raw placeholder %s" % (k, m.group(0)))
     errs += ["opening line: " + w for w in opening_warnings(checked)]
     # 1b. no "record*" in text spoken before a successful create_promise (fixed lines and quoted templates)
     for k in SPOKEN_BEFORE_SUCCESS:
         n = nodes.get(k) or {}
         spoken = [(n.get("on_enter") or {}).get("text", "")] + re.findall(r'"([^"]*)"', n.get("task_message", ""))
         for t in spoken:
-            if verbatim and first and first in (t or ""):
-                t = t.replace(first, " ")
+            if first_rx:
+                t = first_rx.sub(" ", t or "")
             if _RECORD.search(t or ""):
                 errs.append("node %s: spoken text says %r before a promise is recorded: %r" % (k, _RECORD.search(t).group(0), t[:80]))
     for word in op.get("banned_before_verify", []):
