@@ -402,3 +402,17 @@ def test_f3_load_account_retry_without_ok_routes_only_to_close_account_error():
         stop, path = walk(w, v, "load_account", [False, (True, {"ok": True, "products": [CARD]})])
         assert "load_account_retry" in path and "prepare_account" in path, (label, path)
 
+
+def test_f3_retry_success_routes_on_the_mapped_variable_or_the_tool_named_key():
+    """The platform may name result keys after the tool (get_account_response.*), not the node; the retry's success
+    route must also hold on its mapped acct_retry_ok, like load_account's acct_ok."""
+    for label, spec, oa in SPECS:
+        w = wf(spec, oa)
+        n = w["nodes"]["load_account_retry"]
+        assert {"path": "data.ok", "variable": "acct_retry_ok"} in n["response_mapping"], label
+        for only in ({"acct_retry_ok": True}, {"get_account_response.data.ok": True}):
+            v = started(w)
+            api("load_account", w["nodes"]["load_account"], v, False)
+            v.update(only)
+            assert route(n, v) == "prepare_account", (label, only)
+

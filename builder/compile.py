@@ -2359,8 +2359,10 @@ HOW TO GET A PROMISE
         retry = copy.deepcopy(self.nodes["load_account"])
         retry["name"] = "load_account_retry"
         retry["passthrough_default_transition"] = "close_account_error"
+        retry["response_mapping"].append({"path": "data.ok", "variable": "acct_retry_ok"})
         retry["transitions"] = [go("prepare_account", "Account read on the retry",
-                                   is_true(*self.resp_vars("get_account", "ok", "load_account_retry"))),
+                                   is_true("acct_retry_ok", *self.resp_vars("get_account", "ok", "load_account_retry"),
+                                           *self.resp_vars("get_account", "ok"))),
                                 always("close_account_error")]
         self.nodes["load_account_retry"] = retry
         first = self.nodes["load_account"]
