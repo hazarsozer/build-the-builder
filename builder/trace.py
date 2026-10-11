@@ -172,6 +172,12 @@ def _render(events, name):
         out += ["| %s | %s/%s | %s | %s | %s |" % (r.get("round"), r.get("passed"), r.get("total"), _cell(r.get("agent_id", "")),
                                                   _cell(r.get("simulation_id", "")), _cell(", ".join(r.get("failing") or []) or "-"))
                 for r in rounds]
+    for r in rounds:
+        if r.get("void"):
+            out.append("- round %s: %d void, not counted (platform retried the run): %s"
+                       % (r.get("round"), len(r["void"]), _cell(", ".join(r["void"]))))
+    for s in _of(events, "selftest_no_signal"):
+        out.append("- round %s: no signal (%s)" % (s.get("round"), _cell(s.get("why"))))
     for s in _of(events, "selftest_skipped"):
         out.append("- skipped: %s" % _cell(s.get("why")))
     out.append("")

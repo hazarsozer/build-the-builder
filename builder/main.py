@@ -10,6 +10,8 @@ Steps (design spec §4 and the Task 8 rulings):
   extract  builder.extract (dual extraction, settle, oracle), at most 6 min.
   round 1  compile with base URL <tunnel>/v1 -> save_workflow(<slot>-selftest) -> cases.generate(n=10, or 11 when
            multi-product notes are enabled; seed 0) -> selftest.run. All passed: no round 2 (build time is a tie-break).
+           A run Freya retried on its own is VOID (selftest `void`): logged, never a failure for the fix round, not
+           compared between rounds. Every run void: `selftest_no_signal`, no fix, the extracted spec is kept.
   fix      otherwise, and with > 12 min left: one short LLM session edits the spec, each change with a brief quote
            (builder.fix); re-validate, recompile, round 2 on cases generated the same way. The spec with the best pass
            count is kept (a tie keeps the fixed spec: its changes are quote-backed).
@@ -528,9 +530,10 @@ class Build:
                 self.ev("orphan_simulation", id=sid, round=k)
                 self._cancel(sid, "orphan", round=k)
             raise
-        rows = res.get("rows") or []
+        rows = res.get("rows") or []      # scored runs only: a run Freya retried is in res["void"], neither pass nor fail
+        void = [r["id"] for r in res.get("void") or []]
         failing = [r["id"] for r in rows if not r.get("pass")]
-        self.ev("selftest_round", round=k, passed=res["passed"], total=res["total"], failing=failing,
+        self.ev("selftest_round", round=k, passed=res["passed"], total=res["total"], failing=failing, void=void,
                 failures=[{"id": r["id"], "scenario": r.get("scenario"), "style": r.get("style"),
                            "failed": [scrub(str(x))[:300] for x in (r.get("failed") or [])[:3]]}
                           for r in rows if not r.get("pass")],
@@ -539,7 +542,12 @@ class Build:
                 seconds=round(time.monotonic() - t, 1))
         self.rounds.append({"round": k, "passed": res["passed"], "total": res["total"]})
         res["passed_ids"] = {r["id"] for r in rows if r.get("pass")}
-        self.log("round %d: %d/%d passed" % (k, res["passed"], res["total"]))
+        res["void_ids"] = set(void)
+        self.log("round %d: %d/%d passed%s" % (k, res["passed"], res["total"],
+                                                ", %d void (platform retried the run)" % len(void) if void else ""))
+        if void and not rows:
+            self.ev("selftest_no_signal", round=k, void=len(void), why="the platform retried every run")
+            self.log("round %d: no signal, the platform retried every run" % k)
         return res
 
     def _cases(self, spec, now):
@@ -557,6 +565,8 @@ class Build:
         cs = self._cases(spec, now)
         res1 = self._round(1, spec, cs, url)
         self.best = (spec, res1["passed"], "extract")
+        if res1["void_ids"] and not res1["total"]:
+            return                         # no signal (selftest_no_signal): nothing to fix, keep the extracted spec
         if res1["passed"] >= res1["total"]:
             self.ev("round2_skipped", why="round 1 passed every case")
             return
@@ -591,6 +601,7 @@ class Build:
         self.ev("round2_plan", rerun=len(cs), extra=[c["id"] + ":" + str(c.get("scenario")) for c in extra],
                 comparable=sorted(comparable))
         res2 = self._round(2, new, run2, url)
+        comparable = comparable - res1["void_ids"] - res2["void_ids"]   # a void run says nothing about either spec
         p1 = len(comparable & res1["passed_ids"])
         p2 = len(comparable & res2["passed_ids"])
         if p2 > p1:
