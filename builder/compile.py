@@ -47,8 +47,15 @@ EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": 
                    "readback": "pending", "after_record": "pending"}
 # L1 (PUB-06): an amount said once is pointed back to, never offered again.
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
+# A21: the simulator often cuts a turn mid-phrase; "Go on." once per run of cut-offs, then the pending question again
+# (an agent that says only "Go on." looks stuck and the customer hangs up)
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
-           'say only "Go on." and read it with the next message.')
+           'say only "Go on." and read it with the next message. Never twice in a row: after your own "Go on.", ask your last question again in a few words.')
+# negotiate: small talk with nothing about paying is no refusal either (it used up the persuasion plan in PUB-05); the
+# re-ask names no figure or date, so it never reads as a second offer
+NEG_CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") or small talk with nothing about paying is not an answer or a refusal '
+               'and uses no attempt: after a cut-off say only "Go on." and read it with the next message, never twice in a row; '
+               'otherwise ask about your current offer again in a few words, no amount or date ("So, can you do that?").')
 # A12 (one product): a named day is judged by check_date in code, never by the model
 CHECK_DAY = ('A day the customer names themselves ("the 26th", "twenty-sixth", "next Friday", "tomorrow"): before you answer, call %s with their latest words for it '
              '(a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th."). Never judge a date yourself: say what the result says, use its date in create_promise. '
@@ -1937,8 +1944,8 @@ class _Compiler:
             too_much = "The customer says the full amount is too much: do not offer a lower amount; treat it as a refusal."
         if neg.get("never_ask_how_much"):
             too_much += " Never ask how much they can pay; you propose every amount."
-        refuse = ("A flat refusal or a non-answer (including \"no\" to paying today with no date and no amount, refusing the floor, refusing the deadline) "
-                  "uses one persuasion attempt of the plan. Make the next one. Never repeat an offer the customer already refused.")
+        refuse = ("A flat refusal or an evasive reply about paying (\"I can't\", \"not now\", \"no\" to paying today with no date and no amount, refusing the floor, "
+                  "refusing the deadline) uses one persuasion attempt of the plan. Make the next one. Never repeat an offer the customer already refused.")
         if self.has("refused"):
             refuse += " When all attempts in the plan are used and the customer still refuses, call transition_to_close_refused."
         first_ask = tpl(neg["first_ask"])
@@ -1965,7 +1972,7 @@ HOW TO GET A PROMISE
    %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, DATE_ONLY, CHECK_DAY % CHECK_TOOL, vague, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+            first_ask, DATE_ONLY, CHECK_DAY % CHECK_TOOL, vague, NEG_CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
             t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
@@ -2173,7 +2180,7 @@ HOW TO GET A PROMISE
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else [])
-        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") is never cannot_pay_or_too_much: it is continue."]
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") or only small talk is never cannot_pay_or_too_much: it is continue."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         retries = conf.get("retries", 1)
@@ -2309,7 +2316,7 @@ HOW TO RUN THE CALL
    - %(cut_off)s
    - Amount: from the product's floor up to its full amount. %(date_only)s
    - %(too_much)s
-3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Only the product the last result (or step 1) told you to offer counts; report a no about another product too: it uses no attempt. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
+3. A flat refusal or an evasive reply about paying for the current product ("I can't", "not now", refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Only the product the last result (or step 1) told you to offer counts; report a no about another product too: it uses no attempt. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
    %(mentioned)s
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
@@ -2317,7 +2324,7 @@ HOW TO RUN THE CALL
    Its result (what_to_do_next) names the next product. Say a product is noted only after a result that says "Noted" for it; after "NOT accepted", "Not counted" or any other result, nothing is noted: do what it says. A result that says a product is still open ("NOT every product is settled", "Still open"): nothing is noted for it and the call is not over; never say noted, recorded or goodbye, continue with that product. Never read promises back or ask for confirmation yourself. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded or registered.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
-            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
+            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=NEG_CUT_OFF, date_only=DATE_ONLY,
             notes="".join("\n   - %s, when %s; then continue with the other products." % (o, self.multi.outcome_words(o)) for o in notes))
         for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
             t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
@@ -2336,7 +2343,7 @@ HOW TO RUN THE CALL
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else []) + ["goodbye"]
-        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") is never cannot_pay_or_too_much: it is continue."]
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") or only small talk is never cannot_pay_or_too_much: it is continue."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         sdesc.append("goodbye: they only say goodbye or end the conversation (\"thank you, goodbye\"), with no date, amount, refusal or question.")
