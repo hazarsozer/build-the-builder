@@ -278,7 +278,7 @@ def test_banned_offer_overlapping_transfer_trigger_is_not_excluded_from_it():
     e = _neg_enum_desc(wf())
     desc = e["description"]
     restr = desc.split("restructuring:")[1].split(" human:")[0]
-    assert "instalment" not in restr.split("Saying")[1]
+    assert "instalment" not in restr.split("Saying")[1].split(" is NOT")[0]  # the banned-offer list only (A18 adds an example after it)
     disc = desc.split("discount_request:")[1]
     assert "instalment" not in disc and "discount" in disc
     assert "instalment" not in wf()["nodes"]["negotiate"]["task_message"].split("If asked for")[1].split("\n")[0]
