@@ -152,12 +152,21 @@ class Sim:
         self.run("prepare_account")
         assert self.v["account_state"] == "ok", self.v.get("account_error")
         self.t = _tool(self.w["nodes"]["negotiate"], "set_product")
+        self.turn = 0
+
+    def next_turn(self):
+        """A new customer message in negotiate: the platform's negotiate.total_turns (an int, chat-API probe 4c48412b)."""
+        self.turn += 1
+        self.v["negotiate.total_turns"] = self.turn
 
     def run(self, node):
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
 
-    def say(self, **body):
-        """One set_product call as the platform runs it: api mode = pre-hook, request, post-hook, response mapping."""
+    def say(self, same_turn=False, **body):
+        """One set_product call as the platform runs it: api mode = pre-hook, request, post-hook, response mapping.
+        Each call answers a new customer message unless same_turn (the model calls again before it speaks)."""
+        if not same_turn:
+            self.next_turn()
         if self.t["function"]["handler"] == "__function__:api_call":
             cfg = {"url": "x", "body": dict(body)}
             exec(self.t["pre_process_code"], {"vars": self.v, "config": cfg})
@@ -177,6 +186,7 @@ class Sim:
         """Parallel set_product calls as the platform ran them (A11 probe f58d6ed0): every pre-hook reads the same
         snapshot of vars, their writes merge per variable (the last writer wins a variable), then the post-hooks run
         on the merged variables, each followed by its response mapping. Returns every result's what_to_do_next."""
+        self.next_turn()
         snap = copy.deepcopy(self.v)
         writes = []
         for body in bodies:
@@ -200,7 +210,7 @@ class Sim:
         msg = None
         for _ in range(n):
             msg = self.say(product_id=pid, outcome="refused")
-            if "Not counted yet." in msg:  # no offer noted yet: the offer is made, then refused
+            if "Not counted:" in msg:  # no offer named yet: the result names it, the offer is made, then refused
                 msg = self.say(product_id=pid, outcome="refused")
             if "last attempt" in msg:
                 break
@@ -501,7 +511,7 @@ def test_fix3_multi_prompt_noted_only_after_a_noted_result():
     w = wf()
     t = w["nodes"]["negotiate"]["task_message"]
     assert 'Say a product is noted only after a result that says "Noted" for it' in t
-    assert '"NOT accepted", "Not counted yet" or any other result, nothing is noted' in t
+    assert '"NOT accepted", "Not counted" or any other result, nothing is noted' in t
     assert "Never read promises back or ask for confirmation yourself." in t
     assert "unless the tool result says so" in w["system_prompt"]
     s = Sim("PUB-13")
@@ -587,9 +597,9 @@ def test_r2_nan_amount_rejected():
 def test_a9_attempts_counted_in_code_per_refusal():
     """A9 item 2: each refused call is one used attempt, counted in mp_state; the band's count is the limit."""
     s = Sim("PUB-13")  # p1 early band: one attempt; p2 late band: two
-    msg = s.say(product_id="p1", outcome="refused")  # first call: no offer noted yet (fix round 1, item 3)
-    assert msg.startswith("The credit card ending 6604: Not counted yet.") and "is not a refusal" in msg
-    assert load_state(s.v)["p"]["p1"]["status"] == "pending"
+    msg = s.say(product_id="p1", outcome="refused")  # the answer to the today question: no offer made yet (A14)
+    assert msg.startswith("The credit card ending 6604: Not counted: no offer for it was made before this answer")
+    assert load_state(s.v)["p"]["p1"]["status"] == "pending" and "make attempt 1 of its plan now" in msg
     msg = s.say(product_id="p1", outcome="refused")
     st = load_state(s.v)["p"]
     assert st["p1"]["status"] == "refused" and st["p1"]["tried"] == 1
@@ -604,9 +614,22 @@ def test_a9_attempts_counted_in_code_per_refusal():
 
 def test_a9_next_names_the_attempt_after_the_used_ones():
     s = Sim("PUB-12")
-    s.refuse("p2", 1)  # p2 out of order: attempt 1 used
+    s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
+    s.refuse("p2", 1)
+    msg = s.say(product_id="p1", outcome="refused")  # the agreed credit card withdrawn: counts, p1 goes on at attempt 2
+    assert "Make attempt 2 now" in msg and load_state(s.v)["p"]["p1"]["tried"] == 1
+    msg = s.say(product_id="p1", outcome="refused")
+    assert "last attempt for the credit card" in msg and "personal loan" in msg and "attempt 2 of its plan" in msg
+
+
+def test_a14_out_of_order_refusal_uses_no_attempt():
+    """A14: a refusal of a product the code has not named yet counts no attempt (it was an attempt-1 skip before)."""
+    s = Sim("PUB-12")
+    msg = s.say(product_id="p2", outcome="refused")
+    assert load_state(s.v)["p"]["p2"].get("tried") is None and msg.startswith("The personal loan: Not counted: its offer is not made yet")
     msg = s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
-    assert "personal loan" in msg and "attempt 2 of its plan" in msg
+    assert "Next is the personal loan" in msg and "make attempt 1 of its plan now" in msg
+    assert "I understand you said no to the personal loan" in msg
 
 
 def test_fix1_refusal_before_any_offer_is_not_counted():
@@ -615,18 +638,13 @@ def test_fix1_refusal_before_any_offer_is_not_counted():
     msg = s.say(product_id="p3", outcome="refused")
     p3 = load_state(s.v)["p"]["p3"]
     assert p3["status"] == "pending" and not p3.get("tried") and "Make attempt" not in msg
-    assert msg.startswith("The car loan: Not counted yet. If you already made attempt 1 for the car loan and the customer refused it, call set_product")
-    assert "before you speak" in msg and "make attempt 1 of its plan" in msg and s.v["mp_phase"] == "open"
-    # fix round 2: no offer text, so the model is not invited to read the offer out a second time
-    import re
-    assert re.findall(r"\d+", msg.replace("attempt 1", "")) == [], msg  # no amount, no date figure
-    assert "140" not in msg and "2026" not in msg
-    for word in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "October", "November", "propose", "lower amount", "full amount"):
-        assert word not in msg, word
+    # A14: no "call refused again" invitation; the instruction is the current product's (the credit card, attempt 1)
+    assert msg.startswith("The car loan: Not counted: its offer is not made yet (it comes later in the order); this no uses no attempt.")
+    assert "again" not in msg.split("Next is")[0] and "Next is the credit card ending 9015" in msg and "attempt 1 of its plan" in msg
     assert 'A "no" to the today question uses no attempt' in s.w["nodes"]["negotiate"]["task_message"]
-    # once the offer is noted (here: the Not-yet answer told the model to make it), a refusal counts
+    # the second report of the same no (the live call's escape) still counts nothing: the car loan was never offered
     msg = s.say(product_id="p3", outcome="refused")
-    assert load_state(s.v)["p"]["p3"]["status"] == "refused" and "no more offers" in msg
+    assert load_state(s.v)["p"]["p3"]["status"] == "pending" and not load_state(s.v)["p"]["p3"].get("tried")
 
 
 def test_fix1_offer_named_by_a_result_counts_without_not_yet():
@@ -871,14 +889,15 @@ def test_a11_pub12_replay_parallel_calls_keep_the_agreed_product():
     assert st["p2"]["status"] == "pending" and st["p3"]["status"] == "pending"
     for msg in res:  # every result of the batch carries every answer of it and what is still open
         assert "The credit card ending 9015: Noted for now" in msg
-        assert "The personal loan: Not counted yet." in msg and "The car loan: Not counted yet." in msg
+        assert "The personal loan: Not counted: its offer is not made yet" in msg and "The car loan: Not counted: its offer is not made yet" in msg
         assert "Still open: the personal loan and the car loan." in msg
-        assert "Next is" not in msg  # the Not-counted answers already say what to do
+        assert "Next is the personal loan" in msg and "I understand you said no to the personal loan" in msg  # A14
     assert s.v["mp_phase"] == "open"
-    # the model re-reports both refusals (again in parallel), then the second personal-loan attempt is refused
-    res = s.batch({"product_id": "p2", "outcome": "refused"}, {"product_id": "p3", "outcome": "refused"})
-    assert all("attempt 1 of 2 for the personal loan" in m and "last attempt for the car loan" in m for m in res)
-    s.say(product_id="p2", outcome="refused")
+    # A14: the customer refuses the personal loan's two offers, then the car loan's one offer
+    assert "attempt 1 of 2 for the personal loan" in s.say(product_id="p2", outcome="refused")
+    msg = s.say(product_id="p2", outcome="refused")
+    assert "Next is the car loan" in msg and "I understand you said no to the car loan" in msg
+    s.say(product_id="p3", outcome="refused")
     assert s.v["mp_phase"] == "readback"
     assert s.v["mp_readback"].startswith("To confirm, you will pay 510.00 for your credit card ending 9015 on Thursday 15 October 2026.")
     s.confirm()
