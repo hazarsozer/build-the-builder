@@ -610,8 +610,8 @@ class Multi:
             "date": {"type": "string", "description": "For agreed: the payment date, YYYY-MM-DD."},
         }
         props.update(xprops)
-        desc = ("Report a settled product. CALL it every time a product is settled (agreed, refused, "
-                + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
+        desc = ("Report a product's answer. CALL it after EVERY refusal of an offer (refused, before you speak), and when a product "
+                "is agreed or settled (agreed, " + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
         if mode == "api":
             return self.c.tool(SET_TOOL, props, ["product_id", "outcome"], path="get_account", description=desc,
                                mapping=[{"path": "data.phase", "variable": PHASE}], pre=head + API_ARGS + SET_PRE, post=SET_POST)

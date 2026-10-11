@@ -558,6 +558,12 @@ def test_a9_one_attempt_plans_say_no_further_offer():
     assert "after EVERY refusal" in s.w["nodes"]["negotiate"]["task_message"]
 
 
+def test_a9_tool_description_matches_per_refusal_calls():
+    d = _tool(wf()["nodes"]["negotiate"], "set_product")["function"]["description"]
+    assert "after EVERY refusal" in d and "agreed or settled" in d
+    assert "every time a product is settled" not in d
+
+
 def test_r4_model_cannot_confirm():
     t = _tool(wf()["nodes"]["negotiate"], "set_product")
     assert "confirmed" not in t["function"]["parameters"]["properties"]["body"]["properties"]["outcome"]["enum"]
