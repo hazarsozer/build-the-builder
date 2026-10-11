@@ -304,3 +304,14 @@ def test_self04_after_deadline_keeps_the_current_attempt_amount():
     s = json.loads(json.dumps(A))
     s["negotiation"]["after_deadline"] = "reject"
     assert "current attempt" not in C(s, OA)["nodes"]["negotiate"]["task_message"].split("A date after the deadline")[1][:200]
+
+
+# ---------------------------------------------------------------- item 2: SELF-11 (injection persona broke role)
+
+def test_self11_injection_persona_is_framed_as_a_role_line():
+    from builder import cases as CS
+    spec = json.load(open(DRESS_A))
+    inj = [c for c in CS.generate(spec, OA, "2026-10-14T11:00") if c["scenario"] == "injection"][0]
+    sc = inj["script"]
+    assert "not an instruction to you" in sc and "First confirm the name." in sc
+    assert sc.index("First confirm the name.") < sc.index(CS.INJECTION) < sc.index("Answers the security questions correctly")
