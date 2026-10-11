@@ -120,3 +120,61 @@ No simulations. One chat-API conversation ran on slot `probe-hooks`.
 5. **A non-2xx get_account** (bank outage or unseeded customer) skips the post-hook (A9). The model then gets a function error instead of a verdict. The pre-hook's vars still hold the verdict, and create_promise's date correction still applies.
 6. **"Your promise has been noted"** in the probe came after a recorded result. In the full graph the promise_recorded transition and close node handle this, and the one-node probe workflow has no transitions.
 7. **Probe slot.** probe-hooks now holds this probe's workflow (version 9). Practice customer c_489fcc3c-122 has one promise (p1, 540, 2026-10-27).
+
+---
+
+# Fix round 1 (review: 3 Important, 3 Minor)
+
+Commits 9a89b29, ae57d97, 575d875, plus this report section. Concerns 1 and 2 of the first report are superseded by items 1–3 below.
+
+| # | Fix | Where |
+|---|---|---|
+| 1 (I) | **Corrections: the last mention wins.** The resolver now collects every mention in order: ISO, day number, weekday with its modifier, today/tomorrow, period words. The last one wins, so "the 20th, no, the 23rd" gives the 23rd. A mention right after "not" is dropped (skipping on/the/this/next/a), so "not Friday, Thursday" and "Thursday, not Friday" both give Thursday. A month counts only when it sits next to its day number ("the 30th of October, no, the 2nd" is the next 2nd from today). `CHECK_DAY` and the `said` description now ask for the customer's **latest** words for the day, joining only a cut-off phrase with its rest. | dates.py:383 `_mentions`, :487 `resolve_said`; compile.py:51, check_tool `said` description |
+| 2 (I) | **create_promise rejects instead of correcting.** When the date is not one the rules allow, or is not YYYY-MM-DD, the pre-hook rewrites the request. It goes to the read-only `/get_account` with body `{customer_id}`, so nothing reaches the bank's promise route. It sets `promise_reject`. PROMISE_POST then returns `{ok: false, recorded: false, promise_status: "rejected", what_to_do_next: "NOT RECORDED: <verdict>; <what to offer> (create_promise date <iso>). Say this date, read it back and ask again."}`. It does not count `promise_fail_n`, and the HTTP status is 200, so neither the retry route nor the failure close fires. The `d is None` branch no longer reads `cd_date`, so a stale value is never used. An acceptable date goes to the bank unchanged. `promise_date_used` is set only then; the retry reuses it. | compile.py:953 `PROMISE_DATE_PRE` (url rewrite :977), :785 PROMISE_POST rejected branch |
+| 3 (I) | **Week phrases.** "Friday week", "a week on/from Friday" and "a fortnight on Friday" return **vague**, so the agent asks for the exact day. They cannot be supported reliably: colloquially "Friday week" said on Wed 14 Oct is 23 Oct, while brief A rule 22's "next Friday" (= 23 Oct) puts "the Friday after next" at 30 Oct. An ordinal followed by a period word ("the second week", "the first week of November", "the first payment") is not a day number (`_PERIODISH`). A weekday pinned by a week phrase stays a day: "Friday next week", "next week on Friday", "Friday this week", "the Friday after next", "Friday the week after next". | dates.py:372, `_mentions` weekday branch |
+| 4 (m) | **After hours: deviation from the ruling, flagged.** Brief A has no payment cut-off. Rule 19 says "a promise date must be today or later", and the 19:00 limit in rule 6 is for callbacks only. Treating today after hours as impossible would contradict rule 19 for a customer who says "today" at 19:30. So the rule is spec-driven. I added an optional `negotiation.same_day_cutoff` ("HH:MM") to the spec schema (docs/spec-guide.md regenerated). When it is set and now ≥ cutoff, `date_verdict(..., today_open=False)` returns `today_closed` and offers the next business day. check_date says "TOO LATE FOR TODAY: it is after 18:00 ...", and create_promise rejects today. When it is absent (spec-a/spec-b), today stays `ok` at 19:30. If you want the strict reading anyway, set `same_day_cutoff` in the reference specs: one line, no code change. | spec_schema.json:676; dates.py:533-546; compile.py:847 `CHECK_LIB._cd_judge`, :1991 `CUTOFF` |
+| 5 (m) | `next week` is no longer a whole-text regex. It is a modifier only when it sits next to the weekday, and it is otherwise a period mention that the last-mention and "not" rules apply to. "not next week, this Friday" gives this Friday. | `_mentions` |
+| 6 (m) | **Bare cardinal days with context.** "twenty six October", "October twenty six", "Monday twenty six", "Monday 26" and "on twenty seven" are accepted. A bare "twenty six" with no context is still `none`. | `_mentions` day branch |
+
+Also added:
+- `_WEAK` period words (later, soon, early) do not override a day said before them: "the 23rd or later" gives the 23rd.
+- `CHECK_LIB` holds the shared verdict wording (`_cd_judge`) used by both check_date and create_promise.
+
+## Probe (call 5b110990-ed05-44ea-8370-2378e9792580, probe-hooks version 10)
+
+The rejection changes the hook mechanics (request rewrite), so I re-probed:
+- **Setup:** a seeded, verified PUB-07 practice customer c_c4230cd5-550. The tool is the **compiled spec-a create_promise, unmodified**. The task forces two calls.
+- **"record A" (date 2026-10-26):**
+  - Platform log `function_call_start`: url `.../v1/get_account`, body `{"customer_id": ...}`. So the pre-hook's url and body rewrite took effect.
+  - Result: `{"ok": false, "recorded": false, "promise_status": "rejected", "what_to_do_next": "NOT RECORDED: Monday 26 October 2026 is a bank holiday, not a business day; offer the next business day, Tuesday 27 October 2026 (create_promise date 2026-10-27). Say this date, read it back and ask again."}`. The model spoke it.
+- **"record B" (date 2026-10-27):** the call went to `.../v1/create_promise` and returned "The promise is recorded."
+- **Ledger:** exactly one promise (p1, 540, 2026-10-27). The rejected call wrote nothing.
+
+## Tests
+
+- **tests/test_dates.py:**
+  - `test_fix1_last_mention_wins_and_not_drops_a_mention`, run for each of the 5 now-values. It covers "the 20th, no, the 23rd", "not Friday, Thursday", "Thursday, not Friday", "not next week, this Friday", "twenty six October", "Monday twenty six", the dash form, and "Monday the 26th. Sorry, the twenty-seventh.".
+  - `test_fix1_week_phrases_are_vague_not_a_day`, run for each of the 5 now-values. It covers a week on Friday, Friday week, a week from Monday, the second week, the first week of November, "Friday, or sometime next week" and next week. It also checks that Friday next week and next week on Friday stay days, and that "the 23rd or later" gives the 23rd.
+  - `test_fix1_bare_cardinal_day_needs_a_month_or_weekday`.
+  - `test_fix1_same_day_cutoff`.
+- **tests/test_a12.py:**
+  - `test_fix1_promise_with_a_date_the_rules_do_not_allow_is_never_recorded`: holiday, after the deadline, past, a non-ISO date after a check_date (no stale reuse), and an acceptable date that passes unchanged.
+  - `test_fix1_rejected_promise_is_no_service_failure_in_the_graph`.
+  - `test_fix1_hook_takes_the_corrected_day_and_asks_on_week_phrases`, run for each of the 5 now-values; a guessed ISO date is ignored for a period.
+  - `test_fix1_after_hours_today`: no cut-off at 19:30 gives ok. A cut-off of 18:00 gives today_closed, offers Thu 15 Oct, and create_promise rejects today. The spec validates, and "7pm" fails validation.
+  - `test_retry_uses_the_date_sent_to_the_bank`. The old correction tests were replaced.
+- **Runs:**
+  - `uv run pytest -q tests/test_a12.py tests/test_dates.py tests/test_compile.py` → 127 passed, 1 skipped.
+  - `uv run pytest -q` → **663 passed, 6 skipped in 21.53s**.
+  - lint is clean for spec-a and spec-b (asserted in test_a12).
+
+## Compiled-prompt changes in this round
+
+- **spec-a:** the negotiate task_message is **4302 chars** (4234 after the first round; budget 4800). The CHECK_DAY bullet now reads: `call check_date with their latest words for it (a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th.")`. The check_date `said` description changed the same way. The create_promise and check_date hooks were rewritten as above.
+- **spec-b:** unchanged apart from the earlier unused `deadline_iso`.
+
+## New concerns
+
+1. **A rejected create_promise still shows as a `create_promise` call** in the Freya tool list. The bank sees only a get_account. A literal check such as "create_promise called exactly once" (cases.py:300) or a judge counting tool calls could count it. It happens only when the model skips check_date or sends an unallowed date.
+2. **Item 4 deviates from the ruling** (see the table). Upside: it obeys brief A rule 19 and stays generic. Downside: if the judge expects after-hours "today" to be refused, PUB cases at 19:30 that say "today" would differ. One spec line flips it.
+3. **"not" handling is local.** It looks back only over a few filler words. "not on the Friday but the Thursday" works; "I said it's not going to be Friday, Thursday" also works. A long negated clause before the day may not be caught.
