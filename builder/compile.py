@@ -1900,7 +1900,7 @@ HOW TO GET A PROMISE
 
     def opening_node(self):
         op = self.s["opening"]
-        first, _ = safe_opening(op["first_sentence"])
+        first, _ = safe_opening(op["first_sentence"], op.get("verbatim", False))
         values, desc, trans = self.event_values("opening")
         unclear = self.fallback_close("opening", ["unclear"])
         max_asks = op.get("max_asks", 2)

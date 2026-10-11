@@ -29,8 +29,11 @@ def opening_warnings(sentence):
     return ["opening says %r before the person is confirmed" % m.group(1) for m in _BANNED_OPENING.finditer(rest)]
 
 
-def safe_opening(sentence):
-    """Rephrase a recording notice to the safe sentence. Returns (text, changed)."""
+def safe_opening(sentence, verbatim=False):
+    """Rephrase a recording notice to the safe sentence. Returns (text, changed).
+    A sentence the brief requires word for word (opening.verbatim) is returned untouched."""
+    if verbatim:
+        return sentence or "", False
     sents = [s for s in re.split(r"(?<=[.!?])\s+", (sentence or "").strip()) if s]
     out, need = [], False
     for s in sents:
@@ -100,21 +103,32 @@ def lint(workflow, spec):
     nodes = workflow.get("nodes", {})
     op = spec.get("opening", {})
 
-    # 1. opening wording
-    errs += ["warning: spec opening.first_sentence: " + w + "; the compiler rephrases a recording notice"
-             for w in opening_warnings(op.get("first_sentence", ""))]
+    # 1. opening wording. opening.verbatim: the brief requires the first sentence word for word, so the
+    # compiler keeps it as written and words inside it only warn.
+    verbatim = bool(op.get("verbatim"))
+    first = op.get("first_sentence", "") or ""
+    if verbatim:
+        errs += ["warning: spec opening.first_sentence: " + w + "; kept word for word (opening.verbatim)"
+                 for w in opening_warnings(first)]
+    else:
+        errs += ["warning: spec opening.first_sentence: " + w + "; the compiler rephrases a recording notice"
+                 for w in opening_warnings(first)]
     opening = nodes.get("opening", {})
     text = (opening.get("on_enter") or {}).get("text", "")
-    errs += ["opening line: " + w for w in opening_warnings(text)]
+    # the verbatim sentence is the one part of the opening line that is exempt from the word checks
+    checked = text.replace(first, " ", 1) if verbatim and first else text
+    errs += ["opening line: " + w for w in opening_warnings(checked)]
     # 1b. no "record*" in text spoken before a successful create_promise (fixed lines and quoted templates)
     for k in SPOKEN_BEFORE_SUCCESS:
         n = nodes.get(k) or {}
         spoken = [(n.get("on_enter") or {}).get("text", "")] + re.findall(r'"([^"]*)"', n.get("task_message", ""))
         for t in spoken:
+            if verbatim and first and first in (t or ""):
+                t = t.replace(first, " ")
             if _RECORD.search(t or ""):
                 errs.append("node %s: spoken text says %r before a promise is recorded: %r" % (k, _RECORD.search(t).group(0), t[:80]))
     for word in op.get("banned_before_verify", []):
-        if re.search(r"\b%s\b" % re.escape(word), _SAFE_RECORDING.sub(" ", text), re.I):
+        if re.search(r"\b%s\b" % re.escape(word), _SAFE_RECORDING.sub(" ", checked), re.I):
             errs.append("opening line says banned %r" % word)
 
     # 2. no brace pairs in code
