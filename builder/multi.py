@@ -713,6 +713,9 @@ for q in (st.get('ga') or order):
             failed.append(P['words'])
     elif stt == 'pending':
         r = END_NOTE
+    elif stt in REFUSALS and REFUSED_NOTE in REASONS:
+        # F1: a refusal reported under another name (set_product `refused`) takes the refusal note
+        r = REFUSED_NOTE
     else:
         r = stt
     if NOTES_ON and r in REASONS:
@@ -919,6 +922,13 @@ class Multi:
     def account_code(self):
         return _const("MP", {"order": self.mp.get("order", "get_account")}) + MP_ACCOUNT_CODE
 
+    def refusals(self):
+        """Product statuses that mean the customer refused: the set_product literal, the refused event's id and close
+        reason, and the close reason the note mapping gives the refusal note (F1: MRW-04 `refused` vs note `declined`)."""
+        ev = self.c.events.get("refused") or {}
+        out = ["refused", ev.get("id"), ev.get("reason"), self.reason_map.get(self.refused_note)]
+        return sorted({x for x in out if x and x != self.refused_note})
+
     def wrap(self, name, end_note, recording=False, fallback=None):
         c = self.c
         fe = c.events.get(self.fail_ev) or {}
@@ -943,6 +953,7 @@ class Multi:
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
+                "REFUSED_NOTE = %r\n" % self.refused_note + _const("REFUSALS", self.refusals()) +
                 _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
                 _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
                 "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", self.c.say_for(fe, "negotiate") or FAIL_SAY_DEFAULT) +
