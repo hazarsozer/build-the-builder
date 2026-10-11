@@ -52,3 +52,12 @@ def test_reference_specs_unchanged_by_flag_absence():
         assert "verbatim" not in s["opening"]
         w = C(s, OA)
         assert lint(w, s) == []
+
+
+def test_specdiff_missing_verbatim_equals_false():
+    from builder.specdiff import diff_specs
+    a, b = copy.deepcopy(A), copy.deepcopy(A)
+    b["opening"]["verbatim"] = False
+    assert diff_specs(a, b) == []
+    b["opening"]["verbatim"] = True
+    assert diff_specs(a, b)
