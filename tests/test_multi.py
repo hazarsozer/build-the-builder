@@ -107,7 +107,8 @@ def test_spec_a_node_set_unchanged():
         "close_deceased", "close_unclear", "close_account_error",
         "human_ask_opening", "human_hold_opening", "human_ask_identity", "human_hold_identity",
         "human_ask_negotiate", "human_hold_negotiate",
-        "human_back_opening", "human_back_identity", "human_back_negotiate"}
+        "human_back_opening", "human_back_identity", "human_back_negotiate",
+        "hardship_offer", "hardship_hold", "hardship_back"}  # A10 support offer latch
     assert [t["function"]["name"] for t in w["nodes"]["negotiate"]["tools"]] == ["create_promise"]
 
 
@@ -768,7 +769,7 @@ def test_l3_readback_hears_transfers_and_support():
         by.setdefault(t["target_node"], []).append(json.dumps(t["condition"]))
     assert any('"restructuring"' in c for c in by["transfer_restructuring"])
     assert any('"human_first_request"' in c for c in by["human_ask_readback"])
-    assert any('"hardship"' in c for c in by["readback_reset"])
+    assert any('"hardship"' in c for c in by["hardship_offer"])  # A10: the support offer step, as from negotiate
     hold = w["nodes"]["human_hold_readback"]
     assert [t["target_node"] for t in hold["transitions"]] == ["transfer_general", "human_back_readback"]
     v = {"rb_answer": "human_first_request"}

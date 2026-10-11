@@ -700,7 +700,9 @@ class Multi:
             elif act == "offer_transfer_else_close":
                 values.append(eid)
                 desc.append("%s: the customer %s." % (eid, trig))
-                trans.append(go("readback_reset", "Back to negotiate: " + eid, cond_any(eq("rb_answer", eid))))
+                # A10: the support offer step (spoken once, reply routed in code), as from negotiate
+                t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
+                trans.append(go(c.support_nodes(ev, t), "Support offer: " + eid, cond_any(eq("rb_answer", eid))))
         return values, desc, trans
 
     def build(self, nodes):
@@ -766,7 +768,8 @@ class Multi:
         # never noted as refused; nothing agreed -> wrap_done
         nodes[END_NODE] = code_node(END_NODE, NEG_END_CODE, "wrap_done",
                                     [go("readback", "Agreed products: read them back", cond_any(eq("mp_end", "readback")))])
-        # wraps
+        # wraps; a turn cap, goodbye or "nothing to confirm" after a support offer ends with that event's wrap (A10)
+        c.latch_gate("wrap_done")
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
         refused = c.events.get("refused") or {}
         nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
