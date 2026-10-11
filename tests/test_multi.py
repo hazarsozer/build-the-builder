@@ -172,6 +172,28 @@ class Sim:
         assert g["_result"]["what_to_do_next"] == self.v["mp_msg"]
         return self.v["mp_msg"]
 
+    def batch(self, *bodies):
+        """Parallel set_product calls as the platform ran them (A11 probe f58d6ed0): every pre-hook reads the same
+        snapshot of vars, their writes merge per variable (the last writer wins a variable), then the post-hooks run
+        on the merged variables, each followed by its response mapping. Returns every result's what_to_do_next."""
+        snap = copy.deepcopy(self.v)
+        writes = []
+        for body in bodies:
+            v = copy.deepcopy(snap)
+            exec(self.t["pre_process_code"], {"vars": v, "config": {"url": "x", "body": dict(body)}})
+            writes.append({k: x for k, x in v.items() if k not in snap or snap[k] != x})
+        for w in writes:
+            self.v.update(w)
+        self.batch_writes = writes
+        out = []
+        for _ in bodies:
+            r = {"status": "success", "data": {"ok": True, "products": []}, "header": {}}
+            exec(self.t["post_process_code"], {"vars": self.v, "result": r})
+            for m in self.t.get("response_mapping", []):
+                self.v[m["variable"]] = r["data"][m["path"].split(".", 1)[1]]
+            out.append(r["data"]["what_to_do_next"])
+        return out
+
     def refuse(self, pid, n):
         """The customer refuses up to n attempts of the product: one set_product refused call per refusal."""
         msg = None
@@ -819,3 +841,100 @@ def test_l4_mp_msg_sentinel():
     assert s.v["mp_msg"] == "none yet" and s.v["neg_event"] == "continue"
     s.run("readback_reset")
     assert "did not confirm" in s.v["mp_msg"]
+
+
+# ---------------------------------------------------------------- A11: parallel set_product calls
+
+PUB12_BATCH = ({"product_id": "p2", "outcome": "refused"},
+               {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-15"},
+               {"product_id": "p3", "outcome": "refused"})
+
+
+def test_a11_pre_hook_writes_only_its_own_product_variable():
+    """No pre-hook rewrites a variable another product's call also writes, except the batch counter (same value)."""
+    s = Sim("PUB-12")
+    s.batch(*PUB12_BATCH)
+    w2, w1, w3 = s.batch_writes
+    assert set(w1) == {"mp_p1", "mp_seq"} and set(w2) == {"mp_p2", "mp_seq"} and set(w3) == {"mp_p3", "mp_seq"}
+    assert w1["mp_seq"] == w2["mp_seq"] == w3["mp_seq"]
+    for w in (w1, w2, w3):
+        assert "mp_state" not in w and "mp_msg" not in w and "mp_phase" not in w
+
+
+def test_a11_pub12_replay_parallel_calls_keep_the_agreed_product():
+    """Live call 922f2517 (gate a9c): three parallel calls, p1's agreement was lost to the shared-JSON rewrite."""
+    s = Sim("PUB-12")
+    res = s.batch(*PUB12_BATCH)
+    st = load_state(s.v)["p"]
+    assert st["p1"]["status"] == "agreed" and st["p1"]["date"] == "2026-10-15" and st["p1"]["amount"] == 510.0
+    assert st["p2"]["status"] == "pending" and st["p3"]["status"] == "pending"
+    for msg in res:  # every result of the batch carries every answer of it and what is still open
+        assert "The credit card ending 9015: Noted for now" in msg
+        assert "The personal loan: Not counted yet." in msg and "The car loan: Not counted yet." in msg
+        assert "Still open: the personal loan and the car loan." in msg
+        assert "Next is" not in msg  # the Not-counted answers already say what to do
+    assert s.v["mp_phase"] == "open"
+    # the model re-reports both refusals (again in parallel), then the second personal-loan attempt is refused
+    res = s.batch({"product_id": "p2", "outcome": "refused"}, {"product_id": "p3", "outcome": "refused"})
+    assert all("attempt 1 of 2 for the personal loan" in m and "last attempt for the car loan" in m for m in res)
+    s.say(product_id="p2", outcome="refused")
+    assert s.v["mp_phase"] == "readback"
+    assert s.v["mp_readback"].startswith("To confirm, you will pay 510.00 for your credit card ending 9015 on Thursday 15 October 2026.")
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")] and notes == [("p2", "refused"), ("p3", "refused")]
+    assert outcome == "promise"
+
+
+def test_a11_parallel_agreements_all_kept_and_read_back():
+    """A customer settling every product in one message: three parallel agreed calls, none lost."""
+    s = Sim("PUB-11")
+    s.batch(*({"product_id": p, "outcome": "agreed", "amount": "full", "date": "2026-10-16"} for p in ("p1", "p2", "p3")))
+    assert [load_state(s.v)["p"][p]["status"] for p in ("p1", "p2", "p3")] == ["agreed"] * 3
+    assert s.v["mp_phase"] == "readback" and s.v["mp_readback"].count("Friday 16 October 2026") == 3
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert len(promises) == 3 and notes == [] and outcome == "promise"
+
+
+def test_a11_goodbye_after_a_parallel_batch_reads_the_agreed_product_back():
+    """The live call's end: goodbye with p1 agreed in a batch -> negotiate_end reads it back (never wrap_done/refused)."""
+    s = Sim("PUB-12")
+    s.batch(*PUB12_BATCH)
+    s.v["mp_readback"] = ""  # a result spoken before the batch had landed may have built no read-back
+    s.run("negotiate_end")
+    assert s.route(s.w["nodes"]["negotiate_end"]) == "readback"
+    assert "510.00 for your credit card ending 9015" in s.v["mp_readback"]
+
+
+def test_a11_review_with_open_products_forbids_noted_and_goodbye():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    msg = s.say(product_id="ALL", outcome="review")
+    assert msg.startswith("NOT every product is settled: the personal loan and the car loan are still open. "
+                          "Nothing is noted or recorded for them and the call is not over: never say noted, recorded or goodbye now.")
+    assert "Next is the personal loan" in msg and s.v["mp_phase"] == "open"
+    s.refuse("p2", 2)
+    msg = s.say(product_id="ALL", outcome="review")
+    assert msg.startswith("NOT every product is settled: the car loan is still open. Nothing is noted or recorded for it")
+    t = wf()["nodes"]["negotiate"]["task_message"]
+    assert ('A result that says a product is still open ("NOT every product is settled", "Still open"): nothing is noted for it '
+            "and the call is not over; never say noted, recorded or goodbye, continue with that product.") in t
+
+
+def test_a11_confirmed_product_is_never_noted_refused_by_any_wrap():
+    """A product agreed and confirmed at the read-back but not recorded gets the service-failure note in every wrap."""
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.refuse("p2", 2)
+    s.refuse("p3", 1)
+    s.confirm()
+    s.run("record_plan")
+    assert json.loads(s.v["mp_confirmed"]) == ["p1"]
+    wraps = [k for k in s.w["nodes"] if k.startswith("wrap_")]
+    assert "wrap_done" in wraps and "wrap_recorded" in wraps and len(wraps) > 3
+    for k in wraps:
+        v = copy.deepcopy(s.v)
+        exec(_code(s.w["nodes"][k]), {"vars": v})
+        notes = {v["note%d_pid" % i]: v["note%d_reason" % i] for i in range(1, 4) if v.get("note_has_%d" % i) == "yes"}
+        assert notes.get("p1") not in (None, "refused"), (k, notes)
