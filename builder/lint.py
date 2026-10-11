@@ -49,6 +49,17 @@ def safe_opening(sentence, verbatim=False):
     return " ".join(out), need
 
 
+def never_say_words(spec):
+    """spec.never_say: words or phrases the brief forbids in every sentence of the call."""
+    w = spec.get("never_say") if isinstance(spec, dict) else None
+    return [x.strip() for x in w if isinstance(x, str) and x.strip()] if isinstance(w, list) else []
+
+
+def never_say_re(word):
+    """The word or phrase in any form: its last word may take an ending (guarantee -> guaranteed, lawsuit -> lawsuits)."""
+    return re.compile(r"\b%s\w*" % r"\s+".join(re.escape(p) for p in word.split()), re.I)
+
+
 def required_pre_verify_sentences(spec):
     """(where, text) for what the agent must speak to the customer before identity is verified: the opening, the
     confirm question, the security questions and the decline explanation (not third-party or hint text)."""
@@ -241,4 +252,20 @@ def lint(workflow, spec):
 
     # 5. no nulls anywhere
     _nulls(workflow, "workflow", errs)
+
+    # 6. spec.never_say: no fixed text the agent speaks uses a forbidden word (engine lines, farewells, quoted
+    # sentences in prompts). A quoted string that is only the word itself is the prompt's own never-say list.
+    for word in never_say_words(spec):
+        rx = never_say_re(word)
+        for k, n in nodes.items():
+            spoken = []
+            if (n.get("on_enter") or {}).get("type") == "tts":
+                spoken.append(n["on_enter"].get("text", ""))
+            if k.startswith("close_"):
+                spoken.append(farewell_of(n))
+            spoken += [t for t in re.findall(r'"([^"]*)"', n.get("task_message") or "") if not rx.fullmatch(t.strip())]
+            for t in spoken:
+                m = rx.search(t or "")
+                if m:
+                    errs.append("node %s: fixed text says never-say %r: %r" % (k, m.group(0), t[:80]))
     return errs
