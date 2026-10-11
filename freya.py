@@ -28,9 +28,17 @@ def workspace_id():
         _ws = os.environ.get("FREYA_WORKSPACE_ID") or items[0]["id"]
     return _ws
 
+def _positions(workflow):
+    """The record-level `nodePositions` the dashboard's editor reads first, copied from the nodes' own `position`
+    (builder/layout.py). Empty when no node has one, so a workflow without a layout sends nothing new."""
+    pos = {k: {"x": n["position"]["x"], "y": n["position"]["y"]}
+           for g in ("nodes", "global_nodes") for k, n in (workflow.get(g) or {}).items()
+           if isinstance(n, dict) and isinstance(n.get("position"), dict) and {"x", "y"} <= set(n["position"])}
+    return {"nodePositions": pos} if pos else {}
+
 def create_workflow(name, workflow):
     """Create a workflow. Freya creates its agent with it. Returns {workflow_id, agent_id}."""
-    w = api("POST", "/api/v2/workflow", {"name": name, "workflow": workflow})["workflow"]
+    w = api("POST", "/api/v2/workflow", {"name": name, "workflow": workflow, **_positions(workflow)})["workflow"]
     return {"workflow_id": w["id"], "agent_id": w["agentId"]}
 
 def save_workflow(slot, workflow, state_file=".freya-agents.json"):
@@ -51,13 +59,13 @@ def update_workflow(workflow_id, workflow):
 
     An update alone only saves a new, unpublished version. Simulations and calls keep running the published one,
     so an update that is not published tests your old phone agent."""
-    api("PUT", f"/api/v2/workflow/{workflow_id}", {"workflow": workflow})
+    api("PUT", f"/api/v2/workflow/{workflow_id}", {"workflow": workflow, **_positions(workflow)})
     # The platform fills in a default agent_config. If its model is not the event's model, a simulation still runs
     # (it overrides the model), but a chat turn or a real call cannot start. Set the model and save once more.
     w = api("GET", f"/api/v2/workflow/{workflow_id}", workspaceId=workspace_id())["workflow"]["workflow"]
     ac = w.get("agent_config") or {}; llm = ac.get("llmConfig") or {}
     if (llm.get("provider"), llm.get("model")) != (AGENT_LLM["provider"], AGENT_LLM["model"]):
-        ac["llmConfig"] = {**llm, **AGENT_LLM}; api("PUT", f"/api/v2/workflow/{workflow_id}", {"workflow": {**w, "agent_config": ac}})
+        ac["llmConfig"] = {**llm, **AGENT_LLM}; api("PUT", f"/api/v2/workflow/{workflow_id}", {"workflow": {**w, "agent_config": ac}, **_positions(w)})
     vs = api("GET", f"/api/v2/versions/workflow/{workflow_id}", workspaceId=workspace_id())["versions"]
     newest = max(vs, key=lambda v: v["versionNumber"])
     if not newest.get("isPublished"): api("POST", f"/api/v2/versions/workflow/{workflow_id}/publish", {"versionId": newest["id"]})
@@ -65,7 +73,8 @@ def update_workflow(workflow_id, workflow):
 def export_workflow(workflow_id, path):
     """Write the workflow as it is on the platform to a file. This file is part of what you submit."""
     w = api("GET", f"/api/v2/workflow/{workflow_id}", workspaceId=workspace_id())["workflow"]
-    open(path, "w").write(json.dumps({"workflow_id": w["id"], "agent_id": w.get("agentId"), "updated_at": w.get("updatedAt"), "workflow": w["workflow"]}, indent=1)); return path
+    open(path, "w").write(json.dumps({"workflow_id": w["id"], "agent_id": w.get("agentId"), "updated_at": w.get("updatedAt"), "workflow": w["workflow"],
+                                         **({"nodePositions": w["nodePositions"]} if w.get("nodePositions") else {})}, indent=1)); return path
 def create_personas(personas):        return api("POST", "/api/v2/personas", {"personas": personas})
 def get_iteration(sim_id, it_id):
     """One iteration with ALL its runs. The route returns 30 runs by default and 100 at most, so this reads page by page."""
