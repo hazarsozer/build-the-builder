@@ -4,7 +4,17 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 
 ## 1. The short version
 
-> **Latest (Sun ~06:15):** bench partial 42/56 on unseen test briefs. The weak spot is insurance at 2/8: renamed close outcomes aren't used, and A15 is fixing it. A14 gate: PUB-B 3/3, PUB-A 9/10, the miss being a platform flake. Earlier (~06:00): A12 passed (PUB-A 10/10, PUB-B 3/3). The bench so far, on test briefs the builder has never seen: bands3 8/8, calendar 8/8, fields 7/8. Before that (~04:50): the full builder, run from the brief alone on A+B, produced an agent that scored **PUB-B 3/3 at 3 runs** (build 631 s). Earlier: `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
+> **Latest (Sun ~07:00): `builder` @ 567eb9a, tag `gate-green-3`** (768 tests). On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. This tag adds:
+> - A12: single-product dates in code
+> - A14: multi-product refusal counting
+> - A15: generalisation (outcome names taken from the spec, identity limits, an attempt date on a business day, events triggered by account data)
+> - A16: a verbatim required opening
+> - A13: banned-word consistency
+>
+> **Bench on the code before A15: 61/80 across 10 test briefs the builder had never seen.** All builds were clean, in 170–300 s. The worst were insurance 2/8 (fixed by A15), sme 4/8 (A17 is fixing it) and ids 5/8 (fixed by A15). A re-run of the bench on the current code is next.
+> **Running now:** all 5 customer styles on A and B, 3 runs each.
+>
+> Earlier (~06:15): bench partial 42/56 on unseen test briefs. The weak spot is insurance at 2/8: renamed close outcomes aren't used, and A15 is fixing it. A14 gate: PUB-B 3/3, PUB-A 9/10, the miss being a platform flake. Earlier (~06:00): A12 passed (PUB-A 10/10, PUB-B 3/3). The bench so far, on test briefs the builder has never seen: bands3 8/8, calendar 8/8, fields 7/8. Before that (~04:50): the full builder, run from the brief alone on A+B, produced an agent that scored **PUB-B 3/3 at 3 runs** (build 631 s). Earlier: `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
 
 - **The builder exists end to end and is merged.** `python -m builder.main <brief files>` reads a brief and writes a policy spec, compiles a Freya workflow, tests it on our own copy of the bank, fixes the spec, then exports the workflow and writes a trace. Code: branch `builder`, 451 tests passing.
 - **Live results on the organisers' bank were perfect on the practice set at the `gate-green-1` tag.** Later checks with pieces-style customers show gaps (see section 10):
