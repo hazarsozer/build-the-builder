@@ -47,6 +47,8 @@ EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": 
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
            'say only "Go on." and read it with the next message.')
+DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
+             'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
 MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?"): "That is the <amount> I mentioned; could you '
              'pay it by <date>?", never a new offer, never %s again. Never restate a figure already offered.')
 # Runtime names usable in spec sentences -> the workflow variable that holds them.
@@ -1426,7 +1428,8 @@ FACTS (computed, use them exactly)
 {{calendar_text}}
 
 HOW TO GET A PROMISE
-1. The customer names a date or an amount (combine parts said across turns): never a refusal. Check it:
+1. The customer names a date or an amount (combine parts said across turns: "twelve"... "fifty" = 1250, "four hundred"... "and twenty" = 420; a short number right after a partial one is the rest of it): never a refusal. Check it:
+   - %s
    - Date must be one of the dates you may accept. %s %s
    - %s
    - %s
@@ -1437,7 +1440,7 @@ HOW TO GET A PROMISE
    %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, nbd, aft, vague, DAY_NUMBER, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+            first_ask, DATE_ONLY, nbd, aft, vague, DAY_NUMBER, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
             t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
@@ -1705,7 +1708,7 @@ HOW TO RUN THE CALL
    - Date: a business day from today up to that product's deadline. %(nbd)s A date after its deadline: say the latest date you can accept for it is its deadline, and offer it.
    - %(vague)s %(day_number)s
    - %(cut_off)s
-   - Amount: from the product's floor up to its full amount.
+   - Amount: from the product's floor up to its full amount. %(date_only)s
    - %(too_much)s
 3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
    %(mentioned)s
@@ -1715,7 +1718,7 @@ HOW TO RUN THE CALL
    Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
-            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF,
+            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
         for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
             t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)

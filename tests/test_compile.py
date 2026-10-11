@@ -441,3 +441,14 @@ def test_a9_day_number_and_cut_off_rules_in_both_templates():
         t = w["nodes"]["negotiate"]["task_message"]
         assert '"twenty-sixth"' in t and "first calendar row with that number" in t
         assert '"Monday the."' in t and 'say only "Go on."' in t and "uses no attempt" in t
+
+
+def test_a9_date_only_takes_the_current_attempt_amount():
+    """PUB-04: a date accepted without an amount gets the current offer's amount, no open "what amount?"."""
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert "A date with no amount: the amount is the one of your current attempt" in t
+        assert "never ask them to name an amount" in t
+    t = wf()["nodes"]["negotiate"]["task_message"]
+    step1 = t.split("HOW TO GET A PROMISE")[1].split("\n2. ")[0]
+    assert '"twelve"... "fifty" = 1250' in step1 and "the rest of it" in step1 and "A date with no amount" in step1
