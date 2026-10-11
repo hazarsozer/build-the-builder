@@ -178,3 +178,58 @@ def test_a12_month_words_and_iso():
     assert D.resolve_said("2026-10-27", t, WW)[0] == dt.date(2026, 10, 27)
     assert D.resolve_said("on the second", t, WW)[0] == dt.date(2026, 11, 2)
     assert D.resolve_said("first I need to check", t, WW) == (None, "none")
+
+
+# ---------------------------------------------------------------- A12 fix round 1
+
+FIX1 = {
+    # now: (the 20th no the 23rd, not Friday Thursday, Thursday not Friday, not next week this Friday,
+    #       twenty six October, Monday twenty six)
+    "2026-10-16": ("2026-10-23", "2026-10-22", "2026-10-22", "2026-10-16", "2026-10-26", "2026-10-26"),
+    "2026-10-23": ("2026-10-23", "2026-10-29", "2026-10-29", "2026-10-23", "2026-10-26", "2026-10-26"),
+    "2026-10-14": ("2026-10-23", "2026-10-15", "2026-10-15", "2026-10-16", "2026-10-26", "2026-10-26"),
+    "2026-10-30": ("2026-11-23", "2026-11-05", "2026-11-05", "2026-10-30", "2026-10-26", "2026-10-26"),
+    "2026-12-23": ("2026-12-23", "2026-12-24", "2026-12-24", "2026-12-25", "2027-10-26", "2026-12-26"),
+}
+FIX1_SAID = ("the 20th, no, the 23rd", "not Friday, Thursday", "Thursday, not Friday", "not next week, this Friday",
+             "twenty six October", "Monday twenty six")
+
+
+@pytest.mark.parametrize("now", sorted(FIX1))
+def test_fix1_last_mention_wins_and_not_drops_a_mention(now):
+    today = dt.date.fromisoformat(now)
+    for said, want in zip(FIX1_SAID, FIX1[now]):
+        assert D.resolve_said(said, today, WW) == (dt.date.fromisoformat(want), ""), (now, said)
+    assert D.resolve_said("the 20th - no, the 23rd", today, WW)[0] == D.resolve_said("the 23rd", today, WW)[0]
+    assert D.resolve_said("Monday the 26th. Sorry, the twenty-seventh.", today, WW)[0].day == 27
+
+
+@pytest.mark.parametrize("now", sorted(FIX1))
+def test_fix1_week_phrases_are_vague_not_a_day(now):
+    today = dt.date.fromisoformat(now)
+    for said in ("a week on Friday", "Friday week", "a week from Monday", "the second week", "the first week of November",
+                 "the second week, maybe", "Friday, or sometime next week", "next week"):
+        assert D.resolve_said(said, today, WW) == (None, "vague"), (now, said)
+    # a week phrase that pins a weekday is a day
+    assert D.resolve_said("Friday next week", today, WW)[0] == D.weekday_ref(today, 4, "next")
+    assert D.resolve_said("next week on Friday", today, WW)[0] == D.weekday_ref(today, 4, "next")
+    assert D.resolve_said("the 23rd or later", today, WW)[0].day == 23        # a weak period word does not override a day
+
+
+def test_fix1_bare_cardinal_day_needs_a_month_or_weekday():
+    t = dt.date(2026, 10, 14)
+    assert D.resolve_said("twenty six", t, WW) == (None, "none")
+    assert D.resolve_said("October twenty six", t, WW)[0] == dt.date(2026, 10, 26)
+    assert D.resolve_said("Monday 26", t, WW)[0] == dt.date(2026, 10, 26)
+    assert D.resolve_said("on twenty seven", t, WW)[0] == dt.date(2026, 10, 27)
+
+
+def test_fix1_same_day_cutoff():
+    t = dt.date(2026, 10, 14)
+    dl = dt.date(2026, 11, 2)
+    assert D.date_verdict(t, t, dl, CAL, today_open=False) == ("today_closed", dt.date(2026, 10, 15))
+    assert D.date_verdict(t, t, dl, CAL) == ("ok", t)
+    assert D.date_verdict(dt.date(2026, 10, 15), t, dl, CAL, today_open=False) == ("ok", dt.date(2026, 10, 15))
+    fri = dt.date(2026, 10, 23)                                              # next business day skips the holiday Monday
+    assert D.date_verdict(fri, fri, dt.date(2026, 11, 4), CAL, today_open=False) == ("today_closed", dt.date(2026, 10, 27))
+    assert D.date_verdict(fri, fri, fri, CAL, today_open=False) == ("today_closed", None)
