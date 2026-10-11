@@ -371,3 +371,34 @@ def test_m2_identity_tool_failure_line_is_a_bullet():
     t = wf(A)["nodes"]["identity"]["task_message"]
     assert "\n- If a verify_identity call fails" in t
 
+
+# ---------------------------------------------------------------- F3: get_account is two HTTP attempts, then the close
+
+def test_f3_each_get_account_node_makes_one_http_attempt():
+    """Live EDF-07 (call 7ce32110): the platform retries an HTTP 500 maxRetries times inside one node, so maxRetries=2
+    made load_account + load_account_retry up to six attempts; four 500s were absorbed and the fifth read went on to
+    negotiate. Retry once = one attempt per node."""
+    for label, spec, oa in SPECS:
+        w = wf(spec, oa)
+        for k in ("load_account", "load_account_retry"):
+            ts = [t for t in api_tools(w["nodes"][k]) if t["function"]["name"] == "get_account"]
+            assert ts and all(t["config"]["maxRetries"] == 0 for t in ts), (label, k, [t["config"] for t in ts])
+
+
+def test_f3_load_account_retry_without_ok_routes_only_to_close_account_error():
+    for label, spec, oa in SPECS:
+        w = wf(spec, oa)
+        n = w["nodes"]["load_account_retry"]
+        assert {t["target_node"] for t in n["transitions"]} == {"prepare_account", "close_account_error"}, label
+        assert n["passthrough_default_transition"] == "close_account_error", label
+        for res in (False, (True, {"error": "service unavailable"}), (True, {"ok": False})):
+            v = started(w)
+            api("load_account", w["nodes"]["load_account"], v, False)
+            assert route(w["nodes"]["load_account"], v) == "load_account_retry", label
+            ok, data = res if isinstance(res, tuple) else (res, None)
+            api("load_account_retry", n, v, ok, data)
+            assert route(n, v) == "close_account_error", (label, res)
+        v = started(w)
+        stop, path = walk(w, v, "load_account", [False, (True, {"ok": True, "products": [CARD]})])
+        assert "load_account_retry" in path and "prepare_account" in path, (label, path)
+
