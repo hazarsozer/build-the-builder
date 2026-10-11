@@ -180,6 +180,77 @@ def test_nothing_recorded_skips_the_after_record_turn():
     assert v["mp_recorded"] == "no" and _route(w["nodes"]["wrap_recorded"], v) != "after_record"
 
 
+STW = json.load(open("tests/fixtures/bench-strict-wording.spec.json"))
+STW_OA = json.load(open("bench/strict-wording/openapi.json"))
+WORDS = ["guarantee", "lawsuit", "credit score", "final notice"]
+
+
+def _stw(words=WORDS):
+    s = copy.deepcopy(STW)
+    if words is not None:
+        s["never_say"] = list(words)
+    return s
+
+
+def test_never_say_words_in_every_conversation_step_and_the_global_prompt():
+    s = _stw()
+    w = C(s, STW_OA, base_url=URL)
+    conv = {k: n for k, n in w["nodes"].items() if n["node_type"] == "conversation"}
+    assert {"negotiate", "opening", "identity"} <= set(conv)
+    for k, n in conv.items():
+        assert 'Never say "guarantee", "lawsuit", "credit score" or "final notice", in any form' in n["task_message"], k
+    assert 'Never say "guarantee"' in w["system_prompt"]
+    # banned offers: every step after verification, none before it
+    post = [k for k in conv if k not in ("opening", "identity", "third_party") and not k.endswith(("_opening", "_identity"))]
+    assert "negotiate" in post and len(post) >= 2
+    for k in post:
+        t = conv[k]["task_message"]
+        assert "Never offer a discount" in t or "cannot offer" in t, k
+    assert any("Never offer a discount" in conv[k]["task_message"] for k in post)
+    assert "Never offer" not in conv["opening"]["task_message"] and "Never offer" not in conv["identity"]["task_message"]
+    assert [e for e in lint(w, s) if not e.startswith("warning:")] == []
+
+
+def test_never_say_in_multi_hold_and_after_record_steps():
+    s = copy.deepcopy(MRW)
+    s["never_say"] = ["guarantee"]
+    n = C(s, MRW_OA, base_url=URL)["nodes"]
+    for k in ("negotiate", "readback", "hardship_hold", "after_record"):
+        assert 'Never say "guarantee"' in n[k]["task_message"], k
+
+
+def test_lint_flags_a_never_say_word_in_fixed_text():
+    s = _stw()
+    for r in s["say_rules"]:
+        r["say"] = "I can guarantee nothing about that."
+        break
+    errs = lint(C(s, STW_OA, base_url=URL), s)
+    assert any("never-say 'guarantee'" in e for e in errs)
+    s = _stw()
+    s["confirmation"]["success_sentence"] = "This is your final notices reminder."
+    errs = lint(C(s, STW_OA, base_url=URL), s)
+    assert any("never-say 'final notices'" in e and "close_" in e for e in errs)
+
+
+def test_without_never_say_nothing_changes_but_offers():
+    w = C(_stw(None), STW_OA, base_url=URL)
+    assert "in any form (plural, past tense)" not in json.dumps(w)
+    for s in (A, B):
+        assert "never_say" not in s
+        w = C(s, OA)
+        assert "in any form (plural, past tense)" not in json.dumps(w) and lint(w, s) == []
+
+
+def test_never_say_schema_validates_and_specdiff_unions():
+    from builder.validate import validate
+    from builder.specdiff import diff_specs
+    assert validate(_stw(), STW_OA) == validate(_stw(None), STW_OA)
+    bad = _stw()
+    bad["never_say"] = "guarantee"
+    assert validate(bad, STW_OA) != validate(_stw(None), STW_OA)
+    assert diff_specs(_stw(None), _stw([])) == diff_specs(_stw(None), _stw(None))
+
+
 def test_after_record_only_with_a_transfer_event():
     s = copy.deepcopy(MRW)
     s["events"] = [e for e in s["events"] if e["action"] != "transfer"]
