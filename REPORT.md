@@ -4,7 +4,7 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 
 ## 1. The short version
 
-> **Latest (Sun ~04:30):** `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
+> **Latest (Sun ~04:50):** the full builder, run from the brief alone on A+B, produced an agent that scored **PUB-B 3/3 at 3 runs** (build 631 s). Earlier: `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
 
 - **The builder exists end to end and is merged.** `python -m builder.main <brief files>` reads a brief and writes a policy spec, compiles a Freya workflow, tests it on our own copy of the bank, fixes the spec, then exports the workflow and writes a trace. Code: branch `builder`, 451 tests passing.
 - **Live results on the organisers' bank were perfect on the practice set at the `gate-green-1` tag.** Later checks with pieces-style customers show gaps (see section 10):
@@ -203,7 +203,9 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 
   Gate on the reference specs, organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3**, with 0 sandbox errors. The suite passes at 594. One run was lost to a stuck Freya simulation, which we cancelled.
 - [ ] A12, in review: the date verdict for a single product moves into code, through a check_date tool. This fixes PUB-07, where the customer said "Monday the twenty-sixth" and the agent offered 2 Nov.
-- [ ] Dress rehearsal on Brief A+B: build time and 3 runs
+- [x] **Dress rehearsal on Brief A+B, on `gate-green-2`:** the full builder exported in 631 s, using the extracted spec and the full self-test. **PUB-B on that agent, 3 runs: 3/3.**
+- [x] A13, merged (`builder` @ 29369d5, 606 tests): removes a false "account" check that forced an unneeded fix round. This should cut about 3.5 min from each build.
+- [ ] A12, reviewed clean and now on its live gate: date checks for a single product move into code, and the create_promise guard now fails closed. Two security flags required that.
 - [ ] Bench over the 10 test briefs
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
 - [ ] Customer styles at 3 runs, different "today" dates, variance at 5 runs
