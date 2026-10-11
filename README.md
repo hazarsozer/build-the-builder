@@ -133,8 +133,7 @@ traces and exports, and what to do when something breaks.
 
 ## More documents
 
-`docs/build-log/` holds the implementer reports from development, `docs/spec-guide.md` the spec field guide, and
-`HANDOFF.md` and `REPORT.md` the status notes from development.
+`docs/spec-guide.md` is the spec field guide.
 
 ---
 

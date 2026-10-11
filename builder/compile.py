@@ -6,7 +6,7 @@ CLI:
     uv run python -m builder.compile <spec.json> <openapi.json> [--base-url URL] [--out FILE]
                                      [--save SLOT] [--state FILE]
 
-Port of the kit sample generator (out/gen_brief_a.py): every brief value comes from the spec.
+Port of the kit sample generator: every brief value comes from the spec.
 Platform workarounds kept: post-hooks write what_to_do_next, booleans tested as "true"/"True",
 no top-level `and`, values baked as defaults, no brace pairs in code, close_call baked from vars
 as a lifecycle tool at end_of_call, a retry_promise node, transfer nodes in front of closes.

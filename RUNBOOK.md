@@ -62,13 +62,13 @@ python3 builder/build.py final/<name>/ https://<our-mock>.<our-subdomain>.worker
    rg -l 'fak_[A-Za-z0-9]{8}|sk-ant-[A-Za-z0-9]|FREYA_[A-Z_]+=[A-Za-z0-9_-]{8}|https://[a-z0-9-]+\.trycloudflare\.com' traces/ submission/
    python3 -c 'import os,sys,pathlib as P; v=[x for k,x in os.environ.items() if (k.startswith("FREYA_") or k.endswith(("_KEY","_TOKEN","_SECRET","_PASSWORD"))) and len(x)>=8]; v or sys.exit("no secret variables set: source env.sh first"); [print(f) for d in ("traces","submission") for f in sorted(P.Path(d).rglob("*")) if f.is_file() and any(x in f.read_text(errors="ignore") for x in v)]'
    ```
-   Any file name printed is a leak. Do not submit that file; tell Hazar. Do not open the file in the terminal.
+   Any file name printed is a leak. Do not submit that file. Do not open the file in the terminal.
 4. Check that the exported JSON has no tunnel URL, carries our mock host, and no longer carries the `servers[0]` host of that brief's API file. The builder asserts this, so this step is only a manual double check.
 
 ## Submission (by 23:00, earlier is better: it is the third tie-break)
 
 - Commit (no brief content in code): `git add submission/ traces/` only if the organisers want them in the repo. Otherwise attach them to the form.
-- Pushing or making the repo public is Hazar's call. The form asks for a repo URL and a commit.
+- The form asks for a repo URL and a commit.
 - One trace per final brief: the `.jsonl` plus its `.md` summary.
 
 ## If something breaks
