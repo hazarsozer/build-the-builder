@@ -115,3 +115,24 @@ The corpus-word test passes.
 
 Suite: 797 passed, 6 skipped.
 Fix-round concern: in the after-recording support offer, a named payment ends the call like a decline (no new promise is taken after recording).
+
+## Fix round 2 (commits 73631d7..c7307a4)
+1. **safe_pre_success narrowed** (lint.py). It now rewrites only record\* about a promise, payment, date, amount or arrangement:
+   - "a/the/your… recorded promise" -> "a promise"
+   - "record(ed) [det] promise/payment date" -> "take(n) …"
+   - "<promise noun> is/was/has been/will be (already) recorded" -> "… noted"
+
+   Every other use stays unchanged and lint flags it: "Our records show", "For the record", "payment record", "This call
+   is being recorded", "We record every call", "A recorded line", "Your records are up to date". A record\* word right
+   after a determiner is treated as a noun and never as the verb. Probe tests cover each phrase. Lint still shows no
+   errors on all 12 bench specs, the fixtures and spec-a/spec-b.
+2. **hardship_hold_after_record** (compile.py). The brief's "take their payment date and amount" rule is replaced by
+   "The promises are already recorded: no new promise is taken in this step." The negotiate hold is unchanged.
+3. **Support offered once per call** (multi.py). When `<id>_offered == yes` (offered in negotiate), the after-recording
+   support request goes straight to after_record_done, with no second offer or sympathy.
+4. **Bounded loop** (multi.py). `after_record` is now a code node that counts visits (`ar_visits`, `ar_more`) and sits
+   in front of the conversation step, renamed `after_record_step`. Ask-once returns come back through the counter.
+   Entries 1-3 go to the step; from the 4th on, and when the counter fails (its default), the call goes to
+   after_record_done. This holds whatever the engine's max_node_turns does. Tested.
+
+Suite: 802 passed, 6 skipped.
