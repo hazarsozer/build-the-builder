@@ -672,6 +672,11 @@
         "post_verify_sentence": {
           "$ref": "#/$defs/str",
           "description": "Optional: a sentence the brief requires word for word right after identity is verified and before anything about the account (before debt_statement). Absent: none."
+        },
+        "same_day_cutoff": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "description": "Optional: HH:MM after which a payment promise for today is no longer possible (the brief names a same-day or business-hours limit for payments); today is then handled like a day that is not a business day. Absent: a promise for today is possible at any time of day."
         }
       },
       "description": "Stating the debt and getting a promise."
