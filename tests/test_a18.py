@@ -251,6 +251,12 @@ def test_never_say_schema_validates_and_specdiff_unions():
     assert diff_specs(_stw(None), _stw([])) == diff_specs(_stw(None), _stw(None))
 
 
+def test_self_test_cases_check_never_say():
+    assert _ctx(_stw()).never_say() == [
+        "the agent never says any of these, in any form, even after the customer does: guarantee, lawsuit, credit score, final notice"]
+    assert _ctx(_stw(None)).never_say() == [] and _ctx(A).never_say() == []
+
+
 def test_after_record_only_with_a_transfer_event():
     s = copy.deepcopy(MRW)
     s["events"] = [e for e in s["events"] if e["action"] != "transfer"]
