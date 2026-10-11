@@ -63,6 +63,7 @@ def fake_run_once(monkeypatch):
     def no_call(cid):
         raise RuntimeError("offline")
     monkeypatch.setattr(rc.freya, "get_call", no_call)
+    state["mp"] = monkeypatch
     return state
 
 
@@ -184,21 +185,103 @@ def _result(cases, failing=(), void=()):
             "simulation_id": "sim1", "iteration_id": "it1", "status": "completed"}
 
 
-def test_main_all_void_round_is_no_signal_and_no_fix(env, monkeypatch):
-    monkeypatch.setattr(S, "run", lambda a, cases, b, **k: _result(cases, void=[c["id"] for c in cases]))
+def _counting(results):
+    """selftest.run stand-in: call k returns results[k](cases); records each call's case ids."""
+    calls = []
+
+    def run(a, cases, b, **k):
+        calls.append([c["id"] for c in cases])
+        return results[min(len(calls), len(results)) - 1](cases)
+    return run, calls
+
+
+def _all_void(cases):
+    return _result(cases, void=[c["id"] for c in cases])
+
+
+def test_main_all_void_twice_is_low_signal_and_no_fix(env, monkeypatch):
+    run, calls = _counting([_all_void])
+    monkeypatch.setattr(S, "run", run)
     called = []
     monkeypatch.setattr(M, "run_fix", lambda *a, **k: called.append(a))
     assert run_main(env) == 0
+    assert len(calls) == 2 and calls[0] == calls[1]                  # one re-run of round 1, never more
     assert not called
     rows = trace_rows(env)
-    [r1] = [r for r in rows if r["kind"] == "selftest_round"]
-    assert r1["failing"] == [] and r1["total"] == 0 and len(r1["void"]) == 11
-    [ns] = [r for r in rows if r["kind"] == "selftest_no_signal"]
-    assert ns["round"] == 1 and ns["void"] == 11
+    r1 = [r for r in rows if r["kind"] == "selftest_round"]
+    assert [r["round"] for r in r1] == [1, 1] and all(r["total"] == 0 and len(r["void"]) == 11 for r in r1)
+    assert [r["round"] for r in rows if r["kind"] == "selftest_rerun"] == [1]
+    [low] = [r for r in rows if r["kind"] == "selftest_low_signal"]
+    assert low["round"] == 1 and low["scored"] == 0 and low["cases"] == 11 and low["rerun"] is True
     assert "round2_skipped" not in kinds(env)
     assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == A["bank_name"]
     md = next(env.traces.glob("*.md")).read_text()
     assert "void" in md.lower()
+
+
+def test_main_all_void_without_time_keeps_todays_behaviour(env, monkeypatch):
+    run, calls = _counting([_all_void])
+    monkeypatch.setattr(S, "run", run)
+    monkeypatch.setattr(M, "ROUND2_MIN_S", 10 ** 6)
+    called = []
+    monkeypatch.setattr(M, "run_fix", lambda *a, **k: called.append(a))
+    assert run_main(env) == 0
+    assert len(calls) == 1 and not called
+    rows = trace_rows(env)
+    assert "selftest_rerun" not in kinds(env)
+    [low] = [r for r in rows if r["kind"] == "selftest_low_signal"]
+    assert low["round"] == 1 and low["rerun"] is False
+    assert [r["round"] for r in rows if r["kind"] == "selftest_no_signal"] == [1]
+
+
+def test_main_all_void_rerun_with_signal_goes_on_normally(env, monkeypatch):
+    run, calls = _counting([_all_void, lambda cs: _result(cs, failing=[cs[0]["id"]]), lambda cs: _result(cs)])
+    monkeypatch.setattr(S, "run", run)
+    seen = {}
+    fixed = copy.deepcopy(A)
+    fixed["bank_name"] = "Fixed Bank"
+
+    def run_fix(spec, result, cases, *a, **k):
+        seen["failing"] = [r["id"] for r in result["rows"] if not r["pass"]]
+        seen["total"] = result["total"]
+        return fixed, {"changes": [{"path": "bank_name", "quote": "q"}], "discarded": [], "errors": 0}
+    monkeypatch.setattr(M, "run_fix", run_fix)
+    assert run_main(env) == 0
+    assert len(calls) == 3                                           # round 1, its re-run, round 2
+    assert seen == {"failing": ["SELF-01"], "total": 11}
+    rows = trace_rows(env)
+    assert "selftest_low_signal" not in kinds(env)
+    best = [r for r in rows if r["kind"] == "best_spec"][0]
+    assert best["comparable"] == 11 and best["round1_passed"] == 10 and best["round2_passed"] == 11
+    assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == "Fixed Bank"
+
+
+def test_main_one_scored_of_eleven_is_rerun_and_combined(env, monkeypatch):
+    def first(cs):          # only SELF-01 scored, and it failed
+        return _result(cs, failing=[cs[0]["id"]], void=[c["id"] for c in cs[1:]])
+
+    def again(cs):          # SELF-01 void now, SELF-02..06 scored, SELF-02 failed
+        return _result(cs, failing=[cs[1]["id"]], void=[cs[0]["id"]] + [c["id"] for c in cs[6:]])
+    run, calls = _counting([first, again, lambda cs: _result(cs)])
+    monkeypatch.setattr(S, "run", run)
+    seen = {}
+
+    def run_fix(spec, result, cases, *a, **k):
+        seen["failing"] = sorted(r["id"] for r in result["rows"] if not r["pass"])
+        seen["scored"] = sorted(r["id"] for r in result["rows"])
+        return spec, {"changes": [], "discarded": [], "errors": 0}
+    monkeypatch.setattr(M, "run_fix", run_fix)
+    assert run_main(env) == 0
+    assert len(calls) == 2
+    assert seen["failing"] == ["SELF-01", "SELF-02"]
+    assert seen["scored"] == ["SELF-0%d" % i for i in range(1, 7)]   # 6 of 11 scored over both runs: enough signal
+    assert "selftest_low_signal" not in kinds(env)
+
+
+def test_low_signal_rule():
+    assert M.low_signal({"total": 0, "void": [{"id": "a"}]}, 1)
+    assert M.low_signal({"total": 1}, 10) and M.low_signal({"total": 4}, 10)
+    assert not M.low_signal({"total": 5}, 10) and not M.low_signal({"total": 0}, 0)
 
 
 def test_main_void_cases_never_reach_the_fix_round(env, monkeypatch):
@@ -262,3 +345,41 @@ def test_conformance_drops_retried_runs(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cf, "official", lambda path, body=None: LEDGER["PUB-13"])
     off = cf.load_official([p], CASES)
     assert off["PUB-12"] == [] and len(off["PUB-13"]) == 1
+
+
+# ----------------------------------------------------------------------------------------- review round 1
+
+def test_retried_accepts_numeric_strings_and_floats():
+    assert score.retried({"attempts": "4"}) and score.retried({"attempts": 4.0}) and score.retried({"attempts": " 2 "})
+    assert not score.retried({"attempts": "0"}) and not score.retried({"attempts": 0.0})
+    assert not score.retried({"attempts": "n/a"}) and not score.retried({"attempts": True}) and not score.retried({"attempts": []})
+
+
+def test_main_reps_fail_line_keeps_reps_and_names_void(monkeypatch, tmp_path, capsys):
+    reps = [[_row("PUB-11", True), _row("PUB-12", True), _row("PUB-13", False)],
+            [_row("PUB-11", True), _row("PUB-12", True), _row("PUB-13", False, void=True)],
+            [_row("PUB-11", True), _row("PUB-12", True), _row("PUB-13", True)]]
+    _main(monkeypatch, tmp_path, reps, "--reps", "3")
+    import re
+    fails = [x for x in capsys.readouterr().out.splitlines() if x.startswith("FAIL ")]
+    assert fails == ["FAIL PUB-13 1/3 (1 void)"]
+    assert re.match(r"^FAIL [A-Z0-9-]+ [0-2]/3", fails[0])                 # results/regate.sh still finds it
+
+
+def test_run_once_slow_median_and_hangups_skip_void(fake_run_once, capsys):
+    it = _iteration()
+    by_case = {r["personaName"].split()[0]: r for r in it["runs"]}
+    by_case["PUB-13"]["attempts"] = 0                                        # PUB-11/12 void, PUB-13 scored
+    fake_run_once["it"] = it
+    slow = {by_case["PUB-11"]["callId"], by_case["PUB-12"]["callId"]}
+
+    def get_call(cid):
+        gap = 100 if cid in slow else 1
+        return {"endedReason": "customer-ended-call" if cid in slow else "assistant-ended-call",
+                "messages": [{"role": "user", "secondsFromStart": 0}, {"role": "assistant", "secondsFromStart": gap}]}
+    monkeypatch_get_call = fake_run_once["mp"]
+    monkeypatch_get_call.setattr(rc.freya, "get_call", get_call)
+    rows, sim, itid, status, took, med = rc.run_once("ag", CASES, {c["id"]: _pid(c["id"]) for c in CASES})
+    out = capsys.readouterr().out
+    assert med == 1
+    assert "median 1 s, worst 1 s" in out and "hung up: 0" in out and "WARNING" not in out

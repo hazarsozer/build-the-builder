@@ -19,7 +19,9 @@ def retried(run):
     Every attempt reuses the persona's bank session, so the attempts interleave in one ledger and the judge reads only
     the last one: such a run is VOID, neither a pass nor a failure."""
     n = (run or {}).get("attempts")
-    return isinstance(n, int) and not isinstance(n, bool) and n > 0
+    if isinstance(n, bool) or not isinstance(n, (int, float, str)): return False
+    try: return float(n) > 0                                 # 4, 4.0 or "4"
+    except ValueError: return False
 
 def score_ledger(case, led):
     exp, bad = case["expected"], []
