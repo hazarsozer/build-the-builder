@@ -2,6 +2,8 @@
 import io
 import json
 import socket
+import ssl
+import threading
 import urllib.error
 
 import pytest
@@ -33,6 +35,7 @@ def net(monkeypatch):
         def urlopen(req, timeout=None):
             state["calls"].append((req.get_method(), req.full_url))
             x = seq.pop(0)
+            if callable(x): x = x()          # a request still in flight: blocks, then returns or raises
             if isinstance(x, BaseException): raise x
             return Resp(x)
         monkeypatch.setattr(freya.urllib.request, "urlopen", urlopen)
@@ -119,7 +122,7 @@ def test_simulation_concurrency_409_still_handled_by_run_simulation(net, monkeyp
 @pytest.mark.parametrize("path, params", [
     ("/api/v2/simulations/s1/cancel", {}),                    # idempotent
     ("/api/v2/workflow", {"dryRun": "true"}),                 # validation only, creates nothing
-    ("/api/v2/workflow", {}),                                 # duplicate = an orphan workflow, see freya._post_policy
+    ("/api/v2/workflow", {}),                                 # duplicate = an orphan workflow, see freya._retryable
     ("/api/v2/personas", {}),                                 # duplicate = orphan personas; ids come from the response
     ("/api/v2/versions/workflow/w1/publish", {}),             # same versionId published again
 ])
@@ -137,3 +140,120 @@ def test_polling_does_not_stack_retries(net, monkeypatch):
     monkeypatch.setattr(freya.time, "sleep", lambda s: (st["sleeps"].append(s), clock.__setitem__(0, clock[0] + s)))
     assert freya.run_simulation("ag", "n", {"p": {}})[2] == "completed"
     assert st["sleeps"] == [10, 2]
+
+
+# -- fix round 1 -------------------------------------------------------------------------------------------------
+
+def test_auth_message_only_counts_under_auth_or_503_codes(net):
+    st = net([http(400, b'{"message":"field x: temporarily unavailable"}'), {"ok": 1}])
+    with pytest.raises(RuntimeError, match="400"):
+        freya.api("GET", "/api/v2/workspaces")
+    assert len(st["calls"]) == 1
+    st = net([http(400, KEY_DOWN), {"ok": 1}])
+    with pytest.raises(RuntimeError, match="400"):
+        freya.api("POST", "/api/v2/simulations", {})
+    assert len(st["calls"]) == 2
+
+
+def test_auth_message_under_403_retried_even_for_simulation_create(net):
+    st = net([http(403, KEY_DOWN), {"simulation": {"id": "s1"}}])
+    assert freya.api("POST", "/api/v2/simulations", {}) == {"simulation": {"id": "s1"}}
+    assert len(st["calls"]) == 2
+
+
+def test_certificate_error_not_retried(net):
+    st = net([urllib.error.URLError(ssl.SSLCertVerificationError("bad cert")), {"ok": 1}])
+    with pytest.raises(OSError):
+        freya.api("GET", "/api/v2/workspaces")
+    assert len(st["calls"]) == 1
+
+
+def test_retried_create_is_logged_and_the_second_id_kept(net, tmp_path, capsys):
+    sf = tmp_path / "state.json"
+    net([http(504), {"workflow": {"id": "w2", "agentId": "a2"}}])
+    out = freya.save_workflow("slot", {}, state_file=str(sf))
+    assert out == {"workflow_id": "w2", "agent_id": "a2"}
+    assert json.loads(sf.read_text())["slot"] == {"workflow_id": "w2", "agent_id": "a2"}
+    log = capsys.readouterr().out
+    assert "POST /api/v2/workflow" in log and "duplicate" in log
+
+
+def _update_outcomes(published_after):
+    llm = {"agent_config": {"llmConfig": dict(freya.AGENT_LLM)}}
+    return [{"ok": 1},                                                             # PUT
+            {"workflow": {"workflow": llm}},                                       # GET workflow
+            {"versions": [{"id": "v3", "versionNumber": 3, "isPublished": False}]},
+            http(502),                                                             # publish: done, answer lost
+            http(409, b'{"message":"version already published"}'),                # publish retry
+            {"versions": [{"id": "v3", "versionNumber": 3, "isPublished": published_after}]}]
+
+
+def test_publish_retry_conflict_is_success_when_the_version_is_published(net, monkeypatch):
+    monkeypatch.setattr(freya, "_ws", "ws1")
+    st = net(_update_outcomes(True))
+    assert freya.update_workflow("w1", {}) == 3
+    assert [c[0] for c in st["calls"]] == ["PUT", "GET", "GET", "POST", "POST", "GET"]
+
+
+def test_publish_failure_raises_when_the_version_is_not_published(net, monkeypatch):
+    monkeypatch.setattr(freya, "_ws", "ws1")
+    net(_update_outcomes(False))
+    with pytest.raises(RuntimeError, match="409"):
+        freya.update_workflow("w1", {})
+
+
+def _in_flight(release, outcome):
+    def go():
+        release.wait(5)
+        return outcome
+    return go
+
+
+def test_bounded_timeout_stops_the_retrying_call(net):
+    from builder import main as M
+    release = threading.Event()
+    st = net([_in_flight(release, http(503, KEY_DOWN)), {"ok": 1}, {"ok": 1}])
+    bg = M.Bg(lambda: freya.api("PUT", "/api/v2/workflow/w1", {}), deadline_s=0.2)
+    with pytest.raises(M.BudgetStop):
+        bg.result(0.2)
+    release.set()
+    assert bg._done.wait(5)
+    assert len(st["calls"]) == 1 and st["sleeps"] == []
+    assert isinstance(bg.error, freya.CallAbandoned)
+
+
+def test_abandoned_save_writes_no_state_file(net, tmp_path):
+    from builder import main as M
+    sf = tmp_path / "state.json"; release = threading.Event()
+    st = net([_in_flight(release, {"workflow": {"id": "w1", "agentId": "a1"}}), {"ok": 1}])
+    bg = M.Bg(lambda: freya.save_workflow("slot", {}, state_file=str(sf)), deadline_s=0.2)
+    with pytest.raises(M.BudgetStop):
+        bg.result(0.2)
+    release.set()
+    assert bg._done.wait(5)
+    assert len(st["calls"]) == 1 and not sf.exists()
+    assert isinstance(bg.error, freya.CallAbandoned)
+
+
+def test_no_wait_that_would_end_after_the_deadline(net):
+    from builder import main as M
+    st = net([http(502), {"ok": 1}])
+    bg = M.Bg(lambda: freya.api("GET", "/api/v2/workflow/w1"), deadline_s=3)      # first wait is 5 s
+    with pytest.raises(RuntimeError, match="502"):
+        bg.result(2)
+    assert len(st["calls"]) == 1
+
+
+def test_bounded_passes_its_timeout_as_the_deadline(net):
+    from builder import main as M
+    st = net([http(502), {"ok": 1}])
+    with pytest.raises(RuntimeError, match="502"):
+        M.bounded(lambda: freya.api("GET", "/api/v2/workflow/w1"), 3)
+    assert len(st["calls"]) == 1
+
+
+def test_unbound_calls_keep_the_full_retry(net):
+    """Outside a Bg (tools, tests), behaviour is unchanged: time.sleep backoff, no deadline."""
+    st = net([http(502), {"ok": 1}])
+    assert freya.api("GET", "/api/v2/workflow/w1") == {"ok": 1}
+    assert st["sleeps"] == [5]

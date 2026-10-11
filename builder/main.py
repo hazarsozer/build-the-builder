@@ -78,14 +78,21 @@ class WorkspaceBusy(Exception):
 
 class Bg:
     """Run fn() in a daemon thread. result(timeout) raises BudgetStop when it is not done in time; the thread is then
-    abandoned (a daemon thread never holds up the exit) and on_late(value) cleans up if it finishes later."""
+    abandoned (a daemon thread never holds up the exit) and on_late(value) cleans up if it finishes later.
 
-    def __init__(self, fn, on_late=None):
+    Freya calls in the thread are bound to it (freya.bind_call): they never start a retry wait that would end after
+    deadline_s, and once result() has timed out they raise freya.CallAbandoned instead of making another request,
+    waiting, or writing the state file."""
+
+    def __init__(self, fn, on_late=None, deadline_s=None):
         self.value, self.error, self.abandoned = None, None, False
         self._on_late, self._done, self._lock = on_late, threading.Event(), threading.Lock()
+        self._stop = threading.Event()
+        self._deadline = None if deadline_s is None else time.monotonic() + deadline_s
         threading.Thread(target=self._run, args=(fn,), daemon=True).start()
 
     def _run(self, fn):
+        freya.bind_call(self._stop, self._deadline)
         try:
             self.value = fn()
         except BaseException as e:  # noqa: BLE001 - re-raised in result()
@@ -101,6 +108,7 @@ class Bg:
 
     def result(self, timeout):
         if not self._done.wait(max(0.0, timeout)):
+            self._stop.set()
             raise BudgetStop()
         if self.error is not None:
             raise self.error
@@ -114,7 +122,7 @@ class Bg:
 
 
 def bounded(fn, timeout):
-    return Bg(fn).result(timeout)
+    return Bg(fn, deadline_s=timeout).result(timeout)
 
 
 def run_fix(*a, **kw):
