@@ -177,3 +177,196 @@ def test_main_localises_turkish_spec(monkeypatch):
     b._lang = None
     wf2 = b._compile_lint(s2, "http://x/v1", "t")
     assert json.dumps(wf2, sort_keys=True) == json.dumps(comp.compile(B, OA, "http://x/v1"), sort_keys=True)
+
+
+# ---------------------------------------------------------------- D2b: dates and the multi-product read-back
+
+TR_NAMES = {"Monday": "Pazartesi", "Tuesday": "Salı", "Wednesday": "Çarşamba", "Thursday": "Perşembe",
+            "Friday": "Cuma", "Saturday": "Cumartesi", "Sunday": "Pazar", "January": "Ocak", "February": "Şubat",
+            "March": "Mart", "April": "Nisan", "May": "Mayıs", "June": "Haziran", "July": "Temmuz",
+            "August": "Ağustos", "September": "Eylül", "October": "Ekim", "November": "Kasım", "December": "Aralık",
+            "{amount} for your {product} on {date}": "{product} için {date} tarihinde {amount}",
+            "{item}, because that is the latest date I can accept for it": "{item}, çünkü kabul edebileceğim en son tarih bu",
+            "{rest}; and {last}": "{rest}; ve {last}",
+            "To confirm, you will pay {items}.": "Teyit ediyorum, {items} ödeyeceksiniz."}
+
+
+def fake_names(texts, lang):
+    return [TR_NAMES.get(t, "[TR] " + t) for t in texts]
+
+
+def codes(wf):
+    for name, n in wf["nodes"].items():
+        for a in n.get("pre_actions") or []:
+            c = a["function"]["parameters"]["properties"].get("code", {}).get("default")
+            if c:
+                yield name, c
+
+
+def test_dates_and_readback_join_the_one_call():
+    calls = []
+
+    def tr(texts, lang):
+        calls.append(list(texts))
+        return fake_names(texts, lang)
+    rep = L.localise(compiled(B, TR)[0], TR, tr)
+    assert len(calls) == 1
+    assert set(L.WEEKDAYS + L.MONTHS + list(L.READBACK.values())) <= set(calls[0])
+    assert rep["parts"] == {"spoken": "localised", "dates": "localised", "readback": "localised", "parse": "localised"}
+
+
+def test_spoken_dates_use_the_translated_names():
+    import datetime
+    wf, _ = compiled(B, TR)
+    L.localise(wf, TR, fake_names)
+    n = 0
+    for name, c in codes(wf):
+        if "def speak(d):" not in c:
+            continue
+        n += 1
+        compile(c, name, "exec")
+        assert c.index("SAY_WD = ") > c.index("def speak(d):")
+        end = c.index("\n", c.index("    return say_date(d) + ' ('")) + 1
+        g = {"vars": {}}
+        exec(compile(c[:end], name, "exec"), g)       # the code up to and including the override
+        d = datetime.date(2026, 10, 16)
+        assert g["say_date"](d) == "Cuma, 16 Ekim 2026"
+        assert g["speak"](d) == "Cuma, 16 Ekim 2026 (2026-10-16)"
+    assert n >= 3
+
+
+def test_readback_uses_the_translated_templates():
+    wf, _ = compiled(B, TR)
+    L.localise(wf, TR, fake_names)
+    [(name, c)] = [(n, c) for n, c in codes(wf) if "def _readback(st):" in c]
+    assert c.count("def _readback(st):") == 2
+    compile(c, name, "exec")
+    g = {"fmt": lambda x: "%.2f" % x, "_say": lambda d: "Cuma, 16 Ekim 2026", "CFG": {"confirm": "Doğru mu?"},
+         "json": json}
+    i = c.index("RB_T = ")
+    end = c.index("\n", c.index("    return RB_T['head']", i)) + 1
+    exec(c[i:end], g)
+    st = {"order": ["a", "b"], "p": {
+        "a": {"status": "agreed", "amount": 100.0, "words": "kredi kartınız", "date": "2026-10-16"},
+        "b": {"status": "agreed", "amount": 50.0, "words": "krediniz", "date": "2026-10-16", "capped": True}}}
+    assert g["_readback"](st) == ("Teyit ediyorum, kredi kartınız için Cuma, 16 Ekim 2026 tarihinde 100.00; ve krediniz "
+                                  "için Cuma, 16 Ekim 2026 tarihinde 50.00, çünkü kabul edebileceğim en son tarih bu "
+                                  "ödeyeceksiniz. Doğru mu?")
+
+
+def test_bad_names_keep_english_dates_but_localise_the_rest():
+    events = []
+
+    class T:
+        def event(self, kind, **f):
+            events.append((kind, f))
+    wf, _ = compiled(B, TR)
+    rep = L.localise(wf, TR, lambda texts, lang: ["" if t in L.WEEKDAYS else "[TR] " + t for t in texts], trace=T())
+    assert rep["parts"]["dates"] == "english" and rep["parts"]["spoken"] == "localised"
+    assert not any("SAY_WD" in c for _, c in codes(wf))
+    assert any(k == "localise_failed" for k, _ in events)
+
+
+def test_readback_placeholder_loss_keeps_english_readback():
+    wf, _ = compiled(B, TR)
+    rep = L.localise(wf, TR, lambda texts, lang: [t.replace("{date}", "") for t in fake_names(texts, lang)])
+    assert rep["parts"]["readback"] == "english"
+    assert not any("RB_T" in c for _, c in codes(wf))
+
+
+def test_single_product_has_no_readback_part():
+    rep = L.localise(compiled(A, TR)[0], TR, fake_names)
+    assert "readback" not in rep["parts"] and rep["parts"]["dates"] == "localised"
+
+
+# ---------------------------------------------------------------- D2c: reading the customer's Turkish date words
+
+TR_PARSE = {"today": "bugün", "tomorrow": "yarın", "the day after tomorrow": "öbür gün", "next week": "gelecek hafta",
+            "next Friday": "önümüzdeki Cuma", "this Friday": "bu Cuma"}
+_TR_UNITS = ["bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz"]
+TR_NUMS = _TR_UNITS + ["on"] + ["on " + u for u in _TR_UNITS] + ["yirmi"] + ["yirmi " + u for u in _TR_UNITS] + \
+    ["otuz", "otuz bir"]
+TR_PARSE.update(zip(L.NUMBERS, TR_NUMS))
+
+
+def fake_full(texts, lang):
+    return [TR_PARSE.get(t) or TR_NAMES.get(t) or "[TR] " + t for t in texts]
+
+
+def reader(wf):
+    """resolve_said as compiled into the setup node (the code up to the end of its definition)."""
+    for name, c in codes(wf):
+        if "def resolve_said(" in c:
+            end = L._block_end(c, c.index("def resolve_said("))
+            g = {"vars": {}}
+            exec(compile(c[:end], name, "exec"), g)
+            return g["resolve_said"]
+    raise AssertionError("no resolve_said")
+
+
+NOW = __import__("datetime").date(2026, 10, 11)      # a Sunday
+
+
+@pytest.mark.parametrize("tr,en", [
+    ("16 Ekim", "October 16"), ("Ekim'in 16'sı", "October 16"), ("16 Ekim'de", "October 16"),
+    ("on altı Ekim", "October 16"), ("yarın", "tomorrow"), ("yarına", "tomorrow"), ("bugün", "today"),
+    ("öbür gün", "the day after tomorrow"), ("cuma günü", "Friday"), ("Cumaya", "Friday"),
+    ("önümüzdeki cuma", "next Friday"), ("bu cuma", "this Friday"), ("pazartesi", "Monday"), ("pazar", "Sunday"),
+    ("ÖNÜMÜZDEKİ CUMA", "next Friday"), ("gelecek hafta", "next week"),
+])
+def test_turkish_date_words_resolve_like_english(tr, en):
+    wf, _ = compiled(A, TR)
+    rep = L.localise(wf, TR, fake_full)
+    assert rep["parts"]["parse"] == "localised"
+    rs = reader(wf)
+    assert rs(tr, NOW) == rs(en, NOW)
+    assert rs(tr, NOW)[1] in ("", "vague")
+
+
+def test_turkish_reader_fixed_answers():
+    import datetime
+    wf, _ = compiled(A, TR)
+    L.localise(wf, TR, fake_full)
+    rs = reader(wf)
+    assert rs("16 Ekim", NOW) == (datetime.date(2026, 10, 16), "")
+    assert rs("Ekim'in 16'sı", NOW) == (datetime.date(2026, 10, 16), "")
+    assert rs("yarın", NOW) == (datetime.date(2026, 10, 12), "")
+    assert rs("cuma günü", NOW) == (datetime.date(2026, 10, 16), "")
+    assert rs("önümüzdeki cuma", NOW)[0] in (datetime.date(2026, 10, 16), datetime.date(2026, 10, 23))
+    assert rs("October 16", NOW) == (datetime.date(2026, 10, 16), "")      # English still read
+
+
+def test_reader_is_in_the_tool_hooks_too():
+    wf, _ = compiled(A, TR)
+    L.localise(wf, TR, fake_full)
+    hooks = [t["pre_process_code"] for n in wf["nodes"].values() for t in n.get("tools") or []
+             if "def _tokens(text):" in (t.get("pre_process_code") or "")]
+    assert hooks and all("L10N_MAP = " in h for h in hooks)
+    for h in hooks:
+        compile(h, "hook", "exec")
+
+
+def test_bad_parse_words_keep_names_only():
+    wf, _ = compiled(A, TR)
+    rep = L.localise(wf, TR, lambda texts, lang: ["x (1)" if t == "today" else v
+                                                  for t, v in zip(texts, fake_full(texts, lang))])
+    assert rep["parts"]["parse"] == "names only"
+    rs = reader(wf)
+    assert rs("16 Ekim", NOW) == rs("October 16", NOW)
+    assert rs("yarın", NOW) == (None, "none")
+
+
+def test_bad_names_leave_the_reader_english():
+    wf, _ = compiled(A, TR)
+    rep = L.localise(wf, TR, lambda texts, lang: ["" if t == "Friday" else v
+                                                  for t, v in zip(texts, fake_full(texts, lang))])
+    assert rep["parts"]["dates"] == "english" and rep["parts"]["parse"] == "english"
+    assert not any("L10N_MAP" in c for _, c in codes(wf))
+
+
+def test_english_reader_unchanged():
+    for spec in (A, B):
+        wf, _ = compiled(spec)
+        before = json.dumps(wf, sort_keys=True)
+        L.localise(wf, L.ENGLISH, fake_full)
+        assert json.dumps(wf, sort_keys=True) == before
