@@ -2,6 +2,12 @@
 
 Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date while the successor session, dev-2d ("builder orchestrator 2"), works overnight.
 
+## 0. Check this first (Sun 10:15)
+
+- **The Claude account limit matters for the final build.** Around 09:00 the fallback build failed with a Claude SDK error about a "monthly spend limit", and dev-2d also hit its usage limit. After the 10:10 reset the SDK works again. But `builder.main` runs its extraction through **your Claude account**, so if the limit hits during 20:00–23:00, no final build can run. **Please check your Claude plan or spend limit and make sure there's enough headroom for Sunday evening.** Each build uses about $3–6 of extraction, plus the fix round.
+- **New safe version: `builder` @ 89bb9e3, tag `gate-green-4`.** It adds A17–A21: the sme fixes, double sympathy, restructuring routing, workflow readability, wording cleanup, and the talkative-style and guessed-close fixes. Gate on the organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3, with 0 sandbox errors.**
+- **Running now:** the fallback build, then the bench re-run on gate-green-4, and a whole-branch Opus review (`final-review-2.md`).
+
 ## 1. The short version
 
 > **Latest (Sun ~07:45):** the safe version is still `gate-green-3`. The next candidate missed its gate: an early self-close in one case, plus platform and sandbox errors. Customer styles: corrects and pieces are good, talkative is weak (A 6/10), and the cause has been found. Earlier, **(~07:00): `builder` @ 567eb9a, tag `gate-green-3`** (768 tests). On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. This tag adds:
