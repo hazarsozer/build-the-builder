@@ -174,6 +174,8 @@ class Sim:
         msg = None
         for _ in range(n):
             msg = self.say(product_id=pid, outcome="refused")
+            if msg.startswith("Not yet: make the offer first"):  # no offer noted yet: the offer is made, then refused
+                msg = self.say(product_id=pid, outcome="refused")
             if "last attempt" in msg:
                 break
         return msg
@@ -527,6 +529,9 @@ def test_r2_nan_amount_rejected():
 def test_a9_attempts_counted_in_code_per_refusal():
     """A9 item 2: each refused call is one used attempt, counted in mp_state; the band's count is the limit."""
     s = Sim("PUB-13")  # p1 early band: one attempt; p2 late band: two
+    msg = s.say(product_id="p1", outcome="refused")  # first call: no offer noted yet (fix round 1, item 3)
+    assert msg.startswith("Not yet: make the offer first") and "uses no attempt" in msg
+    assert json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
     msg = s.say(product_id="p1", outcome="refused")
     st = json.loads(s.v["mp_state"])["p"]
     assert st["p1"]["status"] == "refused" and st["p1"]["tried"] == 1
@@ -541,9 +546,50 @@ def test_a9_attempts_counted_in_code_per_refusal():
 
 def test_a9_next_names_the_attempt_after_the_used_ones():
     s = Sim("PUB-12")
-    s.say(product_id="p2", outcome="refused")  # p2 out of order: attempt 1 used
+    s.refuse("p2", 1)  # p2 out of order: attempt 1 used
     msg = s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
     assert "personal loan" in msg and "attempt 2 of its plan" in msg
+
+
+def test_fix1_refusal_before_any_offer_is_not_counted():
+    """Fix round 1, item 3: "I can't pay all today" at step 1 must not use a one-attempt product's only attempt."""
+    s = Sim("PUB-12")  # p3 car loan: early band, one attempt
+    msg = s.say(product_id="p3", outcome="refused")
+    p3 = json.loads(s.v["mp_state"])["p"]["p3"]
+    assert p3["status"] == "pending" and not p3.get("tried") and "Make attempt" not in msg
+    assert "Not yet: make the offer first" in msg and "140.00" in msg and s.v["mp_phase"] == "open"
+    assert 'A "no" to the today question uses no attempt' in s.w["nodes"]["negotiate"]["task_message"]
+    # once the offer is noted (here: the Not-yet answer told the model to make it), a refusal counts
+    msg = s.say(product_id="p3", outcome="refused")
+    assert json.loads(s.v["mp_state"])["p"]["p3"]["status"] == "refused" and "no more offers" in msg
+
+
+def test_fix1_offer_named_by_a_result_counts_without_not_yet():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")  # result names p2's attempt 1
+    msg = s.say(product_id="p2", outcome="refused")
+    assert "Make attempt 2 now" in msg
+
+
+def test_fix1_band_with_no_attempts():
+    """Fix round 1, item 4: a band with 0 attempts never indexes att[-1]; the product is noted per the brief."""
+    spec = copy.deepcopy(B)
+    for b in spec["bands"]:
+        if b["name"] == "early":
+            b["attempts"] = []
+    s = Sim("PUB-12", spec)  # p3 car loan (7 days late) is the early band
+    assert "Make no offer for it." in s.v["products_text"].split("car loan")[1]
+    s.refuse("p1", 2)
+    msg = s.refuse("p2", 2)
+    assert "has no offers: make no offer" in msg  # _next names p3
+    msg = s.say(product_id="ALL", outcome="review")
+    assert "has no offers: make no offer" in msg
+    msg = s.say(product_id="p3", outcome="refused")
+    assert "has no offers" in msg and json.loads(s.v["mp_state"])["p"]["p3"]["status"] == "refused"
+    assert s.v["mp_phase"] == "done"
+    s.end = "wrap_done"
+    promises, notes, close, outcome, reason = s.chain()
+    assert notes == [("p1", "refused"), ("p2", "refused"), ("p3", "refused")]
 
 
 def test_a9_one_attempt_plans_say_no_further_offer():

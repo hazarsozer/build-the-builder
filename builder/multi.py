@@ -63,7 +63,8 @@ try:
                      fmt(f['floor']) + '. Deadline (latest date you may accept): ' + speak(pl['deadline']) + '.\n  Persuasion plan: ' +
                      ' '.join('Attempt ' + str(j + 1) + ': ' + t for j, t in enumerate(att)) + ' ' +
                      NUMS.get(str(n), str(n)).capitalize() + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.' +
-                     (' After one refusal make no other offer for it (no lower amount, no other date).' if n == 1 else ''))
+                     (' After one refusal make no other offer for it (no lower amount, no other date).' if n == 1 else '') +
+                     (' Make no offer for it.' if n == 0 else ''))
     last = max(pl['deadline'] for pl in plans)
     days = dict()
     d = today
@@ -189,6 +190,10 @@ def _next(st, cur=None):
         return 'open', ''
     if pend:
         P = st['p'][pend[0]]
+        if not P['att']:
+            return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). Its plan has no offers: make no offer for it and call ' +
+                            TOOL + ' with outcome refused for it now.')
+        P['offered'] = True
         k = min(int(P.get('tried') or 0), len(P['att']) - 1)
         return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). If the customer already gave an answer for it, call ' +
                         TOOL + ' for it now. Otherwise make attempt ' + str(k + 1) + ' of its plan: ' + P['att'][k] + ' Do not ask about today again.')
@@ -268,7 +273,7 @@ def _agree(st, b, today):
         if extra[xf] is not None and extra[xf] != b.get(xf):
             said.append(xf.replace('_', ' ') + ' noted as ' + str(extra[xf]))
     for q, v in new.items():
-        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra, asked=d)
+        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra, asked=d, offered=True)
     note = (' Note: ' + '; '.join(said) + '. Tell the customer this value.') if said else ''
     return st, 'Noted for now (nothing is registered before the confirmation).' + note
 
@@ -282,8 +287,18 @@ def _refuse(st, b):
     q = targets[0]
     P = st['p'][q]
     n = len(P['att'])
+    if n == 0:
+        P.update(status='refused', amount=None, date=None, capped=False)
+        return st, 'Noted: the plan of the ' + P['words'] + ' has no offers. Make no offer for it.'
+    if not P.get('offered') and P['status'] == 'pending':
+        # a refusal counts only after an offer for this product; "not today" to the first question uses no attempt
+        P['offered'] = True
+        return st, ('Not yet: make the offer first. The question about paying today uses no attempt. If you have not made attempt 1 '
+                    'for the ' + P['words'] + ', make it now: ' + P['att'][0] + ' If the customer just refused exactly that offer, call ' +
+                    TOOL + ' with outcome refused for it again.')
     k = int(P.get('tried') or 0) + 1
     P['tried'] = k
+    P['offered'] = True
     if k < n:
         P.update(status='pending', amount=None, date=None, capped=False)
         return st, ('Refusal noted (attempt ' + str(k) + ' of ' + str(n) + ' for the ' + P['words'] + '). Make attempt ' + str(k + 1) +

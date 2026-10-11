@@ -1706,7 +1706,7 @@ PRODUCTS (computed, use them exactly; a product_id is for the tool only, never s
 
 HOW TO RUN THE CALL
 1. If the customer can pay everything today: call %(tool)s with product_id ALL, outcome agreed, amount full and today's date.
-   If not, go through the products one by one, %(order)s. Do not ask about today again. Start each product at attempt 1 of its own persuasion plan; attempts are counted per product.
+   If not, go through the products one by one, %(order)s. Do not ask about today again. Start each product at attempt 1 of its own persuasion plan; attempts are counted per product. A "no" to the today question uses no attempt: never report it as refused.
 2. For the product you are discussing, the customer names a date or an amount (combine parts said across turns, "four hundred... and twenty" = 420): never a refusal.
    - Date: a business day from today up to that product's deadline. %(nbd)s A date after its deadline: say the latest date you can accept for it is its deadline, and offer it.
    - %(vague)s %(day_number)s
