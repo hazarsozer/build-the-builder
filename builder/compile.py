@@ -802,6 +802,7 @@ except Exception:
 
 # A21: the opening's ask counter. A not-confirmed reply uses one ask; the last one closes as unclear, the others go back
 # to the opening (its extraction reset, so a stale value is not counted twice). Chatter never comes here.
+TP_TURN_CAP = 20   # third_party's turn cap (a safety net only)
 OPENING_ASK = "opening_ask"
 OPENING_CHATTER = 5   # extra opening turns for chatter, on top of the asks (the turn cap still ends the step)
 OPENING_ASK_CODE = r'''
@@ -1870,6 +1871,7 @@ class _Compiler:
             "Ask when %s can be reached." % self.addr,
             "Callback window: {{callback_rules}}",
             "- Combine parts said across turns (a day, then a time) before acting.",
+            "- " + CUT_OFF,
             '- If they give a day and time inside the window, call schedule_callback with date as YYYY-MM-DD and time as HH:MM (24 hour). "Tomorrow morning around eleven" means 11:00 on the next day.',
             "- If what they offer is outside the window, say you can only call back %s, and ask %s for another time. Do not schedule anything outside the window."
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
@@ -2086,7 +2088,8 @@ HOW TO GET A PROMISE
                 "enum_values": ["continue"] + values,
                 "description": " ".join(desc + ["continue: anything else."]),
             }] + self.seen_vars("third_party"),
-            "max_node_turns": 12, "max_turn_transition": no_cb,
+            # A21: 20, not 12 (PUB-02: twelve cut-off turns used the cap); the no-callback close is driven by its event
+            "max_node_turns": TP_TURN_CAP, "max_turn_transition": no_cb,
             "transitions": tr + trans,
         }
 

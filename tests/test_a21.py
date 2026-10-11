@@ -221,6 +221,30 @@ def test_opening_chatter_is_bounded_by_the_turn_cap():
     assert e.user(line_status="chatter") == "close_unclear"
 
 
+def test_third_party_cut_off_rule_and_larger_cap():
+    for spec in (A, B):
+        n = wf(spec)["nodes"]["third_party"]
+        assert "- " + CUT_OFF in n["task_message"]
+        assert n["max_node_turns"] == 20 and n["max_turn_transition"] == "close_no_callback"
+
+
+def test_pub02_replay_twelve_fragments_no_longer_end_the_third_party_step():
+    """14bc0a61: the husband answered; twelve fragments ("My cousin's wedding is on the" x5 ...), all continue, hit the
+    12-turn cap and closed as no_callback. Now the step goes on; a time inside the window books the callback."""
+    e = Engine(at="third_party")
+    for _ in range(12):
+        assert e.user(tp_status="continue") == "third_party"
+    e.v["cb_status"] = "booked"     # schedule_callback's post-hook result
+    assert e.user(tp_status="continue") == "close_callback"
+
+
+def test_third_party_cap_still_ends_the_step():
+    e = Engine(at="third_party")
+    for _ in range(19):
+        e.user(tp_status="continue")
+    assert e.user(tp_status="continue") == "close_no_callback"
+
+
 def test_opening_max_asks_follows_the_spec():
     import copy
     s = copy.deepcopy(A)
