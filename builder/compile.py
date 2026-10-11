@@ -1602,10 +1602,14 @@ class _Compiler:
             "on_enter": {"type": "llm"},
             "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
                              "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
-                             "The brief's rule for this situation: %s\nNo tool call is allowed in this step."
+                             "%s\nNo tool call is allowed in this step."
                              % (situation,
                                 "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
-                                "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
+                                "\n".join(answer),
+                                # after recording a named date or amount ends the call (no new promise): the brief's
+                                # take-their-payment rule would contradict the routing
+                                "The promises are already recorded: no new promise is taken in this step." if after else
+                                "The brief's rule for this situation: " + tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
             "extraction_schema": [{
                 "name": reply, "type": "string", "min_confidence": 0.6,
                 "enum_values": ["pending", "accepted", "names_payment", "declined", "question"] + values + ["other"],
