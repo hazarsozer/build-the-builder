@@ -244,6 +244,10 @@ class Sim:
             n = self.w["nodes"][node]
             if n["node_type"] == "code":
                 self.run(node)
+            elif n["node_type"] == "conversation":
+                # A18 after_record: the customer's reply to "anything else?" (default: nothing else)
+                assert node == "after_record", node
+                self.v["ar_answer"] = getattr(self, "ar_answer", "nothing")
             else:
                 tool = n["pre_actions"][0]["function"]["name"]
                 if tool == "create_promise":
@@ -339,6 +343,20 @@ def test_pub12_one_promise_two_refusals_with_attempt_gate():
     assert promises == [("p1", 510.0, "2026-10-15")]
     assert notes == [("p2", "refused"), ("p3", "refused")]
     assert (outcome, reason) == ("promise", None)
+
+
+def test_a18_restructuring_after_recording_keeps_the_promise_and_writes_no_notes():
+    """A18 (bench MRW-03): after "recorded" the customer asks for lower instalments: transfer, the recorded promise
+    stays, no add_note at all."""
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
+    s.refuse("p2", 2)
+    s.refuse("p3", 1)
+    s.confirm()
+    s.ar_answer = "restructuring"
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")]
+    assert notes == [] and close == "close_restructuring" and (outcome, reason) == ("transferred", "restructuring")
 
 
 def test_pub13_shared_date_capped_and_said():

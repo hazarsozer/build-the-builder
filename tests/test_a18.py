@@ -114,3 +114,74 @@ def _neg_desc(spec, oa):
 def test_accepting_an_offered_amount_is_not_a_transfer_request():
     d = _neg_desc(MRW, MRW_OA)
     assert "Accepting an amount or a date the agent offered" in d and "is NOT restructuring: it is continue." in d
+
+
+def _code(node):
+    return node["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+
+
+def _route(node, v):
+    """First transition of a node whose condition holds (equals / and / or), else its passthrough default."""
+    def ok(c):
+        if "logic" in c:
+            r = [ok(x) for x in c["conditions"]]
+            return all(r) if c["logic"] == "and" else any(r)
+        return c["operator"] == "equals" and str(v.get(c["variable"])) == c["operand"]
+    for t in node["transitions"]:
+        if ok(t["condition"]):
+            return t["target_node"]
+    return node.get("passthrough_default_transition")
+
+
+MRW03 = [{"product_id": "p1", "type": "credit_card", "card_last4": "5590", "past_due": 400.0, "days_late": 2, "minimum_payment": 120.0},
+         {"product_id": "p2", "type": "personal_loan", "past_due": 1100.0, "days_late": 15, "instalment_amount": 275.0}]
+
+
+def _mrw03_after_wrap(recorded=True):
+    w = C(MRW, MRW_OA, base_url=URL)
+    v = {"now": "2026-11-20T13:30", "acct_products_json": json.dumps(MRW03)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    st = json.loads(v["mp_state"])
+    st["p"]["p1"].update(status="agreed", amount=400.0, date="2026-11-27")
+    st["p"]["p2"]["status"] = "declined"
+    v["mp_state"] = json.dumps(st)
+    exec(_code(w["nodes"]["record_plan"]), {"vars": v})
+    if recorded:
+        v["rec1_status"] = "recorded"
+    exec(_code(w["nodes"]["wrap_recorded"]), {"vars": v})
+    return w, v
+
+
+def test_mrw03_recorded_promise_then_restructuring_transfers_without_notes():
+    """MRW-03: the recorded sentence and the goodbye were one engine turn, so the request made after "recorded"
+    was never heard. Now: recorded -> after_record (a turn) -> restructuring -> transfer, before any note."""
+    w, v = _mrw03_after_wrap()
+    n = w["nodes"]
+    assert v["mp_recorded"] == "yes" and v["note_has_1"] == "yes"
+    assert _route(n["wrap_recorded"], v) == "after_record"
+    ar = n["after_record"]
+    assert ar["on_enter"]["text"].startswith("{{mp_said}} ")
+    assert "credit card ending 5590 is recorded" in v["mp_said"]
+    t = _route(ar, dict(v, ar_answer="restructuring"))
+    assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_restructuring"
+    # anything else: the recorded sentence is not repeated by the close, the notes are then written
+    assert _route(ar, dict(v, ar_answer="nothing")) == "after_record_done"
+    assert _route(ar, dict(v, ar_answer="question")) is None  # stays: answers, asks again
+    vv = dict(v)
+    exec(_code(n["after_record_done"]), {"vars": vv})
+    assert vv["mp_said"] == "" and _route(n["after_record_done"], vv) == "note_1"
+    assert ar["max_turn_transition"] == "after_record_done"
+    assert [p for p in lint(w, MRW) if not p.startswith("warning:") and "after_record" in p] == []
+
+
+def test_nothing_recorded_skips_the_after_record_turn():
+    w, v = _mrw03_after_wrap(recorded=False)
+    assert v["mp_recorded"] == "no" and _route(w["nodes"]["wrap_recorded"], v) != "after_record"
+
+
+def test_after_record_only_with_a_transfer_event():
+    s = copy.deepcopy(MRW)
+    s["events"] = [e for e in s["events"] if e["action"] != "transfer"]
+    s["outcomes"] = [o for o in s["outcomes"] if o["event"] in {e["id"] for e in s["events"]}]
+    assert "after_record" not in C(s, MRW_OA, base_url=URL)["nodes"]
