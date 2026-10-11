@@ -244,15 +244,17 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
   - **No secrets, tunnel URLs or home paths** in the workflow JSON. One home path is in the trace's markdown.
   - The cleanup is queued as A19/A20, so reviewers who open the workflow can read it.
 - **Flag for you:** the agent's platform defaults (`agent_config`) set Turkish STT/TTS and the "leyla" voice. The kit's own example agent gets the same defaults. Our English opening speaks first and every simulation passes, so dev-2d left it alone. **Your call** whether to change it before submission.
-- [ ] Customer styles at 3 runs, on `gate-green-3`, partial:
+- [x] **Customer styles at 3 runs, on `gate-green-3`:**
 
   | Style | Brief A | Brief B |
   |---|---|---|
   | pieces | **10/10** (was 3/10, then 7/10) | 2/3 |
   | corrects | **10/10** | **3/3** |
-  | talkative | **6/10**, a new weak spot | 2/3 |
-  | asks_back | 9/10 | running |
-  | in_words | pending | pending |
+  | talkative | 6/10 (the weak spot) | 2/3 |
+  | asks_back | 9/10 | **3/3** |
+  | in_words | **10/10** | **3/3** |
+
+  Talkative fails because the simulated customer gets cut off mid-sentence, and the small talk uses up the turn limits at each step. Fix A21, which also fixes the model calling close_call with a guessed outcome, is in review.
 
 - **Why styles fail** (from the diagnosis): 6 of 8 failures come from cut-off fragments and small talk eating the turn limit at a step (the identity decline, a negotiation attempt, the opening asks, the third-party cap, an endless "go on"). The fix is to stop counting those turns against the limit.
 - [ ] Gate on `candidate-2` (organisers' bank, 3 runs): **PUB-A 8/10, PUB-B 2/3. Below the bar, so not merged.**
@@ -262,4 +264,6 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 - [x] `candidate-2` = gate-green-3 + A19/A20 (workflow readability and wording cleanup) + A17 (sme fixes): clean merge, 939 tests. A18 (double sympathy, restructuring routing, "guarantee" wording) passed its review and joins next. Then the gate and the bench re-run.
 - [ ] A18 (double sympathy, multi-product restructuring routing, the "guarantee" wording) and A17 (sme): in progress. The bench re-runs after these.
 - [ ] Different "today" dates, variance at 5 runs
-- [ ] Fallback live check (for the 16:00 decision)
+- [ ] Fallback live check (for the 16:00 decision): running now.
+- **Process note from dev-2d:** A13, A16, A19 and A20 had Sonnet first reviews instead of Opus. A whole-branch Opus review before the freeze will cover them.
+- [x] Dashboard: A19 fixed the one-pile layout; it now shows as a clean left-to-right graph, checked on screen. Unresolved-variable warnings dropped from 6 to 2, and A20 cleaned up the labels and wording. `candidate-2` passes 974 tests.
