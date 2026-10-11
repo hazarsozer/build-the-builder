@@ -6,7 +6,13 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 
 - **The Claude account limit matters for the final build.** Around 09:00 the fallback build failed with a Claude SDK error about a "monthly spend limit", and dev-2d also hit its usage limit. After the 10:10 reset the SDK works again. But `builder.main` runs its extraction through **your Claude account**, so if the limit hits during 20:00–23:00, no final build can run. **Please check your Claude plan or spend limit and make sure there's enough headroom for Sunday evening.** Each build uses about $3–6 of extraction, plus the fix round.
 - **New safe version: `builder` @ 89bb9e3, tag `gate-green-4`.** It adds A17–A21: the sme fixes, double sympathy, restructuring routing, workflow readability, wording cleanup, and the talkative-style and guessed-close fixes. Gate on the organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3, with 0 sandbox errors.**
-- **Running now:** the fallback build, then the bench re-run on gate-green-4, and a whole-branch Opus review (`final-review-2.md`).
+- **Final review 2 (Opus, whole branch):** ready with fixes. **0 Critical, 5 Important**, which dev-2d is fixing:
+  - an opening placeholder could be spoken raw;
+  - the stage line only covered identity;
+  - the same-day cutoff was missing in the multi-product path;
+  - relative day phrases resolved to the wrong day;
+  - one sample value was invented.
+- **Fallback builder (for the 16:00 comparison):** built Brief A in 912 s ($2.64). Its own self-test scored 10/10. Its PUB-A 3-run check is running, followed by the bench re-run on gate-green-4.
 
 ## 1. The short version
 
