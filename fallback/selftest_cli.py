@@ -6,7 +6,7 @@
 expected, optional faults). Optional per case: "reasons": {"no_promise": ["refused", ...], "promise": []} = the brief's close_call table.
 The workflow file must use servers[0].url of the openapi file (--openapi, default tools/openapi.json) as the tool base URL; this script
 starts the bank and a Cloudflare tunnel, swaps that URL for the tunnel URL, saves the workflow under <slot>-selftest, runs ONE simulation of all cases and
-prints passed/total plus each failing case with its reasons. The tunnel is stopped at the end.
+prints passed/total (runs the platform retried are listed as void, not counted) plus each failing case with its reasons. The tunnel is stopped at the end.
 """
 import argparse, json, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -53,7 +53,8 @@ def main():
         res["agent_id"] = agent
         pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         pathlib.Path(a.out).write_text(scrub(json.dumps(res, indent=1)))
-        print(scrub(json.dumps({"passed": res["passed"], "total": res["total"], "agent_id": agent})))
+        print(scrub(json.dumps({"passed": res["passed"], "total": res["total"], "void": [r["id"] for r in res.get("void") or []],
+                                "agent_id": agent})))
         for r in res["rows"]:
             if not r["pass"]: print(scrub(json.dumps({"id": r["id"], "title": r["title"], "failed": r["failed"]})))
             for w in r.get("warnings") or []: print(scrub(f"warning {r['id']} {w}"))

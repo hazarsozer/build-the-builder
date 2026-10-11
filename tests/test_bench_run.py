@@ -79,7 +79,8 @@ def test_extraction_checks():
 def test_summarize_sim():
     runs = [{"passed": 1, "total": 2, "rows": [{"id": "A", "pass": True}, {"id": "B", "pass": False, "failed": ["x", "y"]}]},
             {"passed": 2, "total": 2, "rows": [{"id": "A", "pass": True}, {"id": "B", "pass": True}]}]
-    assert br.summarize_sim(runs) == {"passed": 3, "total": 4, "failures": [{"id": "B", "rep": 1, "failed": ["x", "y"]}]}
+    assert br.summarize_sim(runs) == {"passed": 3, "total": 4, "failures": [{"id": "B", "rep": 1, "failed": ["x", "y"]}],
+                                       "void": []}
 
 
 def _brief(name="ids", skip=None):

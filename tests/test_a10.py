@@ -123,7 +123,7 @@ def test_latch_every_non_payment_reply_ends_with_hardship_close():
     c = Call()
     c.user(neg_event="hardship", hardship_seen="yes")
     assert c.user(hardship_reply="accepted") == "transfer_support"
-    assert c.n["transfer_support"]["transitions"][-1]["target_node"] == "close_hardship_transfer"
+    assert c.n["transfer_support"]["transitions"][0]["target_node"] == "close_hardship_transfer"  # A24: [-1] is the retry
 
 
 def test_latch_named_payment_returns_to_negotiate_then_refusals_close_as_hardship():

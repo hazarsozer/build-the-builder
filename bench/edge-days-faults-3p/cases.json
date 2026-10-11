@@ -1,0 +1,1265 @@
+[
+ {
+  "id": "EDF-01",
+  "brief": "edge-days-faults-3p",
+  "family": "Dates",
+  "level": "hard",
+  "title": "Month end on a Friday, 'end of the month' twice",
+  "variables": {
+   "first_name": "Lukas",
+   "last_name": "Novak",
+   "title": "Mr",
+   "now": "2026-10-30T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1986-04-09",
+   "phone_last4": "2290"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "2207",
+    "past_due": 290.0,
+    "days_late": 5,
+    "minimum_payment": 87.0
+   }
+  ],
+  "script": "Confirms he is Lukas Novak. Date of birth 9 April 1986, last four digits 2290. Cannot pay today. Says he will pay the full amount 'at the end of the month'. When asked for an exact day, says he does not know the exact day yet, just the end of the month. Accepts the date the agent then proposes. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 290.0,
+     "date": "2026-11-18"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent asks once for an exact day after 'the end of the month'",
+   "the agent then proposes Wednesday 18 November, and never proposes Friday 30 October, Saturday 31 October or 30 November",
+   "create_promise called exactly once"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Lukas",
+    "last_name": "Novak",
+    "title": "Mr",
+    "now": "2026-10-30T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1986-04-09",
+    "phone_last4": "2290"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "2207",
+     "past_due": 290.0,
+     "days_late": 5,
+     "minimum_payment": 87.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-02",
+  "brief": "edge-days-faults-3p",
+  "family": "Dates",
+  "level": "hard",
+  "title": "Late December, salary date after the deadline",
+  "variables": {
+   "first_name": "Omar",
+   "last_name": "Haddad",
+   "title": "Mr",
+   "now": "2026-12-23T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1979-08-27",
+   "phone_last4": "6613"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 760.0,
+    "days_late": 20,
+    "instalment_amount": 380.0
+   }
+  ],
+  "script": "Confirms he is Omar Haddad. Date of birth 27 August 1979, last four digits 6613. Cannot pay today. Says his salary arrives on 8 January and he can pay the full amount then. Accepts the latest date the agent can offer. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 760.0,
+     "date": "2027-01-05"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says the latest date it can record is Tuesday 5 January 2027 and offers it",
+   "the agent never proposes 25 December or 1 January",
+   "text-message sentence said after the promise"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Omar",
+    "last_name": "Haddad",
+    "title": "Mr",
+    "now": "2026-12-23T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1979-08-27",
+    "phone_last4": "6613"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 760.0,
+     "days_late": 20,
+     "instalment_amount": 380.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-03",
+  "brief": "edge-days-faults-3p",
+  "family": "Third party",
+  "level": "medium",
+  "title": "After hours: 'in an hour' tonight, then tomorrow at ten",
+  "variables": {
+   "first_name": "Ines",
+   "last_name": "Silva",
+   "title": "Ms",
+   "now": "2026-10-14T19:30"
+  },
+  "identity": {
+   "date_of_birth": "1991-12-03",
+   "phone_last4": "4058"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "5530",
+    "past_due": 180.0,
+    "days_late": 4,
+    "minimum_payment": 54.0
+   }
+  ],
+  "script": "The person who answers is Ines's sister. Says Ines will be home in an hour and can be called back tonight at half past eight. If told that time is not possible, says tomorrow at ten in the morning.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-10-15",
+     "time": "10:00"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called",
+   "the agent does not book 20:30 today and asks once for another time",
+   "callback scheduled for Thursday 15 October at 10:00"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Ines",
+    "last_name": "Silva",
+    "title": "Ms",
+    "now": "2026-10-14T19:30"
+   },
+   "identity": {
+    "date_of_birth": "1991-12-03",
+    "phone_last4": "4058"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "5530",
+     "past_due": 180.0,
+     "days_late": 4,
+     "minimum_payment": 54.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-04",
+  "brief": "edge-days-faults-3p",
+  "family": "Third party",
+  "level": "medium",
+  "title": "Friday 18:30, the customer is back at seven tonight",
+  "variables": {
+   "first_name": "Leila",
+   "last_name": "Kowalski",
+   "title": "Ms",
+   "now": "2026-10-16T18:30"
+  },
+  "identity": {
+   "date_of_birth": "1984-02-17",
+   "phone_last4": "7302"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 420.0,
+    "days_late": 9,
+    "instalment_amount": 140.0
+   }
+  ],
+  "script": "The person who answers is Leila's flatmate. Says Leila gets home at seven o'clock tonight and can be called then. If told seven is not possible, says she does not know another time.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-10-16",
+     "time": "19:00"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called",
+   "callback scheduled for today, Friday 16 October, at 19:00 (19:00 is inside the window and later than now)"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Leila",
+    "last_name": "Kowalski",
+    "title": "Ms",
+    "now": "2026-10-16T18:30"
+   },
+   "identity": {
+    "date_of_birth": "1984-02-17",
+    "phone_last4": "7302"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 420.0,
+     "days_late": 9,
+     "instalment_amount": 140.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-05",
+  "brief": "edge-days-faults-3p",
+  "family": "Third party",
+  "level": "hard",
+  "title": "Day before a holiday: 'tomorrow' is the holiday",
+  "variables": {
+   "first_name": "Anna",
+   "last_name": "Lindqvist",
+   "title": "Ms",
+   "now": "2026-11-10T14:00"
+  },
+  "identity": {
+   "date_of_birth": "1975-06-21",
+   "phone_last4": "3381"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "9046",
+    "past_due": 610.0,
+    "days_late": 12,
+    "minimum_payment": 183.0
+   }
+  ],
+  "script": "The person who answers is Anna's husband. Says Anna can be reached tomorrow at noon. If told that is not possible, says Thursday at noon then.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-11-12",
+     "time": "12:00"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called",
+   "the agent does not book Wednesday 11 November (a holiday) and asks once for another time",
+   "callback scheduled for Thursday 12 November at 12:00"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Anna",
+    "last_name": "Lindqvist",
+    "title": "Ms",
+    "now": "2026-11-10T14:00"
+   },
+   "identity": {
+    "date_of_birth": "1975-06-21",
+    "phone_last4": "3381"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "9046",
+     "past_due": 610.0,
+     "days_late": 12,
+     "minimum_payment": 183.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-06",
+  "brief": "edge-days-faults-3p",
+  "family": "Tool failure",
+  "level": "hard",
+  "title": "get_account fails once",
+  "variables": {
+   "first_name": "Mia",
+   "last_name": "Tanaka",
+   "title": "Ms",
+   "now": "2026-11-05T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1993-10-30",
+   "phone_last4": "8824"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "4410",
+    "past_due": 315.0,
+    "days_late": 4,
+    "minimum_payment": 94.5
+   }
+  ],
+  "script": "Confirms she is Mia Tanaka. Date of birth 30 October 1993, last four digits 8824. If the agent mentions a technical problem, says that is fine and waits. Can pay the full amount tomorrow. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 315.0,
+     "date": "2026-11-06"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "get_account is called again after the failure and the call goes on",
+   "the agent states no amount or product before get_account succeeds",
+   "create_promise called exactly once"
+  ],
+  "faults": [
+   {
+    "tool": "get_account",
+    "fail_first_n": 1
+   }
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Mia",
+    "last_name": "Tanaka",
+    "title": "Ms",
+    "now": "2026-11-05T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1993-10-30",
+    "phone_last4": "8824"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "4410",
+     "past_due": 315.0,
+     "days_late": 4,
+     "minimum_payment": 94.5
+    }
+   ],
+   "faults": {
+    "get_account": [
+     1
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-07",
+  "brief": "edge-days-faults-3p",
+  "family": "Tool failure",
+  "level": "hard",
+  "title": "get_account keeps failing",
+  "variables": {
+   "first_name": "Rafael",
+   "last_name": "Duarte",
+   "title": "Mr",
+   "now": "2026-11-05T15:00"
+  },
+  "identity": {
+   "date_of_birth": "1982-01-14",
+   "phone_last4": "5096"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 900.0,
+    "days_late": 16,
+    "instalment_amount": 300.0
+   }
+  ],
+  "script": "Confirms he is Rafael Duarte. Date of birth 14 January 1982, last four digits 5096. Then asks what the call is about. If the agent mentions a technical problem, says that is fine.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "service_error",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent names no product, amount or number of days late and invents no figure",
+   "create_promise is never called",
+   "the agent says there was a technical problem, thanks him and says goodbye"
+  ],
+  "faults": [
+   {
+    "tool": "get_account",
+    "fail_first_n": 4
+   }
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Rafael",
+    "last_name": "Duarte",
+    "title": "Mr",
+    "now": "2026-11-05T15:00"
+   },
+   "identity": {
+    "date_of_birth": "1982-01-14",
+    "phone_last4": "5096"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 900.0,
+     "days_late": 16,
+     "instalment_amount": 300.0
+    }
+   ],
+   "faults": {
+    "get_account": [
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-08",
+  "brief": "edge-days-faults-3p",
+  "family": "Tool failure",
+  "level": "hard",
+  "title": "verify_identity fails once, on a Friday",
+  "variables": {
+   "first_name": "Chloe",
+   "last_name": "Moreau",
+   "title": "Ms",
+   "now": "2026-10-16T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1990-05-08",
+   "phone_last4": "1147"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "6118",
+    "past_due": 205.0,
+    "days_late": 6,
+    "minimum_payment": 61.5
+   }
+  ],
+  "script": "Confirms she is Chloe Moreau. Date of birth 8 May 1990, last four digits 1147. If the agent mentions a technical problem, says that is fine. If asked for the date of birth again, gives the same date. Can pay the full amount today. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 205.0,
+     "date": "2026-10-16"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent never says an answer was wrong and does not count the failure as a wrong answer",
+   "both security questions passed before get_account",
+   "create_promise called exactly once"
+  ],
+  "faults": [
+   {
+    "tool": "verify_identity",
+    "fail_first_n": 1
+   }
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Chloe",
+    "last_name": "Moreau",
+    "title": "Ms",
+    "now": "2026-10-16T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1990-05-08",
+    "phone_last4": "1147"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "6118",
+     "past_due": 205.0,
+     "days_late": 6,
+     "minimum_payment": 61.5
+    }
+   ],
+   "faults": {
+    "verify_identity": [
+     1
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-09",
+  "brief": "edge-days-faults-3p",
+  "family": "Tool failure",
+  "level": "hard",
+  "title": "verify_identity keeps failing",
+  "variables": {
+   "first_name": "Ivan",
+   "last_name": "Brennan",
+   "title": "Mr",
+   "now": "2026-11-10T10:00"
+  },
+  "identity": {
+   "date_of_birth": "1988-09-02",
+   "phone_last4": "6640"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "3075",
+    "past_due": 470.0,
+    "days_late": 10,
+    "minimum_payment": 141.0
+   }
+  ],
+  "script": "Confirms he is Ivan Brennan. Date of birth 2 September 1988, last four digits 6640. If asked for an answer again, gives the same answer. If the agent mentions a technical problem, says that is fine.",
+  "expected": {
+   "outcome": "no_promise",
+   "reason": "service_error",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent never says an answer was wrong",
+   "the agent never states the debt, the product or an amount",
+   "the agent says there was a technical problem, thanks him and says goodbye"
+  ],
+  "faults": [
+   {
+    "tool": "verify_identity",
+    "fail_first_n": 4
+   }
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Ivan",
+    "last_name": "Brennan",
+    "title": "Mr",
+    "now": "2026-11-10T10:00"
+   },
+   "identity": {
+    "date_of_birth": "1988-09-02",
+    "phone_last4": "6640"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "3075",
+     "past_due": 470.0,
+     "days_late": 10,
+     "minimum_payment": 141.0
+    }
+   ],
+   "faults": {
+    "verify_identity": [
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-10",
+  "brief": "edge-days-faults-3p",
+  "family": "Third party",
+  "level": "hard",
+  "title": "Son asks the amount and offers to pay; the callback service fails once",
+  "variables": {
+   "first_name": "Eva",
+   "last_name": "Weber",
+   "title": "Ms",
+   "now": "2026-11-05T14:00"
+  },
+  "identity": {
+   "date_of_birth": "1958-03-25",
+   "phone_last4": "2716"
+  },
+  "products": [
+   {
+    "type": "personal_loan",
+    "past_due": 350.0,
+    "days_late": 7,
+    "instalment_amount": 117.0
+   }
+  ],
+  "script": "The person who answers is Eva's son. Asks how much his mother owes and says he will pay it right now by card. If the agent will not tell him, asks once more. Then says his mother is back tomorrow at noon. If the agent mentions a technical problem, says that is fine.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [
+    {
+     "date": "2026-11-06",
+     "time": "12:00"
+    }
+   ],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called",
+   "schedule_callback is called again after the failure, and the agent says the callback is booked only after that",
+   "callback scheduled for Friday 6 November at 12:00"
+  ],
+  "faults": [
+   {
+    "tool": "schedule_callback",
+    "fail_first_n": 1
+   }
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Eva",
+    "last_name": "Weber",
+    "title": "Ms",
+    "now": "2026-11-05T14:00"
+   },
+   "identity": {
+    "date_of_birth": "1958-03-25",
+    "phone_last4": "2716"
+   },
+   "products": [
+    {
+     "type": "personal_loan",
+     "past_due": 350.0,
+     "days_late": 7,
+     "instalment_amount": 117.0
+    }
+   ],
+   "faults": {
+    "schedule_callback": [
+     1
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-11",
+  "brief": "edge-days-faults-3p",
+  "family": "Tool failure",
+  "level": "hard",
+  "title": "transfer_to_agent fails once on a restructuring request",
+  "variables": {
+   "first_name": "Noah",
+   "last_name": "Smith",
+   "title": "Mr",
+   "now": "2026-12-03T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1981-07-19",
+   "phone_last4": "9352"
+  },
+  "products": [
+   {
+    "type": "car_loan",
+    "past_due": 1240.0,
+    "days_late": 25,
+    "instalment_amount": 620.0
+   }
+  ],
+  "script": "Confirms he is Noah Smith. Date of birth 19 July 1981, last four digits 9352. After hearing the debt, asks for a new payment plan with lower monthly instalments. If the agent mentions a technical problem, says that is fine.",
+  "expected": {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": [
+    {
+     "queue": "restructuring"
+    }
+   ]
+  },
+  "checks": [
+   "the agent does not describe a plan or any terms",
+   "transfer_to_agent with queue restructuring is called again after the failure",
+   "create_promise is never called"
+  ],
+  "faults": [
+   {
+    "tool": "transfer_to_agent",
+    "fail_first_n": 1
+   }
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Noah",
+    "last_name": "Smith",
+    "title": "Mr",
+    "now": "2026-12-03T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1981-07-19",
+    "phone_last4": "9352"
+   },
+   "products": [
+    {
+     "type": "car_loan",
+     "past_due": 1240.0,
+     "days_late": 25,
+     "instalment_amount": 620.0
+    }
+   ],
+   "faults": {
+    "transfer_to_agent": [
+     1
+    ]
+   },
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-12",
+  "brief": "edge-days-faults-3p",
+  "family": "Third party",
+  "level": "hard",
+  "title": "Husband pushes to pay, both times outside the window",
+  "variables": {
+   "first_name": "Julia",
+   "last_name": "Kowalski",
+   "title": "Ms",
+   "now": "2026-10-14T11:00"
+  },
+  "identity": {
+   "date_of_birth": "1987-11-11",
+   "phone_last4": "0482"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "1863",
+    "past_due": 275.0,
+    "days_late": 9,
+    "minimum_payment": 82.5
+   }
+  ],
+  "script": "The person who answers is Julia's husband. Asks what the call is about, then asks how much she owes and offers to pay it now with his own card. Says Julia is away and can be reached on Saturday morning. If asked for another time, says Monday the 19th at noon. Has no other time.",
+  "expected": {
+   "outcome": "not_reached",
+   "reason": "no_callback",
+   "promises": [],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent does not say why it is calling and names no product, amount or debt",
+   "verify_identity and get_account never called",
+   "the agent takes no payment and no card details from the husband",
+   "no callback is scheduled: Saturday and Monday 19 October are both outside the window, and the agent asks once for another time"
+  ],
+  "third_party": true,
+  "seed": {
+   "variables": {
+    "first_name": "Julia",
+    "last_name": "Kowalski",
+    "title": "Ms",
+    "now": "2026-10-14T11:00"
+   },
+   "identity": {
+    "date_of_birth": "1987-11-11",
+    "phone_last4": "0482"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "1863",
+     "past_due": 275.0,
+     "days_late": 9,
+     "minimum_payment": 82.5
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ },
+ {
+  "id": "EDF-13",
+  "brief": "edge-days-faults-3p",
+  "family": "Handover",
+  "level": "hard",
+  "title": "Wife answers, then hands the phone to the customer",
+  "variables": {
+   "first_name": "Peter",
+   "last_name": "Okafor",
+   "title": "Mr",
+   "now": "2026-10-21T16:00"
+  },
+  "identity": {
+   "date_of_birth": "1977-01-29",
+   "phone_last4": "3904"
+  },
+  "products": [
+   {
+    "type": "credit_card",
+    "card_last4": "7712",
+    "past_due": 230.0,
+    "days_late": 3,
+    "minimum_payment": 69.0
+   }
+  ],
+  "script": "Your wife Nora answers the phone first. In your first turn, speak as Nora: 'Hello, Nora speaking.' When the caller asks for Mr Okafor, still as Nora say: 'One moment, I'll get him.' In your next turn you are Peter: 'Hello, Peter Okafor speaking.' From then on you are Peter. Date of birth 29 January 1977, last four digits 3904. Cannot pay today. Can pay the full amount this Friday. Confirms at the read-back.",
+  "expected": {
+   "outcome": "promise",
+   "reason": null,
+   "promises": [
+    {
+     "product_id": "p1",
+     "amount": 230.0,
+     "date": "2026-10-23"
+    }
+   ],
+   "notes": [],
+   "callbacks": [],
+   "transfers": []
+  },
+  "checks": [
+   "the agent says nothing about the reason for the call while Nora is on the line",
+   "after Peter comes to the phone, both security questions pass before the debt is stated",
+   "create_promise called exactly once"
+  ],
+  "seed": {
+   "variables": {
+    "first_name": "Peter",
+    "last_name": "Okafor",
+    "title": "Mr",
+    "now": "2026-10-21T16:00"
+   },
+   "identity": {
+    "date_of_birth": "1977-01-29",
+    "phone_last4": "3904"
+   },
+   "products": [
+    {
+     "type": "credit_card",
+     "card_last4": "7712",
+     "past_due": 230.0,
+     "days_late": 3,
+     "minimum_payment": 69.0
+    }
+   ],
+   "faults": {},
+   "reasons": {
+    "promise": [],
+    "paid": [],
+    "transferred": [
+     "restructuring",
+     "human",
+     "support"
+    ],
+    "no_promise": [
+     "refused",
+     "hardship",
+     "dispute",
+     "service_error"
+    ],
+    "not_verified": [
+     "failed",
+     "declined"
+    ],
+    "not_reached": [
+     "callback",
+     "no_callback",
+     "wrong_number",
+     "deceased",
+     "unclear"
+    ]
+   }
+  }
+ }
+]

@@ -1,11 +1,12 @@
 """Run generated cases (builder/cases.py) against an agent wired to OUR mock bank, and score them.
 
-    run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy=None) -> {"passed", "total", "rows", "simulation_id", "iteration_id", "status"}
+    run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy=None) -> {"passed", "total", "rows", "void", "simulation_id", "iteration_id", "status"}
 
 `bank` is our bank's base URL (the Cloudflare tunnel, or http://127.0.0.1:<port>). Each case seeds a fresh customer
 (`POST /v1/practice/sessions {"seed": ...}`), personas come from tools/run_cases.persona_for so the customer behaves as
 the organisers' customers do, one Freya simulation runs every case, and each case is scored from our ledger
-(tools/score.score_ledger) plus the judge's verdict.
+(tools/score.score_ledger) plus the judge's verdict. A run Freya retried on its own (tools/score.retried) is VOID: it is
+listed in `void`, not in `rows`, and counts in neither `passed` nor `total`.
 
 Two agent replies that open with the same four words (after removing the spec's fixed sentences, the customer's
 address forms and leading acknowledgements) give a WARNING in the row (`warnings`), not a failure, until live data
@@ -21,7 +22,7 @@ for _p in (ROOT, ROOT / "tools"):
     if str(_p) not in sys.path: sys.path.insert(0, str(_p))
 import freya  # noqa: E402
 from run_cases import persona_for  # noqa: E402
-from score import score_ledger  # noqa: E402
+from score import retried, score_ledger  # noqa: E402
 from builder.redact import scrub  # noqa: E402
 
 UA = {"user-agent": "freya-builder-selftest/0.1", "content-type": "application/json"}
@@ -99,12 +100,16 @@ def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy
                                                  on_created=on_created, on_busy=on_busy,
                                                  **({"deadline_s": deadline_s} if deadline_s else {}))
     judge = {r["personaId"]: r for r in freya.get_iteration(sim_id, it_id)["runs"]}
-    rows = []
+    rows, void = [], []
     for c, style in styled:
         cid = sessions[c["id"]]["customer_id"]
+        j = judge.get(pids[c["id"]], {})
+        if retried(j):      # Freya retried the run: its attempts shared this session, so neither a pass nor a failure
+            void.append({"id": c["id"], "scenario": c.get("scenario"), "title": c["title"], "style": style, "void": True,
+                         "attempts": j.get("attempts"), "call_id": j.get("callId"), "customer_id": cid})
+            continue
         led = _http(base, "/v1/practice/ledger/" + cid)
         r = score_ledger(c, led)
-        j = judge.get(pids[c["id"]], {})
         if j.get("outcome") != "pass": r["failed"].append("conversation: " + " ".join(scrub(str(j.get("reason") or "no verdict")).split())[:400])
         rep = None
         if j.get("callId"):
@@ -117,5 +122,5 @@ def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy
         rows.append({"id": c["id"], "scenario": c.get("scenario"), "level": c["level"], "family": c["family"], "title": c["title"], "style": style,
                      "pass": not r["failed"], "failed": r["failed"], "warnings": warnings, "repeated_opening": rep, "call_id": j.get("callId"),
                      "tools": [x["tool"] for x in led.get("calls", [])], "customer_id": cid})
-    return {"passed": sum(r["pass"] for r in rows), "total": len(rows), "rows": rows,
+    return {"passed": sum(r["pass"] for r in rows), "total": len(rows), "rows": rows, "void": void,
             "simulation_id": sim_id, "iteration_id": it_id, "status": status}

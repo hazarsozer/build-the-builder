@@ -161,7 +161,7 @@ def test_fallback_edge_says_otherwise():
     last = wf["nodes"]["finish"]["transitions"][-1]
     assert last["condition"] == {"operator": "always"}
     assert last["description"] == "Otherwise: close the call (service error)"
-    assert wf["nodes"]["load_account"]["transitions"][-1]["description"] == "Next: prepare account"
+    assert wf["nodes"]["load_account_retry"]["transitions"][-1]["description"] == "Next: prepare account"  # A24
 
 
 def test_every_step_has_a_description(compiled):

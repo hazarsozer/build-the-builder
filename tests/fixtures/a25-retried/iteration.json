@@ -1,0 +1,43 @@
+{
+ "_note": "Freya iteration of sim 37df28da (A24 gate, 2026-10-11), runs trimmed. Freya retried every run (attempts 4); PUB-12/PUB-13 FAILed on interleaved attempts against one bank session.",
+ "iteration": {
+  "status": "completed",
+  "totalRuns": 3
+ },
+ "runs": [
+  {
+   "id": "260b10e6-434b-42ae-b1d8-6d1d148a8c6d",
+   "callId": "2b30fc12-90ea-42bd-9f0b-35cbd352297e",
+   "outcome": "fail",
+   "reason": "The call failed on multiple success criteria and ended poorly. 1. The phone question was never asked a second time. 2. The assistant failed to discuss the personal loan or car loan; therefore, no 'refused' notes or required attempts were made for those products. 3. The call ended after a repetitive loop of goodbyes (Messages 14-40) triggered a turn limit on the 'identity' node. 4. The final closing message (Message 42) incorrectly stated that security questions were not answered, despite the assistant confirming verification in Message 6.",
+   "personaId": "6ef38952-3ad9-44a7-aa1a-630009105d63",
+   "personaName": "PUB-12 Promises one product, refuses two",
+   "turnCount": 21,
+   "attempts": 4,
+   "maxAttempts": 4
+  },
+  {
+   "id": "78626a4a-a52e-40be-83a8-ef52dccac157",
+   "callId": "b7bcf80f-34d7-4eee-8029-d0fb54dbdb68",
+   "outcome": "fail",
+   "reason": "- The credit card payment was not recorded for 30 October.\n- The loan payment was not recorded for 23 October; the user requested 30 October for both, but the agent never processed any payment arrangement.\n- There was no read-back of the dates.\n- The agent got stuck in a loop from Message 10 to Message 41, repeatedly stating it did not have account information despite successful identity verification.\n- The call was terminated because the agent reached a turn limit in the 'identity' node, and it incorrectly claimed security questions were not answered in its final message.",
+   "personaId": "5012a49a-112a-490d-b9f5-ad34a14f7150",
+   "personaName": "PUB-13 One date for both, but the deadlines differ",
+   "turnCount": 21,
+   "attempts": 4,
+   "maxAttempts": 4
+  },
+  {
+   "id": "ae96cebf-3e95-454f-aeb0-cbc18f51045f",
+   "callId": "6430edd8-deeb-4d4f-9aef-2ca52c83982d",
+   "outcome": "pass",
+   "reason": "All success criteria were met. In Message 6, the agent stated all three products (credit card, personal loan, and car loan) before asking for payment. Message 8 provided a single comprehensive read-back for all three products, which the user confirmed in Message 9. System events confirm that three separate 'create_promise' API calls were executed for product IDs p1, p2, and p3 following the user's confirmation. The call ended properly with the 'assistant-ended-call' action.",
+   "personaId": "19c5967c-6390-4f8a-9523-66c784fd72bf",
+   "personaName": "PUB-11 Three products, one date for all",
+   "turnCount": 6,
+   "attempts": 4,
+   "maxAttempts": 4
+  }
+ ],
+ "runsTotal": 3
+}

@@ -8,7 +8,7 @@ import argparse, hashlib, json, os, pathlib, sys, time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "tools"))
 import freya
-from score import http, score_ledger
+from score import http, retried, score_ledger
 
 PERSONA = """OUTPUT RULE: Write only the words you say on the phone. No stage directions, no brackets. One or two short sentences per turn, then wait for the other side.
 
@@ -68,18 +68,34 @@ def main():
             if med <= 10 or attempt == a.rerun_if_slow: break
             print(f"-- run discarded: median slowest turn {med:.0f} s. Waiting 5 minutes, then repeating it.\n", flush=True); time.sleep(300)
         reps.append(rows); total_s += took
-        if a.reps > 1: print(f"-- run {rep + 1} of {a.reps}: {sum(r['pass'] for r in rows)} / {len(rows)} passed, {took:.0f} s\n")
+        if a.reps > 1:
+            scored = [r for r in rows if not r.get("void")]; nv = len(rows) - len(scored)
+            print(f"-- run {rep + 1} of {a.reps}: {sum(r['pass'] for r in scored)} / {len(scored)} passed{f', {nv} void (platform retried the run)' if nv else ''}, {took:.0f} s\n")
     need = a.reps                                                # a customer counts only when every run passes
-    final = [{"id": c["id"], "family": c["family"], "passes": sum(r[k]["pass"] for r in reps), "runs": a.reps, "pass": sum(r[k]["pass"] for r in reps) >= need} for k, c in enumerate(cases)]
-    n = sum(f["pass"] for f in final)
+    final = [final_row(c, [r[k] for r in reps], need) for k, c in enumerate(cases)]
+    void = [f["id"] for f in final if f["void"]]
+    counted = [f for f in final if not f["void"]]                # a void case is neither a pass nor a failure
+    n = sum(f["pass"] for f in counted)
     if a.reps > 1:
-        for f in final: print(("PASS" if f["pass"] else "FAIL"), f["id"], f"{f['passes']}/{f['runs']}")
-    print(f"\n{n} / {len(final)} passed (bank records and conversation checks){'' if a.reps == 1 else f', a customer counts with {need} of {a.reps} runs'}. Last simulation {sim_id}, status {status}, {total_s:.0f} s.")
+        for f in final:
+            if f["void"]: print("VOID", f["id"], f"(platform retried {f['void_runs']} of {f['runs']} runs, the other {f['runs'] - f['void_runs']} passed)")
+            else: print(("PASS" if f["pass"] else "FAIL"), f["id"], f"{f['passes']}/{f['runs']}" + (f" ({f['void_runs']} void)" if f["void_runs"] else ""))   # n stays the rep count: regate.sh greps "^FAIL <id> [0-2]/3"
+    print(f"\n{n} / {len(counted)} passed (bank records and conversation checks){'' if a.reps == 1 else f', a customer counts with {need} of {a.reps} runs'}{f'; {len(void)} void, not counted (platform retried the run): ' + ', '.join(void) if void else ''}. Last simulation {sim_id}, status {status}, {total_s:.0f} s.")
     with open(ROOT / "results" / "log.jsonl", "a") as f:      # one line per run, the record of how the score moved over time
-        f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "agent_id": a.agent_id, "brief": a.brief, "runs": a.reps, "passed": n, "total": len(final), "seconds": round(total_s), "failed": [f["id"] for f in final if not f["pass"]]}) + "\n")
+        f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "agent_id": a.agent_id, "brief": a.brief, "runs": a.reps, "passed": n, "total": len(counted), "seconds": round(total_s), "failed": [f["id"] for f in counted if not f["pass"]], "void": void}) + "\n")
     if a.out:
         pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-        json.dump({"agent_id": a.agent_id, "simulation_id": sim_id, "iteration_id": it_id, "seconds": round(total_s), "passed": n, "total": len(final), "runs": a.reps, "final": final, "rows": reps[-1], "all_rows": reps}, open(a.out, "w"), indent=1)
+        json.dump({"agent_id": a.agent_id, "simulation_id": sim_id, "iteration_id": it_id, "seconds": round(total_s), "passed": n, "total": len(counted), "void": void, "runs": a.reps, "final": final, "rows": reps[-1], "all_rows": reps}, open(a.out, "w"), indent=1)
+
+def final_row(case, runs, need):
+    """One case over its reps. A failed scored run fails it; otherwise a void run (platform retry) leaves it VOID:
+    a customer counts only when every run passes, and a void run neither passes nor fails."""
+    scored = [r for r in runs if not r.get("void")]
+    passes = sum(r["pass"] for r in scored)
+    failed = passes < len(scored)
+    void = not failed and len(scored) < len(runs)
+    return {"id": case["id"], "family": case["family"], "passes": passes, "runs": len(runs), "void": void,
+            "void_runs": len(runs) - len(scored), "pass": not failed and not void and passes >= need}
 
 def run_once(agent_id, cases, ids):
     """One simulation: every case once. Returns the scored rows."""
@@ -91,18 +107,23 @@ def run_once(agent_id, cases, ids):
     rows = []
     for c in cases:
         led = http("/v1/practice/ledger/" + sessions[c["id"]]["customer_id"])
-        r = score_ledger(c, led)
         j = judge.get(ids[c["id"]], {})                      # the conversation checks, read from the transcript by the judge model
+        tools = [x["tool"] for x in led.get("calls") or []]
+        if retried(j):                                        # attempts share one session: the ledger and the verdict say nothing
+            rows.append({"id": c["id"], "level": c["level"], "family": c["family"], "pass": False, "void": True, "attempts": j.get("attempts"), "failed": [], "call_id": j.get("callId"), "tools": tools, "customer_id": sessions[c["id"]]["customer_id"]})
+            print(f"VOID {c['id']} (platform retried the run)")
+            continue
+        r = score_ledger(c, led)
         if j.get("outcome") != "pass": r["failed"].append("conversation: " + " ".join(str(j.get("reason") or "no verdict").split())[:400])
         r["pass"] = not r["failed"]
-        rows.append({"id": c["id"], "level": c["level"], "family": c["family"], "pass": r["pass"], "failed": r["failed"], "call_id": j.get("callId"), "tools": [x["tool"] for x in led["calls"]], "customer_id": sessions[c["id"]]["customer_id"]})
+        rows.append({"id": c["id"], "level": c["level"], "family": c["family"], "pass": r["pass"], "void": False, "failed": r["failed"], "call_id": j.get("callId"), "tools": tools, "customer_id": sessions[c["id"]]["customer_id"]})
         print(("PASS" if r["pass"] else "FAIL"), c["id"], f"{c['level']:<6}", f"{c['family']:<14}", "|", " > ".join(x["tool"].replace("verify_identity", "verify").replace("create_promise", "promise") for x in led["calls"]) or "(no tool calls)")
         for f in r["failed"]: print("       -", f[:260])
     # How long the phone agent kept the customer waiting. A call whose customer hung up after long silences says
     # something about the speed of the model at that moment, not only about the agent.
     waits = []
     for r in rows:
-        if not r["call_id"]: continue
+        if not r["call_id"] or r.get("void"): continue        # a retried run's call says nothing about the agent's speed
         try: call = freya.get_call(r["call_id"])
         except Exception: continue
         last_user, worst = None, 0.0
@@ -113,7 +134,7 @@ def run_once(agent_id, cases, ids):
             elif last_user is not None: worst = max(worst, t - last_user); last_user = None if m.get("role") == "assistant" else last_user
         r["slowest_turn_s"] = round(worst, 1); r["ended"] = call.get("endedReason"); waits.append(worst)
     if waits:
-        waits.sort(); med = waits[len(waits) // 2]; hung = sum(r.get("ended") == "customer-ended-call" and not r["pass"] for r in rows)
+        waits.sort(); med = waits[len(waits) // 2]; hung = sum(r.get("ended") == "customer-ended-call" and not r["pass"] and not r.get("void") for r in rows)
         print(f"\nslowest agent turn per call: median {med:.0f} s, worst {waits[-1]:.0f} s. Failed calls where the customer hung up: {hung}.")
         if med > 10: print("WARNING: the phone agent was slow in this run. If the same agent is fast in another run, the model was busy and this score is too low.")
     return rows, sim_id, it_id, status, took, (med if waits else 0)

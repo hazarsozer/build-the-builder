@@ -14,6 +14,15 @@ def http(path, body=None):
     try: return json.load(urllib.request.urlopen(req, timeout=20))
     except urllib.error.HTTPError as e: return json.load(e)
 
+def retried(run):
+    """True when Freya retried this simulation run on its own (the run record's `attempts` > 0; 0 when healthy).
+    Every attempt reuses the persona's bank session, so the attempts interleave in one ledger and the judge reads only
+    the last one: such a run is VOID, neither a pass nor a failure."""
+    n = (run or {}).get("attempts")
+    if isinstance(n, bool) or not isinstance(n, (int, float, str)): return False
+    try: return float(n) > 0                                 # 4, 4.0 or "4"
+    except ValueError: return False
+
 def score_ledger(case, led):
     exp, bad = case["expected"], []
     got_outcome = (led.get("outcome"), led.get("reason"))

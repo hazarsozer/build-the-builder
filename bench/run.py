@@ -103,10 +103,13 @@ def extraction_checks(spec, cases):
 
 
 def summarize_sim(runs):
-    """selftest.run results (one per rep) -> {passed, total, failures: [{id, rep, failed}]}."""
+    """selftest.run results (one per rep) -> {passed, total, failures: [{id, rep, failed}], void: [{id, rep}]}.
+    Void runs (Freya retried them) are reported apart and count in neither passed nor total."""
     fails = [{"id": r["id"], "rep": i + 1, "failed": [str(x)[:300] for x in (r.get("failed") or [])[:3]]}
              for i, res in enumerate(runs) for r in res.get("rows") or [] if not r.get("pass")]
-    return {"passed": sum(r.get("passed", 0) for r in runs), "total": sum(r.get("total", 0) for r in runs), "failures": fails}
+    void = [{"id": r["id"], "rep": i + 1} for i, res in enumerate(runs) for r in res.get("void") or []]
+    return {"passed": sum(r.get("passed", 0) for r in runs), "total": sum(r.get("total", 0) for r in runs), "failures": fails,
+            "void": void}
 
 
 def _err(e):
@@ -162,10 +165,15 @@ def render_md(meta, rows):
             fails = ["%s%s: %s" % (f["id"], "" if meta.get("reps", 1) == 1 else " r%d" % f["rep"], "; ".join(f["failed"])[:160])
                      for f in sim["failures"]]
         simcell = "%d/%d" % (sim["passed"], sim["total"]) if sim else ("skipped: " + r["sim_skip"] if r.get("sim_skip") else None)
+        if sim and sim.get("void"):
+            simcell += " (%d void)" % len(sim["void"])
+            fails += ["VOID %s (platform retried the run)" % ", ".join(
+                "%s%s" % (v["id"], "" if meta.get("reps", 1) == 1 else " r%d" % v["rep"]) for v in sim["void"])]
         fails += ["%s error: %s" % (e["phase"], e["error"][:160]) for e in r.get("errors") or []]
         lines.append("| %s |" % " | ".join(_cell(x) for x in (r["name"], r.get("build_s"), r.get("exit"), r.get("spec_errors"),
                                                               r.get("conflicts"), checks, simcell, "<br>".join(fails) or None)))
-    lines += ["", "**Sim total: %d/%d**" % (tp, tt), ""]
+    tv = sum(len((r.get("sim") or {}).get("void") or []) for r in rows)
+    lines += ["", "**Sim total: %d/%d**%s" % (tp, tt, " (%d void runs not counted: the platform retried them)" % tv if tv else ""), ""]
     for r in rows:
         bad = {k: v for k, v in (r.get("checks") or {}).items() if not v.get("ok")}
         if bad or r.get("build_tail"):
@@ -328,7 +336,9 @@ class Runner:
         runs = []
         for rep in range(self.a.reps):
             runs.append(selftest.run(agent, cases, url, styles=styles))
-            print("  rep %d: %d/%d" % (rep + 1, runs[-1]["passed"], runs[-1]["total"]), flush=True)
+            nv = len(runs[-1].get("void") or [])
+            print("  rep %d: %d/%d%s" % (rep + 1, runs[-1]["passed"], runs[-1]["total"],
+                                         ", %d void (platform retried the run)" % nv if nv else ""), flush=True)
         out = summarize_sim(runs)
         out["agent_id"], out["simulation_ids"] = agent, [r.get("simulation_id") for r in runs]
         return out

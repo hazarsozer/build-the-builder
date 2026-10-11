@@ -172,6 +172,20 @@ def _render(events, name):
         out += ["| %s | %s/%s | %s | %s | %s |" % (r.get("round"), r.get("passed"), r.get("total"), _cell(r.get("agent_id", "")),
                                                   _cell(r.get("simulation_id", "")), _cell(", ".join(r.get("failing") or []) or "-"))
                 for r in rounds]
+    for r in rounds:
+        if r.get("void"):
+            out.append("- round %s: %d void, not counted (platform retried the run): %s"
+                       % (r.get("round"), len(r["void"]), _cell(", ".join(r["void"]))))
+    for s in _of(events, "selftest_no_signal"):
+        out.append("- round %s: no signal (%s)" % (s.get("round"), _cell(s.get("why"))))
+    for s in _of(events, "selftest_rerun"):
+        out.append("- round %s re-run: %s of %s runs scored" % (s.get("round"), s.get("scored"), s.get("cases")))
+    for s in _of(events, "selftest_combined"):
+        out.append("- round %s combined: %s/%s passed, %d void" % (s.get("round"), s.get("passed"), s.get("total"),
+                                                                 len(s.get("void") or [])))
+    for s in _of(events, "selftest_low_signal"):
+        out.append("- round %s: low signal, %s of %s runs scored (%s)" % (s.get("round"), s.get("scored"), s.get("cases"),
+                                                                       _cell(s.get("why"))))
     for s in _of(events, "selftest_skipped"):
         out.append("- skipped: %s" % _cell(s.get("why")))
     out.append("")

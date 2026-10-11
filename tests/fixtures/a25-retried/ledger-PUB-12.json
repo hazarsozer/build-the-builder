@@ -1,0 +1,393 @@
+{
+ "ok": true,
+ "case": "PUB-12",
+ "now": "2026-10-14T11:00",
+ "verified": {
+  "date_of_birth": true,
+  "phone_last4": true
+ },
+ "wrong": 1,
+ "hinted": false,
+ "promises": [
+  {
+   "promise_id": "pr1",
+   "product_id": "p1",
+   "type": "credit_card",
+   "amount": 510,
+   "date": "2026-10-15"
+  }
+ ],
+ "notes": [],
+ "callbacks": [],
+ "transfers": [],
+ "outcome": "not_verified",
+ "reason": "declined",
+ "failures": {
+  "verify_identity": 0,
+  "get_account": 0,
+  "create_promise": 0,
+  "close_call": 0
+ },
+ "calls": [
+  {
+   "n": 1,
+   "tool": "verify_identity",
+   "args": {
+    "field": "date_of_birth",
+    "answer": "1983-10-19"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "verified": true,
+    "wrong_answers_left": 3,
+    "all_verified": false
+   }
+  },
+  {
+   "n": 2,
+   "tool": "verify_identity",
+   "args": {
+    "field": "phone_last4",
+    "answer": "4401"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "verified": false,
+    "wrong_answers_left": 2,
+    "all_verified": false
+   }
+  },
+  {
+   "n": 3,
+   "tool": "verify_identity",
+   "args": {
+    "field": "phone_last4",
+    "answer": "4410"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "verified": true,
+    "wrong_answers_left": 2,
+    "all_verified": true
+   }
+  },
+  {
+   "n": 4,
+   "tool": "get_account",
+   "args": {},
+   "status": 200,
+   "result": {
+    "ok": true,
+    "products": [
+     {
+      "product_id": "p1",
+      "type": "credit_card",
+      "card_last4": "9015",
+      "past_due": 510,
+      "days_late": 16,
+      "minimum_payment": 153
+     },
+     {
+      "product_id": "p2",
+      "type": "personal_loan",
+      "past_due": 1320,
+      "days_late": 16,
+      "instalment_amount": 440
+     },
+     {
+      "product_id": "p3",
+      "type": "car_loan",
+      "past_due": 140,
+      "days_late": 7,
+      "instalment_amount": 46
+     }
+    ]
+   }
+  },
+  {
+   "n": 5,
+   "tool": "get_account",
+   "args": {
+    "date": "2026-10-15",
+    "amount": "full",
+    "outcome": "agreed",
+    "product_id": "p1"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "products": [
+     {
+      "product_id": "p1",
+      "type": "credit_card",
+      "card_last4": "9015",
+      "past_due": 510,
+      "days_late": 16,
+      "minimum_payment": 153
+     },
+     {
+      "product_id": "p2",
+      "type": "personal_loan",
+      "past_due": 1320,
+      "days_late": 16,
+      "instalment_amount": 440
+     },
+     {
+      "product_id": "p3",
+      "type": "car_loan",
+      "past_due": 140,
+      "days_late": 7,
+      "instalment_amount": 46
+     }
+    ]
+   }
+  },
+  {
+   "n": 6,
+   "tool": "get_account",
+   "args": {
+    "outcome": "refused",
+    "product_id": "p2"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "products": [
+     {
+      "product_id": "p1",
+      "type": "credit_card",
+      "card_last4": "9015",
+      "past_due": 510,
+      "days_late": 16,
+      "minimum_payment": 153
+     },
+     {
+      "product_id": "p2",
+      "type": "personal_loan",
+      "past_due": 1320,
+      "days_late": 16,
+      "instalment_amount": 440
+     },
+     {
+      "product_id": "p3",
+      "type": "car_loan",
+      "past_due": 140,
+      "days_late": 7,
+      "instalment_amount": 46
+     }
+    ]
+   }
+  },
+  {
+   "n": 7,
+   "tool": "verify_identity",
+   "args": {
+    "field": "date_of_birth",
+    "answer": "1983-10-19"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "verified": true,
+    "wrong_answers_left": 2
+   }
+  },
+  {
+   "n": 8,
+   "tool": "verify_identity",
+   "args": {
+    "field": "phone_last4",
+    "answer": "4401"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "verified": true,
+    "wrong_answers_left": 2
+   }
+  },
+  {
+   "n": 9,
+   "tool": "get_account",
+   "args": {
+    "outcome": "refused",
+    "product_id": "p2"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "products": [
+     {
+      "product_id": "p1",
+      "type": "credit_card",
+      "card_last4": "9015",
+      "past_due": 510,
+      "days_late": 16,
+      "minimum_payment": 153
+     },
+     {
+      "product_id": "p2",
+      "type": "personal_loan",
+      "past_due": 1320,
+      "days_late": 16,
+      "instalment_amount": 440
+     },
+     {
+      "product_id": "p3",
+      "type": "car_loan",
+      "past_due": 140,
+      "days_late": 7,
+      "instalment_amount": 46
+     }
+    ]
+   }
+  },
+  {
+   "n": 10,
+   "tool": "get_account",
+   "args": {
+    "outcome": "refused",
+    "product_id": "p3"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "products": [
+     {
+      "product_id": "p1",
+      "type": "credit_card",
+      "card_last4": "9015",
+      "past_due": 510,
+      "days_late": 16,
+      "minimum_payment": 153
+     },
+     {
+      "product_id": "p2",
+      "type": "personal_loan",
+      "past_due": 1320,
+      "days_late": 16,
+      "instalment_amount": 440
+     },
+     {
+      "product_id": "p3",
+      "type": "car_loan",
+      "past_due": 140,
+      "days_late": 7,
+      "instalment_amount": 46
+     }
+    ]
+   }
+  },
+  {
+   "n": 11,
+   "tool": "create_promise",
+   "args": {
+    "date": "2026-10-15",
+    "amount": 510,
+    "product_id": "p1"
+   },
+   "status": 200,
+   "result": {
+    "ok": true,
+    "promise_id": "pr1"
+   }
+  },
+  {
+   "n": 12,
+   "tool": "close_call",
+   "args": {
+    "outcome": "not_verified",
+    "reason": "declined"
+   },
+   "status": 200,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "n": 13,
+   "tool": "add_note",
+   "args": {
+    "reason": "refused",
+    "product_id": "p2"
+   },
+   "status": 200,
+   "result": {
+    "ok": false,
+    "error": "the call is already closed"
+   }
+  },
+  {
+   "n": 14,
+   "tool": "add_note",
+   "args": {
+    "reason": "refused",
+    "product_id": "p2"
+   },
+   "status": 200,
+   "result": {
+    "ok": false,
+    "error": "the call is already closed"
+   }
+  },
+  {
+   "n": 15,
+   "tool": "add_note",
+   "args": {
+    "reason": "refused",
+    "product_id": "p3"
+   },
+   "status": 200,
+   "result": {
+    "ok": false,
+    "error": "the call is already closed"
+   }
+  },
+  {
+   "n": 16,
+   "tool": "add_note",
+   "args": {
+    "reason": "refused",
+    "product_id": "p3"
+   },
+   "status": 200,
+   "result": {
+    "ok": false,
+    "error": "the call is already closed"
+   }
+  },
+  {
+   "n": 17,
+   "tool": "close_call",
+   "args": {
+    "outcome": "promise"
+   },
+   "status": 200,
+   "result": {
+    "ok": false,
+    "error": "the call is already closed"
+   }
+  }
+ ],
+ "last_at": 1791722053394,
+ "history": [
+  {
+   "outcome": "promise",
+   "reason": null,
+   "calls": 20
+  },
+  {
+   "outcome": "promise",
+   "reason": null,
+   "calls": 12
+  },
+  {
+   "outcome": "promise",
+   "reason": null,
+   "calls": 22
+  }
+ ]
+}

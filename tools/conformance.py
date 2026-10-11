@@ -21,7 +21,7 @@ import argparse, hashlib, json, pathlib, sys, time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "tools"))
 import freya
-from score import http as official, score_ledger
+from score import http as official, retried, score_ledger
 from run_cases import persona_for
 from bank import server, tunnel
 
@@ -95,13 +95,19 @@ def personas(cases, store):
 
 
 def live(agent_id, cases, pids, new_session, read_ledger, label):
-    """One simulation of every case. Returns {case_id: {"customer_id", "ledger", "judge"}}."""
+    """One simulation of every case. Returns {case_id: {"customer_id", "ledger", "judge"}}. A run Freya retried on its
+    own is left out: its attempts shared one session, so its ledger interleaves several calls."""
     sessions = {c["id"]: new_session(c["id"]) for c in cases}
     sim_id, it_id, status = freya.run_simulation(agent_id, f"conformance {label} {time.strftime('%H:%M:%S')}", {pids[c["id"]]: sessions[c["id"]] for c in cases})
     judge = {r["personaId"]: r for r in freya.get_iteration(sim_id, it_id)["runs"]}
     print(f"{label}: simulation {sim_id} {status}", flush=True)
-    return {c["id"]: {"customer_id": sessions[c["id"]]["customer_id"], "ledger": read_ledger(sessions[c["id"]]["customer_id"]),
-                      "judge": judge.get(pids[c["id"]], {}).get("outcome")} for c in cases}
+    out = {}
+    for c in cases:
+        j = judge.get(pids[c["id"]], {})
+        if retried(j):
+            print(f"VOID {c['id']} (platform retried the run)", flush=True); continue
+        out[c["id"]] = {"customer_id": sessions[c["id"]]["customer_id"], "ledger": read_ledger(sessions[c["id"]]["customer_id"]), "judge": j.get("outcome")}
+    return out
 
 
 def load_official(paths, cases):
@@ -111,7 +117,7 @@ def load_official(paths, cases):
         d = json.loads(pathlib.Path(p).read_text())
         for rows in d.get("all_rows") or [d["rows"]]:
             for r in rows:
-                if r["id"] not in out or not r.get("customer_id"): continue
+                if r["id"] not in out or not r.get("customer_id") or r.get("void"): continue   # void: platform retried, ledger interleaved
                 led = official("/v1/practice/ledger/" + r["customer_id"])
                 if led.get("ok") is False: continue
                 out[r["id"]].append({"customer_id": r["customer_id"], "ledger": led, "judge": None, "source": pathlib.Path(p).name})
