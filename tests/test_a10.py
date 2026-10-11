@@ -282,8 +282,8 @@ def test_audit_paid_and_dispute_have_a_model_backup_close():
     tools = {t["target_node"]: t for t in c.n["negotiate"]["transitions"] if t.get("is_tool_call")}
     assert {"close_paid", "close_dispute", "close_refused", "close_not_talk"} <= set(tools)
     t = c.n["negotiate"]["task_message"]
-    assert "Do not argue and do not take a promise. Then call transition_to_close_dispute at once." in t
-    assert "Take no promise. Then call transition_to_close_paid at once." in t
+    assert "Do not argue and do not take a promise. Then call transition_to_close_dispute." in t
+    assert "Take no promise. Then call transition_to_close_paid." in t
     # a paid claim after the support offer keeps its own outcome (no latch redirect on paid/dispute)
     c.user(neg_event="hardship", hardship_seen="yes")
     c.user(hardship_reply="names_payment")
@@ -291,3 +291,16 @@ def test_audit_paid_and_dispute_have_a_model_backup_close():
     assert c.close()[:2] == ("paid", None)
     # several products: paid/dispute are per-product set_product outcomes, no extra tools
     assert [t["target_node"] for t in C(B, OA)["nodes"]["negotiate"]["transitions"] if t.get("is_tool_call")] == ["wrap_not_talk"]
+
+
+# ---------------------------------------------------------------- item 2: SELF-04 (corrects, after_deadline)
+
+def test_self04_after_deadline_keeps_the_current_attempt_amount():
+    for spec in (A, json.load(open(DRESS_A))):
+        t = C(spec, OA)["nodes"]["negotiate"]["task_message"]
+        assert ("offer it with the amount of your current attempt. Their own date, even after a \"no\", is never a refusal." in t)
+        # A9 rules the candidate-1 build lacked, which the SELF-04 cut-off corrections needed
+        assert 'say only "Go on."' in t and "never ask them to name an amount" in t
+    s = json.loads(json.dumps(A))
+    s["negotiation"]["after_deadline"] = "reject"
+    assert "current attempt" not in C(s, OA)["nodes"]["negotiate"]["task_message"].split("A date after the deadline")[1][:200]

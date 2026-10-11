@@ -1350,7 +1350,7 @@ class _Compiler:
             elif self.counted_close(stage, ev):
                 lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.end_target(stage, ev["id"]), (" " + ins) if ins else ""))
             elif self.backup_close(stage, ev):
-                lines.append("If %s: %sThen call transition_to_%s at once." % (subj("the customer", ev["trigger"]).rstrip(". "),
+                lines.append("If %s: %sThen call transition_to_%s." % (subj("the customer", ev["trigger"]).rstrip(". "),
                                                                                 (ins + " ") if ins else "", self.end_target(stage, ev["id"])))
             elif ins:
                 lines.append("If %s: %s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins))
@@ -1522,7 +1522,8 @@ class _Compiler:
         nbd = {"next_business_day": "A weekend day or holiday that is not after the deadline: offer the NEXT business day after it, not the deadline.",
                "previous_business_day": "A weekend day or holiday that is not after the deadline: offer the business day BEFORE it, not the deadline.",
                "reject": "A weekend day or holiday: say it is not a business day and ask for a business day."}[neg.get("non_business_day", "next_business_day")]
-        aft = {"offer_deadline": "A date after the deadline: say the latest date you can accept is the deadline ({{deadline_text}}) and offer it.",
+        aft = {"offer_deadline": ("A date after the deadline: say the latest date you can accept is the deadline ({{deadline_text}}) and offer it "
+                                  "with the amount of your current attempt. Their own date, even after a \"no\", is never a refusal."),
                "reject": "A date after the deadline: say it cannot be accepted and ask for a date on or before the deadline ({{deadline_text}})."}[neg.get("after_deadline", "offer_deadline")]
         vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
