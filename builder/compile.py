@@ -1182,11 +1182,34 @@ except Exception:
     pass
 '''
 
+# A21 item 7: close_call sends only the outcome and reason a close node wrote in code, and only once a close node ran
+# (close_ready). Probe 3a362703 (slot probe-hooks): the end_of_call run fills an unset {{outcome}} with one model call
+# (it guessed no_promise; PUB-03 ac424c99 and PUB-13 9ce9db6c sent guessed outcomes after a hang-up), then runs this
+# pre-hook, which may rewrite url and body. Like the create_promise guard it fails CLOSED: the tool's own url is the
+# read-only get_account route (SAFE_URL); only a ready close points it at close_call (CLOSE_URL). Otherwise (a hang-up
+# before any close, or a call the model made itself) nothing is recorded: a hang-up sends no outcome (A8 ruling).
 CLOSE_PRE = r'''
 try:
     b = config.get('body')
-    if isinstance(b, dict) and (b.get('outcome') in REASONLESS or not b.get('reason')):
-        b.pop('reason', None)
+    cid = b.get('customer_id') if isinstance(b, dict) else None
+    config['url'] = SAFE_URL
+    config['body'] = dict(customer_id=cid or vars.get('customer_id'))
+    out = str(vars.get('outcome') or '')
+    if str(vars.get('close_ready') or '') == 'yes' and out:
+        body = dict(customer_id=cid or vars.get('customer_id'), outcome=out)
+        reason = str(vars.get('reason') or '')
+        if reason and out not in REASONLESS:
+            body['reason'] = reason
+        config['body'] = body
+        config['url'] = CLOSE_URL
+except Exception:
+    pass
+'''
+CLOSE_POST = r'''
+try:
+    if str(vars.get('close_ready') or '') != 'yes' and isinstance(result, dict):
+        result.pop('header', None)
+        result['data'] = dict(ok=False, what_to_do_next='Not now: the call is not finished; continue the conversation.')
 except Exception:
     pass
 '''
@@ -2432,8 +2455,14 @@ HOW TO RUN THE CALL
         t = self.tool("close_call", {
             "outcome": {"enum": enum, "default": "{{outcome}}", "description": "How the call ended: one of " + ", ".join(enum) + "."},
             "reason": {"default": "{{reason}}", "description": "Reason by outcome. " + rdesc},
-        }, ["outcome"], description="Record how the call ended.", pre="import json\n" + _const("REASONLESS", reasonless) + CLOSE_PRE)
+        }, ["outcome"], description=("Records how the call ended. Run by the system at the end of the call; the assistant must "
+                                     "never call it."),
+            pre="import json\n" + _const("REASONLESS", reasonless) + "SAFE_URL = %r\nCLOSE_URL = %r\n" % (
+                self.base + "/get_account", self.base + "/close_call") + CLOSE_PRE, post=CLOSE_POST)
         t["config"]["alwaysRunsAt"] = ["end_of_call"]
+        url = t["function"]["parameters"]["properties"]["url"]
+        assert url.get("default") == self.base + "/close_call", url
+        url["default"] = self.base + "/get_account"   # fail closed: only a ready close is sent to close_call
         return t
 
     def build(self):

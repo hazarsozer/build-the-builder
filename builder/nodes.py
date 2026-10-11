@@ -159,7 +159,8 @@ def close_node(name, outcome, reason, farewell):
     code += "T = %r\n" % farewell
     code += FILL_CODE
     code += "try:\n    F = _fill(T)\nexcept Exception:\n    F = T\n"
-    code += "vars.update(dict(outcome=OUTCOME, reason=REASON, farewell=F))\n"
+    # close_ready: the close_call pre-hook sends an outcome only after a close node wrote it (A21 item 7)
+    code += "vars.update(dict(outcome=OUTCOME, reason=REASON, farewell=F, close_ready='yes'))\n"
     return code_node(name, code, "goodbye")
 
 

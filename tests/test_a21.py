@@ -266,3 +266,122 @@ def test_opening_max_asks_follows_the_spec():
     assert e.user(line_status="not_confirmed") == "opening"
     assert e.user(line_status="not_confirmed") == "opening"
     assert e.user(line_status="not_confirmed") == "close_unclear"
+
+
+# ---------------------------------------------------------------- 7. close_call: code-set outcome, closed until a close ran
+
+def _close_tool(w):
+    return [t for t in w["tools"] if t["function"]["name"] == "close_call"][0]
+
+
+def _close_req(w, v, model_guess=("not_verified", "failed")):
+    """The end_of_call run: unset {{outcome}}/{{reason}} are filled by one model call (probe 3a362703), then the
+    pre-hook runs and may rewrite url and body."""
+    t = _close_tool(w)
+    props = t["function"]["parameters"]["properties"]
+    body = {"customer_id": v.get("customer_id", "c1"),
+            "outcome": v.get("outcome") or model_guess[0], "reason": v.get("reason") or model_guess[1]}
+    cfg = {"url": props["url"]["default"], "body": body}
+    exec(t["pre_process_code"], {"config": cfg, "vars": dict(v)})
+    return cfg["url"], cfg["body"]
+
+
+def test_close_call_tool_is_system_run_and_fails_closed():
+    for spec in (A, B):
+        t = _close_tool(wf(spec))
+        assert t["config"]["alwaysRunsAt"] == ["end_of_call"]
+        d = t["function"]["description"]
+        assert "Run by the system at the end of the call; the assistant must never call it." in d
+        assert t["function"]["parameters"]["properties"]["url"]["default"] == URL + "/get_account"
+        assert "{{" not in t["pre_process_code"] and "{{" not in t["post_process_code"]
+
+
+def test_pub03_replay_hangup_in_identity_records_no_guessed_close():
+    """ac424c99: after "It is 12 July 1991." the agent stalled; the customer hung up at 64 s and the end_of_call run
+    sent a model-guessed not_verified/failed. Now no close node ran, so nothing reaches close_call."""
+    w = wf()
+    e = Engine(at="identity", v={"customer_id": "c_8d14cf10"})
+    e.user(id_event="continue", id_explain_said="no", id_partial="12 July 1991", id_partial_field="date_of_birth")
+    url, body = _close_req(w, e.v)
+    assert url == URL + "/get_account" and body == {"customer_id": "c_8d14cf10"}
+
+
+def test_model_call_before_any_close_is_answered_not_now():
+    w = wf()
+    v = {"customer_id": "c1"}
+    url, body = _close_req(w, v, ("promise", ""))
+    assert url.endswith("/get_account") and body == {"customer_id": "c1"}
+    r = {"status": "success", "data": {"products": []}, "header": {}}
+    exec(_close_tool(w)["post_process_code"], {"vars": v, "result": r})
+    assert r["data"] == {"ok": False, "what_to_do_next": "Not now: the call is not finished; continue the conversation."}
+    # after a close ran the post-hook leaves the bank's answer alone
+    v["close_ready"] = "yes"
+    r = {"status": "success", "data": {"ok": True}}
+    exec(_close_tool(w)["post_process_code"], {"vars": v, "result": r})
+    assert r["data"] == {"ok": True}
+
+
+def test_every_close_node_sends_its_own_outcome_never_the_body():
+    for spec in (A, B):
+        w = wf(spec)
+        for k, node in w["nodes"].items():
+            if not k.startswith("close_") or node["node_type"] != "code":
+                continue
+            v = {"customer_id": "c1", "title": "Mr", "last_name": "Novak"}
+            exec(_code(node), {"vars": v})
+            assert v["close_ready"] == "yes", k
+            url, body = _close_req(w, v, ("transferred", "human"))
+            assert url == URL + "/close_call", k
+            assert body["outcome"] == v["outcome"] and body.get("reason", "") in ("", v["reason"]), (k, body)
+            if v["reason"] and v["outcome"] not in ("promise", "paid"):
+                assert body["reason"] == v["reason"], k
+
+
+def test_pub10_create_promise_retry_closes_with_the_right_outcome():
+    """PUB-10: the first create_promise fails with an HTTP error -> retry_promise; worked -> promise, failed again ->
+    the service-failure close. close_call sends what the close node wrote."""
+    for ok, want in ((True, ("promise", None)), (False, ("no_promise", "service_error"))):
+        w = wf()
+        n = w["nodes"]
+        v = {"customer_id": "c1", "title": "Mr", "last_name": "Novak",
+             "create_promise_failure_count": "1", "create_promise_response.status": "error"}
+        assert route(n["negotiate"], v) == "retry_promise"
+        v["retry_ok"] = "true" if ok else "false"
+        if not ok:
+            v["create_promise_failure_count"] = "2"
+        k = route(n["retry_promise"], v)
+        assert k.startswith("close_"), k
+        exec(_code(n[k]), {"vars": v})
+        url, body = _close_req(w, v)
+        assert url.endswith("/close_call") and (body["outcome"], body.get("reason")) == want, (ok, k, body)
+
+
+def test_multi_wraps_close_with_the_wrap_outcome():
+    from tests.test_multi import Sim
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
+    s.refuse("p2", 1)
+    s.refuse("p2", 1)
+    s.refuse("p3", 1)
+    s.confirm()
+    *_, close, outcome, reason = s.chain()
+    s.run(close)
+    url, body = _close_req(s.w, s.v)
+    assert url.endswith("/close_call") and body["outcome"] == "promise" and "reason" not in body
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="paid")
+    s.refuse("p2", 2)
+    s.end = "wrap_done"
+    *_, close, outcome, reason = s.chain()
+    s.run(close)
+    url, body = _close_req(s.w, s.v, ("promise", ""))
+    assert (body["outcome"], body["reason"]) == ("no_promise", "refused")
+
+
+def test_multi_hangup_at_the_readback_sends_no_guessed_close():
+    """PUB-12 f242b760: a hang-up at the read-back sent a model-guessed promise with nothing recorded. Now nothing."""
+    from tests.test_multi import Sim
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
+    url, body = _close_req(s.w, s.v, ("promise", ""))
+    assert url.endswith("/get_account") and set(body) == {"customer_id"}
