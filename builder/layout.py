@@ -138,20 +138,32 @@ def _sample_now(spec):
     return None
 
 
+ORG_WORDS = {"company", "business", "firm", "employer", "organisation", "organization", "shop", "store", "bank"}
+
+
+def _words(name):
+    """A variable name's words: split on underscores, other non-word characters and camelCase ("lastName")."""
+    return [w.lower() for w in re.split(r"[\W_]+|(?<=[a-z0-9])(?=[A-Z])", name) if w]
+
+
 def _sample(name, spec):
+    """Matched on whole words, so last_payment_date is not a surname and subtitle is not a title."""
     low = name.lower()
-    if low == "now" or re.search(r"(^|_)(now|datetime|timestamp)($|_)", low):
+    ws = _words(name)
+    has = set(ws)
+    named = "name" in has
+    if low == "now" or has & {"now", "datetime", "timestamp"}:
         return _sample_now(spec)
-    if low.endswith("_id") or low == "id":
+    if (ws and ws[-1] == "id") or low == "id":
         return low[:1] + "_test"   # customer_id -> c_test, as before
-    if re.search(r"title|honorific|salutation", low):
+    if has & {"title", "honorific", "salutation"}:
         return "Ms"
-    if re.search(r"first|given", low):
+    if has & {"firstname", "givenname", "forename"} or (named and has & {"first", "given"}):
         return "Dana"
-    if re.search(r"last|surname|family", low):
+    if has & {"lastname", "surname", "familyname"} or (named and has & {"last", "family"}):
         return "Reyes"
-    if "name" in low:
-        org = re.search(r"company|business|firm|employer|organi[sz]ation|shop|store|bank", low)
+    if named or any(w.endswith("name") for w in ws):
+        org = has & ORG_WORDS or any(w.endswith("name") and w[:-4] in ORG_WORDS for w in ws)   # company_name, companyname
         return "Example Ltd" if org else "Alex Morgan"
     return low.replace("_", " ").strip().title() or "X"
 

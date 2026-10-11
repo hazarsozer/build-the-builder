@@ -126,6 +126,19 @@ def test_extra_call_variable_gets_a_sample():
     assert w["test_variables"]["company_name"] == "Example Ltd"
 
 
+@pytest.mark.parametrize("name, sample", [
+    ("title", "Ms"), ("subtitle", "Subtitle"), ("customer_title", "Ms"),
+    ("first_name", "Dana"), ("firstName", "Dana"), ("given_name", "Dana"), ("first_payment_date", "First Payment Date"),
+    ("last_name", "Reyes"), ("lastName", "Reyes"), ("surname", "Reyes"), ("family_name", "Reyes"),
+    ("last_payment_date", "Last Payment Date"), ("last_payment_amount", "Last Payment Amount"), ("family_size", "Family Size"),
+    ("company_name", "Example Ltd"), ("companyname", "Example Ltd"), ("agent_name", "Alex Morgan"),
+    ("customer_id", "c_test"), ("customerId", "c_test"), ("idle_timeout", "Idle Timeout"),
+])
+def test_sample_matches_whole_words(name, sample):
+    """Name patterns are anchored on word boundaries: last_payment_* is no surname, subtitle no title."""
+    assert layout._sample(name, {}) == sample
+
+
 def test_written_variable_is_never_declared():
     s = copy.deepcopy(SPECS["a"])
     w = C(s, OA)
