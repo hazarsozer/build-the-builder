@@ -20,11 +20,19 @@ unchanged: spec-a 4620 (cap 4800), spec-b 5694 (cap 5800).
 | 9601590 | M3, M8 | `close_call` `REASONLESS` lists only outcomes whose rows all lack a reason. The multi `FAIL_SAY_DEFAULT` is now "I am sorry, I could not save your promise." |
 | df840cf | M10 | `validate(new)` after the fix round is wrapped like the validate at extraction time. |
 
-RUNBOOK secret scan (expected output: none; rg exits 1):
+RUNBOOK secret scan (349d1c2, after re-review). Both commands print file names only, never a matching line. The
+expected output of both is no file names.
+- `rg -l` with the shape regex below.
+- A `python3 -c` one-liner. It reads the secret values from the environment (the names `redact.py` treats as secret,
+  values of 8+ characters), so no key goes on the command line. It prints only the names of files that contain a
+  value, and exits 1 with a message if none is set.
 ```
-rg -n 'fak_[A-Za-z0-9]{8}|sk-ant-[A-Za-z0-9]|FREYA_[A-Z_]+=[A-Za-z0-9_-]{8}|https://[a-z0-9-]+\.trycloudflare\.com' traces/ submission/
-rg -nF -e "${FREYA_API_KEY:?}" -e "${FREYA_BANK_TEAM_KEY:?}" traces/ submission/
+rg -l 'fak_[A-Za-z0-9]{8}|sk-ant-[A-Za-z0-9]|FREYA_[A-Z_]+=[A-Za-z0-9_-]{8}|https://[a-z0-9-]+\.trycloudflare\.com' traces/ submission/
 ```
+I ran both commands exactly as RUNBOOK.md writes them, in a scratch directory:
+- With fake leaks, they printed only the leaking file names, and neither value appeared on stdout or stderr.
+- On clean files, they printed nothing.
+- With no secret variables set, the one-liner exited 1 with its message.
 Checked against the existing `traces/`: no matches. A synthetic tunnel event and a `[REDACTED:FREYA_API_KEY]` marker
 do not match. A real `fak_` key, an `sk-ant-` key, a `FREYA_API_KEY=` assignment and a tunnel URL do.
 
