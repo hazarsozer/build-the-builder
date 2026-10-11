@@ -246,7 +246,7 @@ class Sim:
                 self.run(node)
             elif n["node_type"] == "conversation":
                 # A18 after_record: the customer's reply to "anything else?" (default: nothing else)
-                assert node == "after_record", node
+                assert node == "after_record_step", node
                 self.v["ar_answer"] = getattr(self, "ar_answer", "nothing")
             else:
                 tool = n["pre_actions"][0]["function"]["name"]

@@ -160,7 +160,7 @@ def test_mrw03_recorded_promise_then_restructuring_transfers_without_notes():
     n = w["nodes"]
     assert v["mp_recorded"] == "yes" and v["note_has_1"] == "yes"
     assert _route(n["wrap_recorded"], v) == "after_record"
-    ar = n["after_record"]
+    ar = n["after_record_step"]
     assert ar["on_enter"]["text"].startswith("{{mp_said}} ")
     assert "credit card ending 5590 is recorded" in v["mp_said"]
     t = _route(ar, dict(v, ar_answer="restructuring"))
@@ -215,7 +215,7 @@ def test_never_say_in_multi_hold_and_after_record_steps():
     s = copy.deepcopy(MRW)
     s["never_say"] = ["guarantee"]
     n = C(s, MRW_OA, base_url=URL)["nodes"]
-    for k in ("negotiate", "readback", "hardship_hold", "after_record"):
+    for k in ("negotiate", "readback", "hardship_hold", "after_record_step"):
         assert 'Never say "guarantee"' in n[k]["task_message"], k
 
 
@@ -277,7 +277,7 @@ def test_after_record_only_with_a_transfer_ask_once_or_support_event():
 def test_human_request_after_recording_asks_once_then_transfers_without_notes():
     w, v = _mrw03_after_wrap()
     n = w["nodes"]
-    ar = n["after_record"]
+    ar = n["after_record_step"]
     assert {"human_first_request", "human_insists", "hardship"} <= set(ar["extraction_schema"][0]["enum_values"])
     ask = _route(ar, dict(v, ar_answer="human_first_request"))
     assert ask == "human_ask_after_record"
@@ -299,7 +299,7 @@ def test_human_request_after_recording_asks_once_then_transfers_without_notes():
 def test_support_event_after_recording_offers_then_transfers_or_ends_as_nothing_else():
     w, v = _mrw03_after_wrap()
     n = w["nodes"]
-    offer = _route(n["after_record"], dict(v, ar_answer="hardship"))
+    offer = _route(n["after_record_step"], dict(v, ar_answer="hardship"))
     assert offer == "hardship_offer_after_record"
     vv = dict(v)
     exec(_code(n[offer]), {"vars": vv})
@@ -345,7 +345,7 @@ def test_change_note_before_success_is_rephrased_and_lints_clean():
     # after the promise is recorded the brief's sentence is said as written
     s = copy.deepcopy(MRW)
     s["confirmation"]["change_note"] = "A recorded promise cannot be changed in this call."
-    assert '"A recorded promise cannot be changed in this call."' in C(s, MRW_OA, base_url=URL)["nodes"]["after_record"]["task_message"]
+    assert '"A recorded promise cannot be changed in this call."' in C(s, MRW_OA, base_url=URL)["nodes"]["after_record_step"]["task_message"]
 
 
 def test_rephrase_skips_the_verbatim_first_sentence_and_leaves_reference_specs_alone(monkeypatch):
@@ -358,6 +358,38 @@ def test_rephrase_skips_the_verbatim_first_sentence_and_leaves_reference_specs_a
     monkeypatch.setattr(comp._Compiler, "safe_before_success", lambda self, nodes: None)
     for k, x in (("a", A), ("b", B)):
         assert json.dumps(C(x, OA), sort_keys=True) == json.dumps(base[k], sort_keys=True)
+
+
+def test_after_record_visits_are_bounded_in_code():
+    """Fix round 2: wrap -> after_record (counter) -> after_record_step; an ask-once step that returns comes back
+    through the counter; the 4th entry ends as "nothing else" whatever max_node_turns does."""
+    w, v = _mrw03_after_wrap()
+    n = w["nodes"]
+    assert n["after_record"]["node_type"] == "code" and n["after_record_step"]["node_type"] == "conversation"
+    assert n["human_back_after_record"]["passthrough_default_transition"] == "after_record"
+    seen = []
+    for _ in range(5):
+        exec(_code(n["after_record"]), {"vars": v})
+        seen.append(_route(n["after_record"], v))
+    assert seen == ["after_record_step"] * 3 + ["after_record_done"] * 2
+    # a failed counter (no write) ends the step: the default is after_record_done
+    assert _route(n["after_record"], {}) == "after_record_done"
+
+
+def test_support_already_offered_in_negotiate_is_not_offered_again_after_recording():
+    w, v = _mrw03_after_wrap()
+    step = w["nodes"]["after_record_step"]
+    assert v["hardship_offered"] == "no"
+    assert _route(step, dict(v, ar_answer="hardship")) == "hardship_offer_after_record"
+    assert _route(step, dict(v, ar_answer="hardship", hardship_offered="yes")) == "after_record_done"
+
+
+def test_after_record_support_hold_has_no_take_their_payment_rule():
+    n = C(MRW, MRW_OA, base_url=URL)["nodes"]
+    after, neg = n["hardship_hold_after_record"]["task_message"], n["hardship_hold"]["task_message"]
+    assert "The brief's rule for this situation" in neg and "date or amount" in neg
+    assert "The brief's rule for this situation" not in after and "no new promise is taken" in after
+    assert "take their payment" not in after
 
 
 def test_question_offer_sentence_ends_the_turn():
