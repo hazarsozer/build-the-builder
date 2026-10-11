@@ -119,7 +119,7 @@
     "instalment_amount": 160.0
    }
   ],
-  "script": "Confirms the name. First gives date of birth 30 June 1983, then corrects it to 30 June 1982. Gives 7741 for the phone. Cannot pay today. Offers to pay the full amount on Saturday the 24th. Accepts the next business day the agent offers. Will pay in the app. Confirms.",
+  "script": "Confirms the name. First gives the date of birth 30 June 1983 and says nothing else in that message. Only after the agent says it is not correct, gives 30 June 1982. Gives 7741 for the phone. Cannot pay today. Offers to pay the full amount on Saturday the 24th. Accepts the next business day the agent offers. Will pay in the app. Confirms.",
   "expected": {
    "outcome": "promise",
    "reason": null,

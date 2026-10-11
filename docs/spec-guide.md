@@ -16,6 +16,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `call_variables` (required): list of string, pattern `^[A-Za-z_][A-Za-z0-9_]*$`. Names of the variables every call starts with (the brief's call-variable table).
 - `opening` (required): object. The first turns, before the person on the line is confirmed as the customer.
 - `opening.first_sentence` (required): string. The first sentence, said word for word. Must contain every fact the brief requires in it.
+- `opening.verbatim` (optional): boolean. Set true only when the brief requires the first sentence word for word, exactly or verbatim. The sentence is then kept exactly as written (a recording notice is not rephrased). Absent or false: a recording notice in the first sentence is rephrased to a neutral monitoring sentence.
 - `opening.confirm_question` (required): string. The question that confirms the customer, said word for word.
 - `opening.confirm_accept` (required): list of string. Answers that count as confirmation.
 - `opening.confirm_reject` (required): list of string. Answers that do NOT count as confirmation (ask again).
@@ -66,8 +67,11 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `bands[].deadline.weeks` (optional): integer, min 0. Weeks to add, for fixed_weekday_after_n_weeks.
 - `bands[].deadline.snap` (optional): one of `back`, `forward`, `null`. If the computed day is not a business day: back = previous business day, forward = next business day, null/absent = keep it.
 - `bands[].attempts` (required): list of object. Persuasion attempts in order; their count is the number of attempts allowed.
+  - each item: when `date` is nth_business_day, also required: `n`
 - `bands[].attempts[].amount` (required): one of `current`, `full`, `floor`. current: the full past-due amount, or the floor if the customer already said the full amount is too much. full: always the full past-due amount. floor: the floor amount (products[type].floor_field).
-- `bands[].attempts[].date` (required): one of `today`, `last_business_day_of_week`, `deadline`, `next_business_day`. today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. Always capped at the deadline.
+- `bands[].attempts[].date` (required): one of `today`, `last_business_day_of_week`, `deadline`, `next_business_day`, `nth_business_day`. today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. nth_business_day: the n-th business day after today (set n), for an attempt dated a count of business days after today that is not the band deadline. Always capped at the deadline.
+- `bands[].attempts[].n` (optional): integer, min 0. Count for date nth_business_day.
+- `bands[].event` (optional): string. An events[].id that fires by itself as soon as get_account returns a product in this band, before the debt is stated or any payment is asked: a product status that ends negotiation (no payment may be asked), which the brief handles with a fixed sentence, a transfer or a close. The customer does not have to say anything. Such a band usually has no attempts. Leave it out for an ordinary band.
 - `negotiation` (required): object. Stating the debt and getting a promise.
 - `negotiation.debt_statement` (required): string. The debt statement for one product, said after verification.
 - `negotiation.first_ask` (required): string. The first ask for payment, said word for word.
@@ -86,6 +90,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `negotiation.debt_statement_per_product` (optional): string. Optional, multi-product briefs: one sentence per late product, said for each product in order, after a lead-in. Absent: use debt_statement for each.
 - `negotiation.first_ask_all` (optional): string. Optional, multi-product briefs: the first ask covering every product at once, said word for word when the brief quotes it. Absent: first_ask is used.
 - `negotiation.post_verify_sentence` (optional): string. Optional: a sentence the brief requires word for word right after identity is verified and before anything about the account (before debt_statement). Absent: none.
+- `negotiation.same_day_cutoff` (optional): string, pattern `^([01][0-9]|2[0-3]):[0-5][0-9]$`. Optional: HH:MM after which a payment promise for today is no longer possible (the brief names a same-day or business-hours limit for payments); today is then handled like a day that is not a business day. Absent: a promise for today is possible at any time of day.
 - `events` (required): list of object. Customer situations that change the call's course. Known ids map to fixed graph branches (promise_recorded, paid, dispute, restructuring, human, hardship, refused, service_error, failed, declined, callback, no_callback, wrong_number, deceased, unclear, not_talk); other ids become generic intent branches.
   - each item: when `action` is ['transfer', 'insist_once_then_transfer', 'offer_transfer_else_close'], also required: `queue`
   - each item: when `action` is offer_transfer_else_close, also required: `else_outcome`, `else_reason`

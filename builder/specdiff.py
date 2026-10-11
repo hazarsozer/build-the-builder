@@ -35,6 +35,7 @@ DEFAULTS = {
     "third_party.callback.inclusive": True,
     "multi_product.notes.timing": "immediate",
     "say_rules[*].stages": ["any"],
+    "opening.verbatim": False,
 }
 
 _BRACKET = re.compile(r"\[[^\[\]]*\]")

@@ -59,11 +59,23 @@ def _row(spec, eid, alt=False):
     return want if want[0] else None
 
 
+def _no_promise(spec):
+    """The brief's no-promise outcome: the refused event's outcome (A15: never a literal)."""
+    return (_event(spec, "refused") or {}).get("outcome") or "no_promise"
+
+
+def _transfer_outcomes(spec):
+    """Outcomes the brief's transfer events close with."""
+    return {e.get("outcome") for e in spec["events"] if e["action"] in ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")}
+
+
 def _note_row(spec, reason):
     rows = [(o["outcome"], o["reason"]) for o in spec["outcomes"] if o["reason"] == reason]
+    np = _no_promise(spec)
     for r in rows:
-        if r[0] == "no_promise": return r
-    return next((r for r in rows if r[0] != "transferred"), ("no_promise", reason))
+        if r[0] == np: return r
+    tr = _transfer_outcomes(spec)
+    return next((r for r in rows if r[0] not in tr), (np, reason))
 
 
 def reasons_table(spec):
@@ -246,7 +258,7 @@ def _multi_expected(spec, products, results):
     else:
         non_paid = [n for n in notes if n["reason"] != paid] or notes
         pick = notes[-1] if mp["no_promise_reason"] == "last_note" else (non_paid[0] if non_paid else None)
-        outcome, reason = _note_row(spec, rmap.get(pick["reason"], pick["reason"])) if pick else ("no_promise", None)
+        outcome, reason = _note_row(spec, rmap.get(pick["reason"], pick["reason"])) if pick else (_no_promise(spec), None)
     return _exp(outcome, reason, promises, notes)
 
 
@@ -308,7 +320,7 @@ def s_floor_after_too_much(c, **o):
     b = _band(c.spec, _late(c.spec, p))
     if not b["attempts"]: return None
     floor = _floor(c.spec, p)
-    d = D.attempt_date(c.today, b["attempts"][0]["date"], c.deadline(p), c.cal)
+    d = D.attempt_date(c.today, b["attempts"][0], c.deadline(p), c.cal)
     n = c.spec["negotiation"]
     checks = [f"the lowest amount ({_money(floor)}) is offered once" + (f', with "{n["floor_offer"]["sentence_suffix"]}"' if n["floor_offer"].get("sentence_suffix") else ""),
               f"promise for {_money(floor)} on {_day(d)}"]
@@ -514,7 +526,8 @@ def _trigger_script(e, first):
 def s_event(c, eid, **o):
     e = _event(c.spec, eid)
     if not e or (e["outcome"] is None and e["action"] != "offer_transfer_else_close"): return None
-    p = c.products(_ladder(c.spec) if eid == "hardship" else _early(c.spec))[0]   # hardship: no attempt even with a ladder
+    acct = next((b for b in c.spec["bands"] if b.get("event") == eid), None)   # A15: the account data fires it
+    p = c.products(acct or (_ladder(c.spec) if eid == "hardship" else _early(c.spec)))[0]   # hardship: no attempt even with a ladder
     first = c.variables["first_name"]
     relative = "flatmate"
     fmt = {"he": c.p["he"], "his": c.p["his"], "theirs": c.p["theirs"], "name": c.name, "first": first, "relative": relative, "product": _words(c.spec, p)}
@@ -528,6 +541,7 @@ def s_event(c, eid, **o):
         if len(outside) < 2: return None
         fmt.update(when=_when(c, d), t1=_clock(outside[0]), t2=_clock(outside[1]))
     script = TEMPLATES[eid].format(**fmt) if eid in TEMPLATES else _trigger_script(e, first)
+    if acct: script = "Verified. Raises nothing of their own; listens to what the agent says about the account."
     transfers, alt = [], False
     if e["action"] == "transfer": transfers = [{"queue": e["queue"]}]
     elif e["action"] == "insist_once_then_transfer":

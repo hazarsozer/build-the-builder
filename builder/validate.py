@@ -268,6 +268,13 @@ def _band_errors(spec):
         lo, hi = b["days_late"]
         if lo > hi:
             errs.append("bands[%s]: days_late %d > %d" % (b["name"], lo, hi))
+    ids = {e["id"]: e for e in spec["events"]}
+    for b in bands:
+        ev = b.get("event")
+        if ev is not None and ev not in ids:
+            errs.append("bands[%s].event %r is not an events[].id" % (b["name"], ev))
+        elif ev is not None and ids[ev]["action"] == "note_and_continue":
+            errs.append("bands[%s].event %r: an account event must end or transfer the call, not note_and_continue" % (b["name"], ev))
     for a, b in zip(bands, bands[1:]):
         if b["days_late"][0] > a["days_late"][1] + 1:
             errs.append("bands: gap between %s (ends %d) and %s (starts %d)"
@@ -305,7 +312,7 @@ def _example_errors(spec):
                     errs.append("%s: band %s has only %d attempt(s), no attempt %d"
                                 % (tag, band["name"], len(band["attempts"]), k))
                     continue
-                got = dates.attempt_date(today, band["attempts"][k - 1]["date"], dl, cal)
+                got = dates.attempt_date(today, band["attempts"][k - 1], dl, cal)
         except Exception as exc:  # bad rule or date
             errs.append("%s: could not compute: %s" % (tag, exc))
             continue

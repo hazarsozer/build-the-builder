@@ -107,7 +107,12 @@ except Exception as e:
 # pre-hooks all read the same snapshot of vars; their writes merge per variable, so a shared JSON rewritten by each
 # call keeps only the last writer's change (PUB-12 call 922f2517 lost an agreed product that way), while one variable
 # per product keeps every change. The post-hooks ran after the batch's pre-hooks and saw the merged variables.
-DYN = ("status", "amount", "date", "capped", "extra", "asked", "offered", "tried", "ack", "seq", "own")
+# A14: a refusal counts only for the product the code most recently told the model to offer, and only when the customer
+# has spoken since that instruction. "told" is the clock (the customer's turn number in negotiate, NODE.total_turns,
+# readable in hooks: chat-API probe 4c48412b) at which the product's current attempt was named; "no" remembers a
+# customer's no given before any offer for the product, so its first offer is made with an acknowledgement.
+DYN = ("status", "amount", "date", "capped", "extra", "asked", "told", "no", "lc", "tried", "ack", "seq", "own")
+NODE = "negotiate"   # the node whose turn counter is the clock (the multi negotiate node's name)
 
 LOAD = r'''
 def _load(vars):
@@ -122,8 +127,12 @@ def _load(vars):
             d = dict()
         if isinstance(d, dict):
             P.update(d)
-        if str(vars.get('mp_o' + k) or '') == 'yes':
-            P['offered'] = True
+        try:
+            o = int(str(vars.get('mp_o' + k) or '').strip())
+        except Exception:
+            o = None
+        if o is not None and (P.get('told') is None or o > int(P['told'])):
+            P['told'] = o
     return st
 '''
 
@@ -225,7 +234,33 @@ def _readback(st):
     return 'To confirm, you will pay ' + body + '. ' + CFG['confirm']
 
 
-def _next(st, cur=None):
+def _clock(vars):
+    """The customer's turn number in negotiate; without it (offline, code mode) the set_product batch counter."""
+    try:
+        t = int(str(vars.get(TURNS)).strip())
+        if t >= 1:
+            return t
+    except Exception:
+        pass
+    try:
+        return int(str(vars.get('mp_seq') or '0').strip() or 0)
+    except Exception:
+        return 0
+
+
+def _told(st, q):
+    """When the current attempt of q was named to the model. Product 1's attempt 1 is named by the prompt for the
+    customer's first answer (the today question), so a refusal of it counts from the next turn on."""
+    t = st['p'][q].get('told')
+    if t is None and st['order'] and q == st['order'][0]:
+        return 1
+    return None if t is None else int(t)
+
+
+def _next(st, cur=None, clock=None, again=False):
+    """The next step. A product whose current attempt was named in an earlier turn is not named again (its offer was
+    made; the customer's answer to it is still to come): "continue, do not repeat it", unless again (a review).
+    mp_o<num> (st['_offer']) is written only when a product is named for the first time (A14 fix round 1)."""
     pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
     if cur is not None and cur in pend:
         return 'open', ''
@@ -234,11 +269,22 @@ def _next(st, cur=None):
         if not P['att']:
             return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). Its plan has no offers: make no offer for it and call ' +
                             TOOL + ' with outcome refused for it now.')
-        P['offered'] = True
-        st['_offer'] = pend[0]
+        t = _told(st, pend[0])
         k = min(int(P.get('tried') or 0), len(P['att']) - 1)
-        return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). If the customer already gave an answer for it, call ' +
-                        TOOL + ' for it now. Otherwise make attempt ' + str(k + 1) + ' of its plan: ' + P['att'][k] + ' Do not ask about today again.')
+        if t is None:
+            st['_offer'] = pend[0]
+        elif clock is not None and t < clock and not again:
+            return 'open', ('Continue with the customer\'s answer to your current offer for the ' + P['words'] + ' (attempt ' + str(k + 1) +
+                            ' of its plan); do not repeat it.')
+        head = 'Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). '
+        if P.get('no') and not P.get('tried'):
+            return 'open', (head + 'The customer already said no to it before any offer; that used no attempt. Acknowledge it once, in the same '
+                            'sentence as the offer ("I understand you said no to the ' + P['words'] + '; ..."), and make attempt 1 of its plan now: ' +
+                            P['att'][0] + ' Call ' + TOOL + ' refused for it only after the customer answers this offer. Do not ask about today again.')
+        return 'open', (head + 'If the customer already agreed to an amount and a date for it' +
+                        (' or settled it (' + ', '.join(CFG['notes']) + ')' if CFG['notes'] else '') + ', call ' + TOOL + ' for it now. '
+                        'Otherwise make attempt ' + str(k + 1) + ' of its plan: ' + P['att'][k] + ' A no said before this offer uses no attempt: call ' +
+                        TOOL + ' refused for it only after the customer answers this offer. Do not ask about today again.')
     if [q for q in st['order'] if st['p'][q]['status'] == 'agreed']:
         return 'readback', 'Every product is settled. The read-back is spoken automatically: say nothing more.'
     return 'done', 'Every product is settled and there is nothing to confirm. Say nothing more.'
@@ -315,39 +361,59 @@ def _agree(st, b, today):
         if extra[xf] is not None and extra[xf] != b.get(xf):
             said.append(xf.replace('_', ' ') + ' noted as ' + str(extra[xf]))
     for q, v in new.items():
-        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra, asked=d, offered=True)
+        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra, asked=d)
     note = (' Note: ' + '; '.join(said) + '. Tell the customer this value.') if said else ''
     return st, 'Noted for now (nothing is registered before the confirmation).' + note
 
 
-def _refuse(st, b):
+def _refuse(st, b, clock):
+    """A refusal counts (uses an attempt) only for the product the code named last (the first open one, A14) and only
+    when the customer spoke after that instruction; an agreed product withdrawn counts as before. Any other refusal is
+    not counted: a no before any offer is remembered (P['no']) so the product's attempt 1 is made with an acknowledgement.
+    Returns (st, ack) or, for ALL, (st, {product: ack})."""
     targets, every = _targets(st, b.get('product_id'), ('pending', 'agreed'))
-    if every and len(targets) > 1:
-        return None, 'Go through the products one at a time, in order. Each product has its own persuasion plan.'
+    if every:
+        targets = [q for q in targets if st['p'][q]['status'] == 'pending']
     if not targets:
+        if every:
+            return None, 'No product is open: nothing to refuse.'
         return None, 'Unknown product_id. Use one of ' + ', '.join(st['order']) + '.'
-    q = targets[0]
-    P = st['p'][q]
-    n = len(P['att'])
-    if n == 0:
+    pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
+    cur = pend[0] if pend else None
+    acks = dict()
+    for q in targets:
+        P = st['p'][q]
+        P['counted'] = False
+        n = len(P['att'])
+        if n == 0:
+            P.update(status='refused', amount=None, date=None, capped=False)
+            acks[q] = 'Noted: the plan of the ' + P['words'] + ' has no offers. Make no offer for it.'
+            continue
+        told = _told(st, q)
+        # lc: the clock of this product's last counted refusal; never two counts at one clock (one batch, one turn)
+        fresh = told is not None and clock > told and str(P.get('lc')) != str(clock)
+        if P['status'] != 'agreed' and not (q == cur and fresh):
+            if q == cur:
+                acks[q] = 'Not counted: no offer for it was made before this answer; a no before an offer uses no attempt.'
+            else:
+                # remembered only for a product never offered: its attempt 1 is then made with an acknowledgement. Never for
+                # the product being offered (product 1's no at the today question is a no to paying today)
+                if told is None and not P.get('tried') and not every:
+                    P['no'] = True
+                acks[q] = 'Not counted: that no is for the ' + P['words'] + '; it is not its turn yet and uses no attempt.'
+            continue
+        P['counted'] = True
+        P['lc'] = clock
+        k = int(P.get('tried') or 0) + 1
+        P['tried'] = k
+        if k < n:
+            P.update(status='pending', amount=None, date=None, capped=False, told=clock)
+            acks[q] = ('Refusal noted (attempt ' + str(k) + ' of ' + str(n) + ' for the ' + P['words'] + '). Make attempt ' + str(k + 1) +
+                       ' now: ' + P['att'][k] + ' Never repeat an offer the customer already refused.')
+            continue
         P.update(status='refused', amount=None, date=None, capped=False)
-        return st, 'Noted: the plan of the ' + P['words'] + ' has no offers. Make no offer for it.'
-    if not P.get('offered') and P['status'] == 'pending':
-        # a refusal counts only after an offer for this product; "not today" to the first question uses no attempt
-        P['offered'] = True
-        # no offer text here: in the common case the offer was already spoken and must not be read out again
-        return st, ('Not counted yet. If you already made attempt 1 for the ' + P['words'] + ' and the customer refused it, call ' + TOOL +
-                    ' with outcome refused for it again now, before you speak. If you have not made it yet (a no to the today question '
-                    'is not a refusal), make attempt 1 of its plan.')
-    k = int(P.get('tried') or 0) + 1
-    P['tried'] = k
-    P['offered'] = True
-    if k < n:
-        P.update(status='pending', amount=None, date=None, capped=False)
-        return st, ('Refusal noted (attempt ' + str(k) + ' of ' + str(n) + ' for the ' + P['words'] + '). Make attempt ' + str(k + 1) +
-                    ' now: ' + P['att'][k] + ' Never repeat an offer the customer already refused.')
-    P.update(status='refused', amount=None, date=None, capped=False)
-    return st, ('Noted: that was the last attempt for the ' + P['words'] + '. Make no more offers for it: no other amount, no other date.')
+        acks[q] = ('Noted: that was the last attempt for the ' + P['words'] + '. Make no more offers for it: no other amount, no other date.')
+    return st, (acks if every else acks[targets[0]])
 
 
 def _note(st, b, out):
@@ -367,6 +433,8 @@ try:
     # parallel set_product calls each read the same snapshot of vars and their writes merge per variable (A11 probe):
     # a call writes only its own products' mp_p<num> and the shared counter, never a shared JSON
     vars['mp_seq'] = str(_seq)
+    # the clock as the pre-hook read it; the post-hook uses this copy (probe 4c48412b read the turn in a pre-hook only)
+    vars['mp_clock'] = str(_clock(vars))
     b = ARGS()
     if not isinstance(b, dict):
         b = dict()
@@ -377,12 +445,14 @@ try:
     touched, every = _targets(st, b.get('product_id'), ('pending', 'agreed', 'refused') + tuple(CFG['notes']))
     if every:
         touched, every = _targets(st, b.get('product_id'), ('pending', 'agreed'))
+        if out == 'refused':
+            touched = [q for q in touched if st['p'][q]['status'] == 'pending']
     if out == 'review':
         new, ack, touched = None, '', []
     elif out == 'agreed':
         new, ack = _agree(st, b, today)
     elif out == 'refused':
-        new, ack = _refuse(st, b)
+        new, ack = _refuse(st, b, _clock(vars))
     elif out in CFG['notes']:
         new, ack = _note(st, b, out)
     else:
@@ -396,9 +466,13 @@ try:
         label = (', the '.join(ws[:-1]) + ' and the ' + ws[-1]) if len(ws) > 1 else ws[0]
         for q in touched:
             P = st['p'][q]
-            # the ack itself says what to do next for a product that is still open (refusal counted, not counted, NOT accepted)
-            own = new is None or (out == 'refused' and P['status'] == 'pending')
-            P.update(ack='The ' + label + ': ' + ack, seq=_seq, own=own)
+            # the ack itself says what to do next for a product that is still open (refusal counted, NOT accepted);
+            # a refusal that was not counted leaves the instruction to the code's next step (the current product)
+            own = new is None or (out == 'refused' and P['status'] == 'pending' and bool(P.get('counted')))
+            if isinstance(ack, dict):
+                P.update(ack='The ' + P['words'] + ': ' + ack.get(q, ''), seq=_seq, own=own)
+            else:
+                P.update(ack='The ' + label + ': ' + ack, seq=_seq, own=own)
             vars['mp_p' + str(P['num'])] = json.dumps(dict((k, P.get(k)) for k in DYN))
     else:
         vars['mp_ax'] = json.dumps(dict(seq=_seq, msg=ack, review=out == 'review'))
@@ -435,13 +509,18 @@ try:
         review = bool(ax.get('review'))
         if ax.get('msg'):
             acks.append(str(ax['msg']))
-    phase, nxt = _next(st, cur)
+    try:
+        clk = int(str(vars.get('mp_clock')).strip())
+    except Exception:
+        clk = _clock(vars)
+    phase, nxt = _next(st, cur, clk, review)
     if own and not review:
         # a result of this batch already says what to do (attempt k+1, not counted yet, NOT accepted)
         nxt = ''
         st.pop('_offer', None)
     if st.get('_offer'):
-        vars['mp_o' + str(st['p'][st['_offer']]['num'])] = 'yes'
+        # the clock at which the code named this product's offer: a refusal of it counts from the next turn on (A14)
+        vars['mp_o' + str(st['p'][st['_offer']]['num'])] = str(clk)
     open_ = [st['p'][q]['words'] for q in st['order'] if st['p'][q]['status'] == 'pending']
     if phase == 'open':
         names = (', the '.join(open_[:-1]) + ' and the ' + open_[-1]) if len(open_) > 1 else open_[0]
@@ -616,7 +695,7 @@ for q in (st.get('ga') or order):
         r = stt
     if NOTES_ON and r in REASONS:
         notes.append((q, r))
-outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK, REASON_MAP, PAID_NOTE)
+outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK, REASON_MAP, PAID_NOTE, PROMISE, NO_PROMISE)
 key = str(outcome) + '|' + str(reason or '')
 vars['mp_close'] = CLOSE_BY.get(key, CLOSE_BY.get('*'))
 for i in range(1, SLOTS + 1):
@@ -669,6 +748,12 @@ class Multi:
         self.refused_note = self.note_for(c.events.get("refused"), "refused")
         fe = c.events.get(self.fail_ev) or {}
         self.fail_note = fe.get("per_product_note") or "service_error"
+        # the brief's own outcome names, never literals (A15: a brief may rename the promise outcome)
+        prow = next((o for o in self.s["outcomes"] if o["event"] == "promise_recorded"), None)
+        pev = c.events.get("promise_recorded") or {}
+        self.promise_row = ((prow["outcome"], prow.get("reason")) if prow else
+                            (pev.get("outcome") or "promise", pev.get("reason")))
+        self.no_promise = (c.events.get("refused") or {}).get("outcome") or "no_promise"
 
     def note_for(self, ev, default):
         if not ev:
@@ -691,10 +776,10 @@ class Multi:
     def wrap_targets(self):
         """Close nodes a wrap can route to."""
         by = self.close_by()
-        keys = ["promise|"]
+        keys = ["%s|%s" % (self.promise_row[0], self.promise_row[1] or "")]
         if self.mp.get("all_paid_outcome"):
             keys.append("%s|" % self.mp["all_paid_outcome"])
-        keys += ["no_promise|" + self.reason_map.get(r, r) for r in self.reasons]
+        keys += ["%s|%s" % (self.no_promise, self.reason_map.get(r, r)) for r in self.reasons]
         out = []
         for k in keys:
             if k in by and by[k] not in out:
@@ -732,7 +817,7 @@ class Multi:
             xprops[f] = {"type": "string", "description": "For agreed: " + self.c.extra_desc(f, p, g)}
             if p.get("enum"):
                 xprops[f]["enum"] = list(p["enum"])
-        head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL + _const("DYN", list(DYN))
+        head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\nTURNS = %r\n" % (SET_TOOL, NODE + ".total_turns") + _const("DYN", list(DYN))
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
             "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: the customer refused the current persuasion attempt for it (call it after EVERY refusal; the result says whether another attempt is allowed). "
@@ -773,7 +858,7 @@ class Multi:
         fe = c.events.get(self.fail_ev) or {}
         by = self.close_by()
         targets = self.wrap_targets()
-        fb = fallback or ("no_promise", self.reason_map.get(self.refused_note, self.refused_note))
+        fb = fallback or (self.no_promise, self.reason_map.get(self.refused_note, self.refused_note))
         fb_key = "%s|%s" % (fb[0], fb[1] or "")
         by_used = {k: v for k, v in by.items() if v in targets}
         by_used["*"] = by.get(fb_key) if by.get(fb_key) in targets else (targets[-1] if targets else "close_account_error")
@@ -792,7 +877,8 @@ class Multi:
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
-                _const("FALLBACK", list(fb)) + _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
+                _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
+                _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
                 "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or "") + WRAP_CODE)
         first = "note_1" if self.notes_on else "finish"
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []
@@ -895,13 +981,13 @@ class Multi:
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
         refused = c.events.get("refused") or {}
         nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
-                                       fallback=(refused.get("outcome") or "no_promise", refused.get("reason") or self.refused_note))
+                                       fallback=(refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note))
         for ev in self.s["events"]:
             if "negotiate" not in c.stages_of(ev):
                 continue
             if ev["action"] == "offer_transfer_else_close":
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, ev.get("else_reason") or "refused"),
-                                                      fallback=(ev.get("else_outcome") or "no_promise", ev.get("else_reason")))
+                                                      fallback=(ev.get("else_outcome") or self.no_promise, ev.get("else_reason")))
             elif ev["action"] == "close" and ev["id"] not in ("promise_recorded",):
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, self.refused_note),
                                                       fallback=(ev.get("outcome"), ev.get("reason")))
@@ -928,5 +1014,5 @@ class Multi:
             ev = c.events.get(eid) or {}
             outcome, reason = ev.get("outcome"), ev.get("reason")
             if ev.get("action") == "offer_transfer_else_close":
-                outcome, reason = ev.get("else_outcome") or "no_promise", ev.get("else_reason")
+                outcome, reason = ev.get("else_outcome") or self.no_promise, ev.get("else_reason")
             nodes[t] = close_node(t, outcome, reason or "", "{mp_said} " + c.thanks(named=True))

@@ -47,8 +47,12 @@ EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": 
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
            'say only "Go on." and read it with the next message.')
+# A12 (one product): a named day is judged by check_date in code, never by the model
+CHECK_DAY = ('A day the customer names themselves ("the 26th", "twenty-sixth", "next Friday", "tomorrow"): before you answer, call %s with their latest words for it '
+             '(a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th."). Never judge a date yourself: say what the result says, use its date in create_promise. '
+             'Their own date, even after a "no", is never a refusal. A yes to a date you proposed needs no check: go to the read-back.')
 DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
-             'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
+             'Never offer it again: read it back with their date once, as the confirmation of step 4; never ask them to name an amount.')
 MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?", "how much?"): "That is the <minimum payment / amount> I '
              'mentioned. Can you pay it <date of that offer>?": no figure, no new date (keep that date unless they refused it), never a new '
              'offer, never %s again. Never restate a figure already offered.')
@@ -199,6 +203,10 @@ try:
                 notes.append('It is already too late for today, so not today.')
         elif kind == 'next_business_day':
             parts.append('on the next business day, ' + speak(next_bd(today, CAL)) + ', ' + win)
+            tm = today + datetime.timedelta(days=1)
+            if next_bd(today, CAL) != tm and 'next_day' not in CB['days']:
+                # A15 (IDS-08): "tomorrow" is a holiday or a weekend day; the model silently booked the next business day
+                notes.append('Tomorrow, ' + speak(tm) + ', is not a business day, so tomorrow is outside the window.')
         elif kind == 'next_day':
             parts.append('tomorrow, ' + speak(today + datetime.timedelta(days=1)) + ', ' + win)
         elif kind == 'any_business_day':
@@ -275,7 +283,7 @@ def product_facts(p):
     attempts = []
     prev = None
     for i, a in enumerate(band['attempts']):
-        d = attempt_date(today, a['date'], dl, CAL)
+        d = attempt_date(today, a, dl, CAL)
         when = ('on the deadline, ' + speak(d)) if a['date'] == 'deadline' else ('on ' + speak(d))
         if prev is not None and a['amount'] == prev:
             txt = 'propose only the new date ' + when + ' for that same amount, without saying the figure again.'
@@ -288,7 +296,7 @@ def product_facts(p):
             txt = ('propose the full amount ' + fmt(past_due) + ' ' + when + '. If the customer already said the full amount is too much, ' +
                    'the lower amount ' + fmt(floor) + ' is already on the table: propose only the date for that amount, without saying the figure again.')
         prev = a['amount']
-        attempts.append(dict(date=d, text='Attempt ' + str(i + 1) + ': ' + txt))
+        attempts.append(dict(date=d, amount=str(a['amount']), text='Attempt ' + str(i + 1) + ': ' + txt))
     n = len(attempts)
     plan = '\n'.join(a['text'] for a in attempts)
     plan += ('\nThis customer is in the ' + str(band['name']).upper() + ' band: ' + NUMS.get(str(n), str(n)) +
@@ -378,8 +386,13 @@ try:
     vars['band'] = str(f['band']['name'])
     vars['attempts_allowed'] = str(len(f['attempts']))
     vars['deadline_text'] = speak(f['deadline'])
+    vars['deadline_iso'] = f['deadline'].isoformat()
     for i, a in enumerate(f['attempts']):
         vars['attempt' + str(i + 1) + '_text'] = speak(a['date'])
+    # A12 fix 3/4: the plan attempts' dates and amount kinds, in order; check_date counts one as proposed only once the
+    # model says it has reached that attempt, and adds the dates its own results tell the model to offer
+    vars['offer_dates'] = ','.join(a['date'].isoformat() for a in f['attempts'])
+    vars['offer_amounts'] = ','.join(a['amount'] for a in f['attempts'])
     vars['attempt_plan'] = f['plan']
     vars['allowed_dates_text'] = ', '.join(x.isoformat() for x in f['allowed'])
     vars['calendar_text'] = calendar_text(f['deadline'])
@@ -389,6 +402,20 @@ try:
 except Exception as e:
     vars['account_state'] = 'error'
     vars['account_error'] = str(e)[:200]
+'''
+
+# A15: the first product (get_account order) in a band with an event: that event fires; product_words names it
+ACCOUNT_EVENT_CODE = r'''
+try:
+    vars['account_event'] = 'none'
+    if vars.get('account_state') == 'ok':
+        for f in facts:
+            if f['band'].get('event'):
+                vars['account_event'] = f['band']['event']
+                vars['product_words'] = f['words']
+                break
+except Exception:
+    pass
 '''
 
 GET_ACCOUNT_POST = r'''
@@ -661,6 +688,7 @@ try:
     b = config.get('body')
     if isinstance(b, dict):
         fld = str(b.get('field') or '')
+        vars['id_field_cur'] = fld
         q = FORMATS.get(fld)
         a = str(b.get('answer') if b.get('answer') is not None else '').strip()
         part = str(vars.get('id_partial') or '').strip()
@@ -732,6 +760,18 @@ try:
             vars['id_partial_spent'] = str(vars.get('id_partial_seen') or '')
             vars['id_partial'] = ''
             vars['id_partial_field'] = ''
+        if not (incomplete or technical) and d.get('verified') is False and d.get('ok') is not False and d.get('all_verified') is not True \
+                and not (hint and hint in HINTS):
+            # A15: the brief's own limit (identity.max_wrong, wrong_scope), counted here; the bank's count wins when lower
+            key = 'id_wrong_' + (str(vars.get('id_field_cur') or '') if SCOPE == 'per_question' else 'all')
+            n = int(str(vars.get(key) or '0')) + 1
+            vars[key] = str(n)
+            own = max(MAX_WRONG - n, 0)
+            try:
+                left = min(int(left), own)
+            except Exception:
+                left = own
+            d['wrong_answers_left'] = left
         if incomplete or technical:
             pass
         elif d.get('all_verified') is True:
@@ -777,7 +817,11 @@ try:
             d = dict()
             result['data'] = d
         good = str(result.get('status', 'success')) == 'success' and d.get('ok') is True
-        if good:
+        if vars.get('promise_reject') or str(vars.get('promise_sent') or '') != 'yes':
+            # A12: the pre-hook kept the call off the bank (the request went to get_account): never recorded
+            result['data'] = d = dict(ok=False, recorded=False, promise_status='rejected',
+                                      what_to_do_next=str(vars.get('promise_reject') or NOT_CHECKED))
+        elif good:
             d['promise_status'] = 'recorded'
             d['what_to_do_next'] = 'The promise is recorded.'
         else:
@@ -811,22 +855,226 @@ except Exception:
     pass
 '''
 
+# the engine-run retry (one product): its url is SAFE_URL too; it goes to PROMISE_URL only with the date the
+# create_promise guard accepted (promise_date_used), never the model's raw argument (A12 fix 2)
 RETRY_PRE = r'''
 try:
-    b = config.get('body')
-    if isinstance(b, dict):
+    vars['retry_sent'] = ''
+    b = config.get('body') if isinstance(config, dict) else None
+    dt = str(vars.get('promise_date_used') or '')[:10]
+    if isinstance(b, dict) and dt and str(vars.get('promise_sent') or '') == 'yes':
         a = vars.get('create_promise_args.promise_amount')
         if a is None:
             a = b.get('amount')
         b['amount'] = float(a)
-        dt = vars.get('create_promise_args.promise_date')
-        if dt:
-            b['date'] = str(dt)[:10]
+        b['date'] = dt
         pid = vars.get('product_id')
         if pid:
             b['product_id'] = str(pid)
+        config['url'] = PROMISE_URL
+        vars['retry_sent'] = 'yes'
+    else:
+        _off_bank(NOT_CHECKED)
+except Exception:
+    try:
+        _off_bank(NOT_CHECKED)
+    except Exception:
+        pass
+'''
+
+# A12: one product, a day the customer names. check_date is a read-only api tool (get_account route, like set_product
+# in multi.py); its pre-hook resolves the customer's words (dates.resolve_said) and judges the date by the spec rules
+# (dates.date_verdict), the post-hook makes that the tool result the model reads. The model only speaks the verdict.
+# Body leaves are model-filled through {{cdx_*}} defaults; no cdx_* variable is ever set.
+CHECK_TOOL = "check_date"
+# shared by check_date and create_promise: the verdict on a date, as words (DATE_RULES prelude: dates, CAL, today,
+# nowdt, NBD, AFTER, CUTOFF, TOOL)
+CHECK_LIB = r'''
+def _cd_why(d):
+    if d.isoformat() in CAL['holidays']:
+        return 'a bank holiday, not a business day'
+    if d.weekday() >= 5:
+        return 'a weekend day, not a business day'
+    return 'not a business day'
+
+
+def _cd_judge(d, dl):
+    """(kind, date to offer or None, what is wrong with d or '', what to offer or ask) for a named date."""
+    today_open = not (CUTOFF and nowdt.strftime('%H:%M') >= CUTOFF)
+    kind, off = date_verdict(d, today, dl, CAL, NBD, AFTER, today_open)
+    if kind == 'ok':
+        return kind, off, '', ''
+    if kind == 'past':
+        return kind, None, say_date(d) + ' has already passed', 'ask for a date from today on'
+    if kind == 'after_deadline':
+        why = say_date(d) + ' is after the deadline'
+        if off is None:
+            return kind, None, why, 'say it cannot be accepted and ask for a date on or before ' + say_date(dl)
+        return kind, off, why, 'say the latest date you can accept is ' + say_date(off) + ' and offer it'
+    if kind == 'today_closed':
+        why = 'it is after ' + CUTOFF + ', too late for a payment today'
+        if off is None:
+            return kind, None, why, 'ask for a date on or before ' + say_date(dl)
+        return kind, off, why, 'offer the next business day, ' + say_date(off)
+    why = say_date(d) + ' is ' + _cd_why(d)
+    if off is None:
+        return kind, None, why, 'ask for a business day on or before ' + say_date(dl)
+    if NBD == 'previous_business_day' and off == prev_bd(d, CAL):
+        which = 'the business day before it'
+    elif off == next_bd(d, CAL):
+        which = 'the next business day'
+    else:
+        which = 'the latest date you can accept'
+    return kind, off, why, 'offer ' + which + ', ' + say_date(off)
+'''
+
+CHECK_PRE = r'''
+def _cd_arg(b, k):
+    v = b.get(k)
+    if v is None or (isinstance(v, str) and v.strip()[:2] == chr(123) * 2):
+        return ''
+    return str(v).strip()
+
+
+try:
+    b = config.get('body') if isinstance(config, dict) else None
+    if not isinstance(b, dict):
+        b = dict()
+    said = _cd_arg(b, 'said')
+    iso = _cd_arg(b, 'date')[:10]
+    dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
+    # A12 fix 4: only dates the agent has really proposed count as offers: the plan attempts it says it has reached
+    # (attempt), and the dates an earlier result told it to offer. A date the customer names first is a new date.
+    pd = [x for x in str(vars.get('offer_dates') or '').split(',') if x]
+    pk = str(vars.get('offer_amounts') or '').split(',')
+    m = re.match(r'\s*(\d+)', _cd_arg(b, 'attempt'))
+    n = min(int(m.group(1)), len(pd)) if m else 0
+    # A12 fix 5: a "current" attempt amount is the floor once the model says it offered it, else the full amount
+    fo = _cd_arg(b, 'floor_offered').lower().strip(' .!') in ('yes', 'y', 'true')
+    offered = set(pd[:n]) | set(x for x in str(vars.get('cd_offered') or '').split(',') if x)
+    prefer = []
+    for x in offered:
+        try:
+            prefer.append(datetime.date.fromisoformat(x))
+        except ValueError:
+            pass
+    d, why = resolve_said(said, today, WW, prefer)
+    if d is None and why != 'vague' and re.match(r'^\d{4}-\d{2}-\d{2}$', iso):
+        try:
+            d = datetime.date.fromisoformat(iso)
+        except ValueError:
+            d = None
+    off = None
+    cur = ', as a yes/no question, for the amount of your current attempt (never say a figure the customer already heard)'
+
+    def _amt(i):
+        k = pk[i] if 0 <= i < len(pk) else 'current'
+        full = str(vars.get('past_due_text') or 'the full amount')
+        low = str(vars.get('floor_text') or 'the floor')
+        if k == 'full':
+            return full
+        if k == 'floor' or (k == 'current' and fo):
+            return low
+        return full
+
+    def _rb(i, d):
+        return ('As a confirmation, read back once the product and ' + _amt(i) + ' on ' + say_date(d) +
+                ' (an amount the customer named and you may accept instead, if they named one) and ask ' + repr(CONFIRM).replace("'", '"'))
+    never = ' Their own date is never a refusal.'
+    if d is None:
+        kind = 'vague' if why == 'vague' else 'no_day'
+        if kind == 'vague':
+            msg = 'NO EXACT DAY: that is a period, not a day. Follow your rule for a vague period.'
+        else:
+            msg = ('NO DAY FOUND in the words given. If the customer named a day, call ' + TOOL + ' again with it as YYYY-MM-DD in date; '
+                   'otherwise ask for the exact day.')
+    else:
+        kind, off, bad, todo = _cd_judge(d, dl)
+        if kind == 'ok' and d.isoformat() in offered:
+            i = max([j for j in range(n) if pd[j] == d.isoformat()] or [n - 1])
+            msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. Do not propose it again. ' + _rb(i, d) + ', then record (create_promise date: ' + d.isoformat() + ').')
+        elif kind == 'ok':
+            msg = ('NEW DATE: ' + say_date(d) + ' can be accepted. You have not offered it: do not offer it now. ' + _rb(max(n, 1) - 1, d) +
+                   '. This is not a question about paying and not a new offer. After a yes, record (create_promise date: ' + d.isoformat() + ').')
+        elif kind == 'past':
+            msg = 'IN THE PAST: ' + bad + '. Say so and ' + todo + '.'
+        else:
+            head = dict(after_deadline='AFTER THE DEADLINE', today_closed='TOO LATE FOR TODAY').get(kind, 'NOT A BUSINESS DAY')
+            first = 'Say ' + todo[4:] if todo.startswith('say ') else 'Say so and ' + todo
+            msg = head + ': ' + bad + '. ' + first + (cur if off is not None else '') + '.' + never
+            if off is not None:
+                msg += ' If they accept, create_promise date: ' + off.isoformat() + '.'
+    vars['cd_kind'] = kind
+    vars['cd_date'] = off.isoformat() if off is not None else ''
+    if off is not None and off != d:
+        vars['cd_offered'] = (str(vars.get('cd_offered') or '') + ',' + off.isoformat()).strip(',')
+    vars['cd_msg'] = msg
+except Exception as e:
+    vars['cd_kind'] = 'error'
+    vars['cd_date'] = ''
+    vars['cd_msg'] = 'There was a technical problem checking the date (' + str(e)[:60] + '). Call ' + TOOL + ' again with the same values.'
+'''
+
+CHECK_POST = r'''
+try:
+    if isinstance(result, dict):
+        result.pop('header', None)
+        result['data'] = dict(ok=True, verdict=str(vars.get('cd_kind') or 'error'), date=str(vars.get('cd_date') or ''),
+                              what_to_do_next=str(vars.get('cd_msg') or 'Call ' + TOOL + ' again with the same values.'))
 except Exception:
     pass
+'''
+
+# create_promise (one product): a date the rules do not allow is never recorded and never silently changed (fix round 1),
+# and the guard fails CLOSED (fix round 2). The tool's own url is the read-only get_account route (SAFE_URL); only this
+# pre-hook, after it accepted the date, points the request at create_promise (PROMISE_URL). Any rejection, any request
+# it cannot read and any exception keep the call on SAFE_URL with a body of customer_id only, and PROMISE_POST answers
+# "NOT RECORDED: ...". Pre-hooks may rewrite the whole request (docs/tools-and-code.md; probes 5b110990, A12 fix 2).
+NOT_CHECKED = "NOT RECORDED: the date could not be checked; ask the customer for the day again."
+OFF_BANK = r'''
+def _off_bank(msg):
+    vars['promise_reject'] = msg
+    vars['promise_date_used'] = ''
+    vars['promise_sent'] = ''
+    if isinstance(config, dict):
+        cb = config.get('body')
+        cid = cb.get('customer_id') if isinstance(cb, dict) else None
+        config['url'] = SAFE_URL
+        config['body'] = dict(customer_id=cid or vars.get('customer_id'))
+'''
+PROMISE_DATE_PRE = r'''
+try:
+    vars['promise_reject'] = ''
+    vars['promise_date_used'] = ''
+    vars['promise_sent'] = ''
+    b = config.get('body') if isinstance(config, dict) else None
+    if not isinstance(b, dict):
+        _off_bank(NOT_CHECKED)
+    else:
+        raw = str(b.get('date') or '').strip()[:10]
+        dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
+        try:
+            d = datetime.date.fromisoformat(raw)
+        except ValueError:
+            d = None
+        if d is None:
+            _off_bank('NOT RECORDED: the date was not given as YYYY-MM-DD. Call ' + TOOL + ' with the customer\'s day, '
+                      'say the date it gives, read it back and ask again.')
+        else:
+            kind, off, bad, todo = _cd_judge(d, dl)
+            if kind == 'ok':
+                config['url'] = PROMISE_URL
+                b['date'] = raw
+                vars['promise_date_used'] = raw
+                vars['promise_sent'] = 'yes'
+            else:
+                _off_bank('NOT RECORDED: ' + bad + '; ' + todo + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
+                          '. Say this date, read it back and ask again.')
+except Exception:
+    try:
+        _off_bank(NOT_CHECKED)
+    except Exception:
+        pass
 '''
 
 # spec.responses: the brief's openapi names some response fields differently; copy each back to the name the
@@ -928,6 +1176,8 @@ class _Compiler:
         self.base = (base_url or openapi["servers"][0]["url"]).rstrip("/")
         self.addr = tpl(spec["address_as"])
         self.events = {e["id"]: e for e in spec["events"]}
+        # A15: events a band fires by itself as get_account returns (bands[].event): never listened for in speech
+        self.account_events = list(dict.fromkeys(b["event"] for b in spec["bands"] if b.get("event") in self.events))
         self.fail_ev = spec["confirmation"].get("failure_event") or ""
         self.nodes = {}
         self.transfers = {}   # (queue, close) -> node key
@@ -1046,6 +1296,10 @@ class _Compiler:
     def close_key(self, ev_id):
         return "close_" + ev_id
 
+    def no_promise_outcome(self):
+        """The brief's no-promise outcome: the refused event's outcome (as Multi and oracle read it), never a literal (A15)."""
+        return (self.events.get("refused") or {}).get("outcome") or "no_promise"
+
     def prelude(self):
         return ("import datetime, json, re\n" + embed.source(dates, money) + "\n" +
                 _const("CAL", self.s["calendar"]) + NOW_CODE)
@@ -1065,6 +1319,7 @@ class _Compiler:
         skip = set(STRUCTURAL.get(stage, set()))
         if stage == "negotiate":
             skip.add(self.fail_ev)
+        skip |= set(self.account_events)
         return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip
                 and not (self.multi and stage == "negotiate" and e["action"] == "note_and_continue")]
 
@@ -1129,7 +1384,7 @@ class _Compiler:
         for ev in self.s["events"]:
             if ev["action"] == "offer_transfer_else_close":
                 self.nodes[self.close_key(ev["id"])] = close_node(
-                    self.close_key(ev["id"]), ev.get("else_outcome") or "no_promise", ev.get("else_reason") or "",
+                    self.close_key(ev["id"]), ev.get("else_outcome") or self.no_promise_outcome(), ev.get("else_reason") or "",
                     self.farewell(ev, "else"))
                 self.nodes[self.close_key(ev["id"]) + "_transfer"] = close_node(
                     self.close_key(ev["id"]) + "_transfer", ev["outcome"], ev.get("reason") or "",
@@ -1272,7 +1527,7 @@ class _Compiler:
         """The brief's instruction without recording words (the hold step speaks before any promise)."""
         return re.sub(r"\brecord(?:s|ed)? (?:the|a) promise\b", "take their payment date and amount", text or "", flags=re.I)
 
-    def support_nodes(self, ev, transfer):
+    def support_nodes(self, ev, transfer, account=False):
         """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it and reads the reply:
         a yes transfers; a date or an amount the customer names returns to negotiate (<id>_back); a human request goes to
         that event's ask-once step; a question is answered in one sentence and the offer asked once more (first reply
@@ -1281,7 +1536,7 @@ class _Compiler:
         offer, hold, back = eid + "_offer", eid + "_hold", eid + "_back"
         if offer in self.nodes:
             return offer
-        end = self.end_target("negotiate", eid)
+        end = self.account_end(ev) if account else self.end_target("negotiate", eid)
         reply = eid + "_reply"
         code = "vars[%r] = 'yes'\nvars[%r] = 'pending'\nvars[%r] = %r\n" % (eid + "_offered", reply, eid + "_rule", self.support_rule(ev, True))
         if self.multi:  # reached from the read-back as well: negotiation is open again
@@ -1291,13 +1546,17 @@ class _Compiler:
         if self.multi:
             reset += ("vars['mp_msg'] = 'The customer named a date or an amount after the support offer. Make no offer of your own; "
                       "check what they named and call %s for that product.'\n" % multi_mod.SET_TOOL)
-        self.nodes[back] = code_node(back, reset, "negotiate")
+        if not account:
+            self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
         steps = ["Exactly one short sentence of sympathy."]
+        if account:
+            # nothing about the debt was said yet: the verification thanks, then the event's own sentence
+            steps = ["Say %s." % q(self.verified_lead().strip())]
         if ev.get("say"):
             steps.append("Say %s." % q(tpl(ev["say"])))
-        if banned:
+        if banned and not account:
             steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
         steps.append("Offer to connect them with %s, as a yes/no question." % team)
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
@@ -1306,7 +1565,7 @@ class _Compiler:
                    for r in self.s.get("say_rules", []) if {"any", "negotiate"} & set(r.get("stages") or ["any"])]
         # a request for a human keeps its own ask-once handling (brief rules apply after the offer too)
         values, routes, hdesc = [], [], []
-        for h in self.stage_events("negotiate"):
+        for h in ([] if account else self.stage_events("negotiate")):
             if h["action"] == "insist_once_then_transfer":
                 v = h["id"] + "_request"
                 values.append(v)
@@ -1314,20 +1573,25 @@ class _Compiler:
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
                 routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
+        situation = ("the customer " + bare_trigger(ev["trigger"])) if not account else (
+            "the account shows: " + bare_trigger(ev["trigger"]) + ". The product concerned: {{product_words}}")
+        pay = go(end if account else back, eid + (": the customer names a payment, none is taken" if account else ": the customer names a payment"),
+                 cond_any(eq(reply, "names_payment")))
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
             "on_enter": {"type": "llm"},
             "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
                              "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
                              "The brief's rule for this situation: %s\nNo tool call is allowed in this step."
-                             % ("the customer " + bare_trigger(ev["trigger"]),
+                             % (situation,
                                 "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
                                 "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
             "extraction_schema": [{
                 "name": reply, "type": "string", "min_confidence": 0.6,
                 "enum_values": ["pending", "accepted", "names_payment", "declined", "question"] + values + ["other"],
                 "description": " ".join(["The customer's LATEST message, a reply to the offer to connect them with %s." % team,
-                                         "accepted: they say yes to being connected.",
+                                         "accepted: they say yes to being connected." +
+                                         (" Asking to speak to a person counts as yes." if account else ""),
                                          "names_payment: they name a payment date or an amount themselves (\"I can pay 100 on Friday\").",
                                          "declined: they refuse the offer (even if they also ask whether there is anything else).",
                                          "question: they only ask a question (what the team does, whether this is a scam) and do not refuse."]
@@ -1336,8 +1600,7 @@ class _Compiler:
             # probe (fix round 1): the cap fires on the user turn that reaches it, before any route is evaluated, so 3
             # lets the second reply route normally (a yes there still transfers); the counter is 0 before the first reply
             "max_node_turns": 3, "max_turn_transition": end,
-            "transitions": [go(transfer, eid + ": transfer accepted", cond_any(eq(reply, "accepted"))),
-                            go(back, eid + ": the customer names a payment", cond_any(eq(reply, "names_payment")))] + routes + [
+            "transitions": [go(transfer, eid + ": transfer accepted", cond_any(eq(reply, "accepted"))), pay] + routes + [
                             go(end, eid + ": declined, anything else, unreadable, or a second non-yes reply", cond_any(
                                 eq(reply, "declined"), eq(reply, "other"),
                                 {"logic": "and", "conditions": [eq(reply, "pending"), gt(turns, SUPPORT_TURNS_SEEN)]},
@@ -1488,6 +1751,8 @@ class _Compiler:
             '- If they give a day and time inside the window, call schedule_callback with date as YYYY-MM-DD and time as HH:MM (24 hour). "Tomorrow morning around eleven" means 11:00 on the next day.',
             "- If what they offer is outside the window, say you can only call back %s, and ask %s for another time. Do not schedule anything outside the window."
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
+            "- Never move the day or time they name to another one yourself: book only a day and time they said. A day outside the window "
+            "(a weekend day, a holiday, a day too far ahead) is handled like any time outside it: say so and ask.",
         ]
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
         lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
@@ -1561,12 +1826,6 @@ class _Compiler:
     def negotiate_task(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
         banned = neg.get("banned_offers") or []
-        nbd = {"next_business_day": "A weekend day or holiday that is not after the deadline: offer the NEXT business day after it, not the deadline.",
-               "previous_business_day": "A weekend day or holiday that is not after the deadline: offer the business day BEFORE it, not the deadline.",
-               "reject": "A weekend day or holiday: say it is not a business day and ask for a business day."}[neg.get("non_business_day", "next_business_day")]
-        aft = {"offer_deadline": ("A date after the deadline: say the latest date you can accept is the deadline ({{deadline_text}}) and offer it "
-                                  "with the amount of your current attempt. Their own date, even after a \"no\", is never a refusal."),
-               "reject": "A date after the deadline: say it cannot be accepted and ask for a date on or before the deadline ({{deadline_text}})."}[neg.get("after_deadline", "offer_deadline")]
         vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
                  "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
@@ -1597,18 +1856,12 @@ FACTS (computed, use them exactly)
 - Full past-due amount: {{past_due_text}}.
 - Floor (lowest amount you may accept): {{floor_text}}.
 - Deadline (latest date you may accept): {{deadline_text}}.
-- Dates you may accept (business days from today to the deadline): {{allowed_dates_text}}
 - Persuasion plan:
 {{attempt_plan}}
-- Weekday words:
-{{weekday_text}}
-- Calendar:
-{{calendar_text}}
 
 HOW TO GET A PROMISE
 1. The customer names a date or an amount (combine parts said across turns: "twelve"... "fifty" = 1250, "four hundred"... "and twenty" = 420; a short number right after a partial one is the rest of it): never a refusal. Check it:
    - %s
-   - Date must be one of the dates you may accept. %s %s
    - %s
    - %s
    - %s
@@ -1618,7 +1871,7 @@ HOW TO GET A PROMISE
    %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, DATE_ONLY, nbd, aft, vague, DAY_NUMBER, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+            first_ask, DATE_ONLY, CHECK_DAY % CHECK_TOOL, vague, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
             t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
@@ -1636,7 +1889,7 @@ HOW TO GET A PROMISE
     def fail_close(self):
         """(outcome, reason) of the service-failure close (also used when the account cannot be read)."""
         fe = self.events.get(self.fail_ev) or {}
-        return fe.get("outcome") or "no_promise", fe.get("reason") or ""
+        return fe.get("outcome") or self.no_promise_outcome(), fe.get("reason") or ""
 
     def setup_nodes(self):
         """setup computes the call's date facts and writes a plain default farewell (no outcome). A snippet that did
@@ -1651,7 +1904,7 @@ HOW TO GET A PROMISE
 
     def opening_node(self):
         op = self.s["opening"]
-        first, _ = safe_opening(op["first_sentence"])
+        first, _ = safe_opening(op["first_sentence"], op.get("verbatim", False))
         values, desc, trans = self.event_values("opening")
         unclear = self.fallback_close("opening", ["unclear"])
         max_asks = op.get("max_asks", 2)
@@ -1725,7 +1978,8 @@ HOW TO GET A PROMISE
             next_q = "Say only: Thank you."
         not_yet = "Do not mention %s yet." % (join_or(self.s["opening"].get("banned_before_verify", []), "or") or "why you are calling")
         post = ("import json\n" + _const("HINTS", idn.get("non_counting_hints") or {}) + "UNREADABLE = %r\nNEXT_Q = %r\nNOT_YET = %r\n"
-                % (unreadable, next_q, not_yet) + VERIFY_POST)
+                % (unreadable, next_q, not_yet) + "MAX_WRONG = %d\nSCOPE = %r\n" % (idn["max_wrong"], idn.get("wrong_scope", "total"))
+                + VERIFY_POST)
         pre = "import json\n" + _const("FORMATS", {x["field"]: {k: v for k, v in x.items() if k in ("format", "length", "date_order")} for x in qs}) + VERIFY_PRE
         answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
@@ -1792,11 +2046,31 @@ HOW TO GET A PROMISE
                 _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
                 _const("NEG", {k: neg.get(k) for k in ("debt_statement", "debt_statement_per_product", "weekday_words", "non_business_day", "first_ask", "first_ask_all") if neg.get(k) is not None}) +
                 _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_CODE +
-                (self.multi.account_code() if self.multi else ""))
+                (self.multi.account_code() if self.multi else "") + (ACCOUNT_EVENT_CODE if self.account_events else ""))
+        # A15: a product in a band with an event fires it before the debt is stated
+        tr = [go(self.account_event_entry(self.events[eid]), "Account event: " + eid,
+                 all_of(eq("account_state", "ok"), eq("account_event", eid))) for eid in self.account_events]
         # negotiate only on facts the snippet confirmed (account_state is its last write); anything else, including a
         # snippet that did not run, closes as an account error rather than speaking empty amounts and dates
         self.nodes["prepare_account"] = code_node("prepare_account", code, "close_account_error",
-                                                  [go("negotiate", "Account facts ready", cond_any(eq("account_state", "ok")))])
+                                                  tr + [go("negotiate", "Account facts ready", cond_any(eq("account_state", "ok")))])
+
+    def account_event_entry(self, ev):
+        """A15: where an account event starts. offer_transfer_else_close: the offer step (no sympathy, no way back to a
+        payment); a transfer: the transfer; a close: its close node. No wrap, so no notes, unless the event names a
+        per-product note on a several-product call."""
+        eid, act = ev["id"], ev["action"]
+        if act == "offer_transfer_else_close":
+            t = self.transfer_to(ev["queue"], self.close_key(eid) + "_transfer", eid)
+            return self.support_nodes(ev, t, account=True)
+        if act in ("transfer", "insist_once_then_transfer"):
+            return self.transfer_to(ev["queue"], self.close_key(eid), eid)
+        return self.account_end(ev)
+
+    def account_end(self, ev):
+        if self.multi and ev.get("per_product_note"):
+            return self.end_target("negotiate", ev["id"])
+        return self.close_key(ev["id"])
 
     def negotiate_node(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
@@ -1828,12 +2102,13 @@ HOW TO GET A PROMISE
             "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_task(),
-            "tools": [self.tool("create_promise", {
+            "tools": [self.check_tool(), self.safe_route(self.tool("create_promise", {
                 "product_id": {"default": "{{product_id}}"},
                 "amount": {"description": "Promised amount, a number such as 420.00. From the floor up to the full past-due amount.", "default": "{{promise_amount}}"},
-                "date": {"description": "Promised payment date, YYYY-MM-DD, one of the dates you may accept.", "default": "{{promise_date}}"},
+                "date": {"description": "Promised payment date, YYYY-MM-DD: the date check_date gave, or the date of the plan's offer.", "default": "{{promise_date}}"},
             }, ["amount", "date"], description="Record the payment promise. CALL it only after the customer said yes to your read-back of product, amount and date.",
-                mapping=[{"path": "data.promise_status", "variable": "promise_status"}], post=PROMISE_POST.replace("RETRIES", str(int(retries))))],
+                mapping=[{"path": "data.promise_status", "variable": "promise_status"}], pre=self.guard() + PROMISE_DATE_PRE,
+                post="NOT_CHECKED = %r\n" % NOT_CHECKED + PROMISE_POST.replace("RETRIES", str(int(retries)))))],
             "extraction_schema": [{
                 "name": "neg_event", "type": "string", "min_confidence": 0.6,
                 "enum_values": structural[:1] + values + structural[1:],
@@ -1843,6 +2118,44 @@ HOW TO GET A PROMISE
             "max_node_turns": 40, "max_turn_transition": self.latch_gate(self.fallback_close("negotiate", ["refused"])),
             "transitions": tr,
         }
+
+    def date_rules(self):
+        """Prelude (dates, CAL, today) plus the spec's date policies, for the hooks that judge a named date (A12)."""
+        neg = self.s["negotiation"]
+        return (self.prelude() + _const("WW", neg.get("weekday_words") or {}) +
+                "NBD = %r\nAFTER = %r\nCUTOFF = %r\nTOOL = %r\nCONFIRM = %r\n" % (
+                    neg.get("non_business_day", "next_business_day"), neg.get("after_deadline", "offer_deadline"),
+                    neg.get("same_day_cutoff") or "", CHECK_TOOL, self.s["confirmation"]["question"]) + CHECK_LIB)
+
+    def routes(self):
+        """The constants of the fail-closed promise guard: the read-only route and the promise route (A12 fix 2)."""
+        return "SAFE_URL = %r\nPROMISE_URL = %r\nNOT_CHECKED = %r\n" % (self.base + "/get_account", self.base + "/create_promise", NOT_CHECKED) + OFF_BANK
+
+    def guard(self):
+        return self.date_rules() + self.routes()
+
+    def safe_route(self, t):
+        """A promise tool whose own url is the read-only route; only its pre-hook sends an accepted date to create_promise."""
+        url = t["function"]["parameters"]["properties"]["url"]
+        assert url.get("default") == self.base + "/create_promise", url
+        url["default"] = self.base + "/get_account"
+        return t
+
+    def check_tool(self):
+        """check_date (one product): the model passes the customer's words for a day; code returns the verdict."""
+        return self.tool(CHECK_TOOL, {
+            "said": {"type": "string", "default": "{{cdx_said}}",
+                     "description": "The customer's latest words for the day, e.g. \"Monday the twenty-sixth\"; a cut-off phrase joined with its rest (\"Monday the.\" + \"26th.\")."},
+            "date": {"type": "string", "default": "{{cdx_date}}",
+                     "description": "The same day as YYYY-MM-DD if you know it; used only when the words name no day."},
+            "attempt": {"type": "string", "default": "{{cdx_attempt}}",
+                        "description": "The number of the last plan attempt you already said in an earlier message: 0 before your first offer with a date, 1 after attempt 1, and so on."},
+            "floor_offered": {"type": "string", "default": "{{cdx_floor_offered}}",
+                              "description": "yes if you have already offered {{floor_text}} in an earlier message"},
+        }, ["said", "attempt", "floor_offered"], path="get_account",
+            description=("Check a payment day the customer names. CALL it before you answer any day they name (any form, also in pieces "
+                         "or words); say what what_to_do_next says. It records nothing."),
+            pre=self.date_rules() + CHECK_PRE, post="TOOL = %r\n" % CHECK_TOOL + CHECK_POST)
 
     def verified_lead(self):
         """Spoken by the engine as identity passes: the thanks, then negotiation.post_verify_sentence word for word."""
@@ -1899,12 +2212,12 @@ HOW TO RUN THE CALL
    - %(cut_off)s
    - Amount: from the product's floor up to its full amount. %(date_only)s
    - %(too_much)s
-3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
+3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Only the product the last result (or step 1) told you to offer counts; report a no about another product too: it uses no attempt. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
    %(mentioned)s
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
    - refused, after EVERY refusal of an attempt (see 3).%(notes)s
-   Its result (what_to_do_next) names the next product. Say a product is noted only after a result that says "Noted" for it; after "NOT accepted", "Not counted yet" or any other result, nothing is noted: do what it says. A result that says a product is still open ("NOT every product is settled", "Still open"): nothing is noted for it and the call is not over; never say noted, recorded or goodbye, continue with that product. Never read promises back or ask for confirmation yourself. Last result: {{mp_msg}}
+   Its result (what_to_do_next) names the next product. Say a product is noted only after a result that says "Noted" for it; after "NOT accepted", "Not counted" or any other result, nothing is noted: do what it says. A result that says a product is still open ("NOT every product is settled", "Still open"): nothing is noted for it and the call is not over; never say noted, recorded or goodbye, continue with that product. Never read promises back or ask for confirmation yourself. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded or registered.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
@@ -1953,11 +2266,11 @@ HOW TO RUN THE CALL
     def retry_node(self):
         fail = self.close_key(self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
         ok = self.close_key("promise_recorded") if self.has("promise_recorded") else fail
-        rp = self.tool("create_promise", {
+        rp = self.safe_route(self.tool("create_promise", {
             "product_id": {"default": "{{product_id}}"},
             "amount": {"default": "{{create_promise_args.promise_amount}}"},
             "date": {"default": "{{create_promise_args.promise_date}}"},
-        }, ["amount", "date"], source="create_promise_args.%s", pre=RETRY_PRE)
+        }, ["amount", "date"], source="create_promise_args.%s", pre="import json\n" + self.routes() + RETRY_PRE))
         return {
             "name": "retry_promise", "node_type": "api_request", "passthrough": True, "passthrough_default_transition": fail,
             "on_enter": {"type": "tts", "text": "I am sorry, there was a technical problem on our side. Let me try that once more."},

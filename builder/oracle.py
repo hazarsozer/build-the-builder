@@ -208,7 +208,7 @@ def _check_one(spec, s):
                 out.append(_mm(s, "offer amount", o["amount"], amount,
                                ["bands[%d].attempts[%d].amount" % (i, k - 1),
                                 "products.%s.floor_field" % p.get("type")]))
-            d = dates.attempt_date(today, att["date"], deadlines[pid], cal).isoformat()
+            d = dates.attempt_date(today, att, deadlines[pid], cal).isoformat()
             if o.get("date") and o["date"] != d:
                 out.append(_mm(s, "offer date", o["date"], d, ["bands[%d].attempts[%d].date" % (i, k - 1)]))
     refused = _event(spec, "refused")

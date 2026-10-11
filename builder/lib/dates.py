@@ -1,10 +1,11 @@
 """Deterministic business-calendar helpers.
 
 Embedded as source text into Freya code nodes (sandbox: json, re, datetime only).
-Keep imports to `datetime` and never write the two-character brace sequences
+Keep imports to `datetime` and `re` and never write the two-character brace sequences
 that Freya templating would interpret.
 """
 import datetime
+import re
 
 WD = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
@@ -133,6 +134,11 @@ def deadline(today, rule, cal):
 
 
 def attempt_date(today, kind, deadline_d, cal):
+    """kind: an attempt's date enum, or the attempt itself (a bands[].attempts[] entry; nth_business_day reads its n)."""
+    n = None
+    if isinstance(kind, dict):
+        n = kind.get("n")
+        kind = kind.get("date")
     if kind == "today":
         d = today
     elif kind == "last_business_day_of_week":
@@ -143,6 +149,10 @@ def attempt_date(today, kind, deadline_d, cal):
         d = deadline_d
     elif kind == "next_business_day":
         d = next_bd(today, cal)
+    elif kind == "nth_business_day":
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("attempt date nth_business_day needs a whole number n, got " + str(n))
+        d = nth_bd(today, n, cal)
     else:
         raise ValueError("unknown attempt kind: " + str(kind))
     if d > deadline_d:
@@ -213,7 +223,7 @@ def plan_products(products, today, bands, cal, product_cfg=None):
             floor = full
         band = band_for(days_of(p, cfg), bands)
         dl = deadline(today, band['deadline'], cal)
-        attempts = [(a['amount'], attempt_date(today, a['date'], dl, cal)) for a in band['attempts']]
+        attempts = [(a['amount'], attempt_date(today, a, dl, cal)) for a in band['attempts']]
         out.append(dict(product_id=str(p.get('product_id') or ('p' + str(i + 1))), band=band['name'],
                         deadline=dl, floor=floor, full=full, attempts=attempts))
     return out
@@ -230,27 +240,336 @@ def apply_shared_date(plans, d):
     return out
 
 
-def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None, reason_map=None, paid='paid'):
+def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=None, reason_map=None, paid='paid',
+                 promise=('promise', None), no_promise='no_promise', transfer='transferred'):
     """(outcome, reason) of a several-product call.
 
     notes: [(product_id, reason)] in product order; promises: number recorded; transferred: the
     transfer's reason or None. A transfer wins, then any recorded promise, then the notes.
     reason_map: note reason -> close reason (multi_product.notes.close_reason_map); paid: the note
-    reason that means "already paid" (multi_product.notes.paid_note_reason)."""
+    reason that means "already paid" (multi_product.notes.paid_note_reason). promise / no_promise /
+    transfer: the brief's own outcome names (the promise row is (outcome, reason)) (A15)."""
     m = reason_map or dict()
     paid = paid or 'paid'
     if transferred:
-        return ('transferred', transferred)
+        return (transfer, transferred)
     if promises and promises > 0:
-        return ('promise', None)
+        return (promise[0], promise[1])
     reasons = [r for _, r in notes]
     if reasons and all(r == paid for r in reasons) and all_paid:
         return (all_paid, None)
     if rule == 'last_note' and reasons:
-        return ('no_promise', m.get(reasons[-1], reasons[-1]))
+        return (no_promise, m.get(reasons[-1], reasons[-1]))
     for r in reasons:
         if r != paid:
-            return ('no_promise', m.get(r, r))
+            return (no_promise, m.get(r, r))
     if fallback:
         return (fallback[0], fallback[1])
-    return ('no_promise', m.get(reasons[0], reasons[0]) if reasons else None)
+    return (no_promise, m.get(reasons[0], reasons[0]) if reasons else None)
+
+
+
+# ---------------------------------------------------------------- a date the customer names (A12)
+# The customer's words for a day are resolved and judged here, in code: the agent only speaks the verdict.
+
+_UNIT_W = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+           'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+_ORD_W = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh',
+          'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth']
+_TENS_W = dict(twenty=20, thirty=30)
+_TENS_O = dict(twentieth=20, thirtieth=30)
+_MON3 = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+def _mon_of(w):
+    w = w.rstrip('.')
+    for i, m in enumerate(MON):
+        if w == m.lower():
+            return i + 1
+    if w == 'sept':
+        return 9
+    if len(w) == 3 and w in _MON3 and w != 'may':
+        return _MON3.index(w) + 1
+    return 0
+
+
+def _wd_of(w):
+    for i, n in enumerate(WD):
+        if w in (n.lower(), n.lower() + 's'):
+            return i
+    return -1
+
+
+def _tokens(text):
+    """[(kind, value)]: kind ord (a day ordinal), card (a cardinal number), mon, wd, iso, w (any other word)."""
+    t = str(text or '').lower().replace('-', ' ').replace(',', ' ')
+    raw = re.findall(r'\d{4} \d{2} \d{2}|\d+(?:st|nd|rd|th)?|[a-z]+\.?', t)
+    out = []
+    i = 0
+    while i < len(raw):
+        w = raw[i].rstrip('.')
+        nx = raw[i + 1].rstrip('.') if i + 1 < len(raw) else ''
+        m = re.match(r'^(\d{4}) (\d{2}) (\d{2})$', w)
+        if m:
+            out.append(('iso', (int(m.group(1)), int(m.group(2)), int(m.group(3)))))
+        elif re.match(r'^\d+(st|nd|rd|th)$', w):
+            out.append(('ord', int(re.match(r'^\d+', w).group(0))))
+        elif w.isdigit():
+            out.append(('card', int(w)))
+        elif w in _TENS_W and nx in _ORD_W[1:10]:
+            out.append(('ord', _TENS_W[w] + _ORD_W.index(nx)))
+            i += 1
+        elif w in _TENS_W and nx in _UNIT_W[1:10]:
+            out.append(('card', _TENS_W[w] + _UNIT_W.index(nx)))
+            i += 1
+        elif w in _TENS_O:
+            out.append(('ord', _TENS_O[w]))
+        elif w in _TENS_W:
+            out.append(('card', _TENS_W[w]))
+        elif w in _ORD_W[1:]:
+            out.append(('ord', _ORD_W.index(w)))
+        elif w in _UNIT_W:
+            out.append(('card', _UNIT_W.index(w)))
+        elif _mon_of(w):
+            out.append(('mon', _mon_of(w)))
+        elif _wd_of(w) >= 0:
+            out.append(('wd', _wd_of(w)))
+        else:
+            out.append(('w', w))
+        i += 1
+    # "may" and "march" are months only next to a day number ("May 26th", "the 2nd of March")
+    for i, (k, v) in enumerate(out):
+        if k == 'mon' and v in (3, 5):
+            near = [out[j][0] for j in (i - 1, i + 1) if 0 <= j < len(out)]
+            if i >= 2 and out[i - 1] == ('w', 'of'):
+                near.append(out[i - 2][0])
+            if not ('ord' in near or 'card' in near):
+                out[i] = ('w', MON[v - 1].lower())
+    return out
+
+
+def _first_with_day(today, n):
+    """The first date from today on whose day of the month is n (the first calendar row with that number)."""
+    y, m = today.year, today.month
+    for _ in range(14):
+        try:
+            d = datetime.date(y, m, n)
+        except ValueError:
+            d = None
+        if d is not None and d >= today:
+            return d
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return None
+
+
+def _weekday_date(today, wd, mod, ww):
+    """A weekday name with its modifier (next / next_week / this / after_next / '') under negotiation.weekday_words."""
+    ww = ww or dict()
+    if mod == 'next':
+        if ww.get('next') == 'next_occurrence':
+            return today + datetime.timedelta(days=(wd - today.weekday() - 1) % 7 + 1)
+        return weekday_ref(today, wd, 'next')
+    if mod == 'next_week':
+        return weekday_ref(today, wd, 'next')
+    if mod == 'this_week':
+        return weekday_ref(today, wd, 'this')
+    if mod == 'after_next':
+        return weekday_ref(today, wd, 'next') + datetime.timedelta(days=7)
+    if mod == 'this' and ww.get('this') != 'next_occurrence':
+        return weekday_ref(today, wd, 'this')
+    # "this" as next occurrence, or a bare weekday: its next occurrence from today on
+    return today + datetime.timedelta(days=(wd - today.weekday()) % 7)
+
+
+# a word after an ordinal that makes it a period, not a day ("the second week", "the first payment")
+_PERIODISH = ('week', 'weeks', 'weekend', 'month', 'months', 'half', 'quarter', 'time', 'payment', 'instalment',
+              'installment', 'salary', 'paycheck', 'one')
+# words that name a period, not a day
+_VAGUE_W = ('week', 'weeks', 'weekend', 'month', 'months', 'salary', 'payday', 'paycheck', 'paid', 'soon', 'later',
+            'sometime', 'end', 'beginning', 'early', 'mid', 'couple', 'few')
+# period words that do not override a day said before them ("the 23rd or later")
+_WEAK = ('later', 'soon', 'early')
+# words skipped when looking back from a mention for "not"
+_NEG_SKIP = ('on', 'the', 'this', 'next', 'a', 'that', 'for', 'by')
+
+
+def _mentions(tk):
+    """Every day or period the words mention, in order: [(position, kind, value)] with kind iso | day (value
+    (number, month or 0, adjacent weekday or -1)) | wd (value (weekday, modifier)) | rel (days from today) | vague |
+    weak (a period word that a day said before it overrides).
+    A mention right after "not" is dropped ("not Friday, Thursday")."""
+    n = len(tk)
+    used = set()
+    out = []
+
+    def W(j):
+        return tk[j][1] if 0 <= j < n and tk[j][0] == 'w' else None
+
+    def K(j):
+        return tk[j][0] if 0 <= j < n else None
+
+    for i, (k, v) in enumerate(tk):
+        if i in used:
+            continue
+        if k == 'iso':
+            out.append((i, 'iso', v))
+        elif k in ('ord', 'card') and 1 <= v <= 31:
+            if W(i + 1) in _PERIODISH:
+                continue
+            mon, mi = 0, None
+            if K(i - 1) == 'mon':
+                mon, mi = tk[i - 1][1], i - 1
+            elif W(i - 1) == 'the' and K(i - 2) == 'mon':
+                mon, mi = tk[i - 2][1], i - 2
+            elif K(i + 1) == 'mon':
+                mon, mi = tk[i + 1][1], i + 1
+            elif W(i + 1) == 'of' and K(i + 2) == 'mon':
+                mon, mi = tk[i + 2][1], i + 2
+            wd, wi = -1, None
+            if K(i - 1) == 'wd':
+                wd, wi = tk[i - 1][1], i - 1
+            elif W(i - 1) == 'the' and K(i - 2) == 'wd':
+                wd, wi = tk[i - 2][1], i - 2
+            if k == 'ord':
+                if v in (1, 2) and not (mon or wd >= 0 or W(i - 1) in ('the', 'on') or W(i + 1) == 'of'):
+                    continue
+            elif not (mon or wd >= 0 or W(i - 1) in ('the', 'on')):
+                continue
+            for j in (mi, wi):
+                if j is not None:
+                    used.add(j)
+            out.append((i, 'day', (v, mon, wd)))
+        elif k == 'wd':
+            mod = ''
+            if W(i + 1) == 'next' and W(i + 2) == 'week':
+                mod = 'next_week'
+                used.update((i + 1, i + 2))
+            elif W(i + 1) == 'this' and W(i + 2) == 'week':
+                mod = 'this_week'
+                used.update((i + 1, i + 2))
+            elif W(i + 1) == 'after' and W(i + 2) == 'next':
+                mod = 'after_next'
+                used.update((i + 1, i + 2))
+            elif W(i + 1) == 'the' and W(i + 2) == 'week' and W(i + 3) == 'after' and W(i + 4) == 'next':
+                mod = 'after_next'
+                used.update((i + 1, i + 2, i + 3, i + 4))
+            elif W(i + 1) in ('week', 'fortnight') or (W(i - 1) in ('on', 'from') and W(i - 2) in ('week', 'fortnight') and
+                                                        W(i - 3) not in ('next', 'this')):
+                # "Friday week", "a week on Friday": counted from this Friday or from next Friday depending on the
+                # speaker; no reliable day, so it is a period (the agent asks for the exact day)
+                for j in (i - 3, i - 2, i - 1, i + 1):
+                    used.add(j)
+                out.append((i, 'vague', None))
+                continue
+            elif W(i - 1) == 'week' and W(i - 2) in ('next', 'this'):
+                mod = 'next_week' if W(i - 2) == 'next' else 'this_week'
+                used.update((i - 1, i - 2))
+            elif W(i - 1) == 'on' and W(i - 2) == 'week' and W(i - 3) in ('next', 'this'):
+                mod = 'next_week' if W(i - 3) == 'next' else 'this_week'
+                used.update((i - 1, i - 2, i - 3))
+            elif W(i - 1) == 'next':
+                mod = 'next'
+                used.add(i - 1)
+            elif W(i - 1) in ('this', 'coming'):
+                mod = 'this'
+                used.add(i - 1)
+            out.append((i, 'wd', (v, mod)))
+        elif k == 'mon':
+            out.append((i, 'vague', None))
+        elif k == 'w':
+            if v == 'today':
+                out.append((i, 'rel', 0))
+            elif v == 'tomorrow':
+                if W(i - 1) == 'after' and W(i - 2) == 'day':
+                    out.append((i, 'rel', 2))
+                else:
+                    out.append((i, 'rel', 1))
+            elif v in _VAGUE_W:
+                out.append((i, 'weak' if v in _WEAK else 'vague', None))
+    keep = []
+    for m in out:
+        j = m[0] - 1
+        while j >= 0 and W(j) in _NEG_SKIP:
+            j -= 1
+        if W(j) == 'not' or m[0] in used:
+            continue
+        keep.append(m)
+    return keep
+
+
+def resolve_said(text, today, ww=None, prefer=None):
+    """The exact day the customer's words name: (date, '') or (None, why) with why 'vague' (a period, no day),
+    'invalid' (no such date) or 'none' (no day in the words). The LAST day or period mentioned wins (a correction:
+    "the 20th, no, the 23rd"); one right after "not" never counts. A day number wins over a weekday next to it that
+    does not fit, except when that weekday fits the latest past date with that number (then that past date).
+    prefer: dates the agent proposed; a bare weekday ("Tuesday is fine") that one of them falls on means that date."""
+    tk = _tokens(text)
+    ms = _mentions(tk)
+    if not ms:
+        return None, 'none'
+    years = [v for k, v in tk if k == 'card' and 2000 <= v <= 2100]
+    strong = [m for m in ms if m[1] != 'weak']
+    pos, kind, val = strong[-1] if strong else (ms[-1][0], 'vague', None)
+    if kind == 'iso':
+        try:
+            return datetime.date(val[0], val[1], val[2]), ''
+        except ValueError:
+            return None, 'invalid'
+    if kind == 'vague':
+        return None, 'vague'
+    if kind == 'rel':
+        return today + datetime.timedelta(days=val), ''
+    if kind == 'wd':
+        if not val[1]:
+            fit = sorted(p for p in (prefer or []) if p >= today and p.weekday() == val[0])
+            if fit:
+                return fit[0], ''
+        return _weekday_date(today, val[0], val[1], ww), ''
+    n, mon, wd = val
+    if mon:
+        y = years[-1] if years else today.year
+        if not years and mon < today.month:
+            y += 1
+        try:
+            return datetime.date(y, mon, n), ''
+        except ValueError:
+            return None, 'invalid'
+    d = _first_with_day(today, n)
+    if d is None:
+        return None, 'invalid'
+    if wd >= 0 and wd != d.weekday() and n < today.day:
+        # "Monday the 12th" said on the 14th: the latest date with that number, if it is that weekday (then past)
+        try:
+            c = datetime.date(today.year, today.month, n)
+        except ValueError:
+            c = None
+        if c is not None and c.weekday() == wd:
+            return c, ''
+    return d, ''
+
+
+def date_verdict(d, today, dl, cal, nbd='next_business_day', after='offer_deadline', today_open=True):
+    """(kind, date to offer or None) for a date the customer named, by the spec's rules.
+    kind: ok (accept d) | past | after_deadline | not_business_day | today_closed (today, after the spec's same-day
+    cut-off: today_open False; the next business day is offered). The offered date is d itself for ok; the deadline
+    after the deadline (after=offer_deadline); the next / previous business day (or the deadline when the next one is
+    past it, the last business day on or before the deadline) for a weekend day or holiday; None when the rule is to reject and ask again."""
+    if d < today:
+        return 'past', None
+    if d > dl:
+        return 'after_deadline', (dl if after != 'reject' else None)
+    if d == today and not today_open:
+        # after the spec's same-day cut-off: today is no longer possible; the next business day (or ask again)
+        n = next_bd(d, cal)
+        return 'today_closed', (n if n <= dl else None)
+    if not is_bd(d, cal):
+        if nbd == 'reject':
+            return 'not_business_day', None
+        if nbd == 'previous_business_day':
+            p = prev_bd(d, cal)
+            if p >= today:
+                return 'not_business_day', p
+        n = next_bd(d, cal)
+        if n <= dl:
+            return 'not_business_day', n
+        last = snap_back(dl, cal)
+        return 'not_business_day', (last if last >= today else None)
+    return 'ok', d

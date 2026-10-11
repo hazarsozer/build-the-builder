@@ -1,0 +1,1639 @@
+{
+ "bank_name": "Brightwater Mutual Insurance",
+ "assistant_identity": "Brightwater Mutual's digital assistant",
+ "address_as": "{title} {last_name}",
+ "call_variables": [
+  "customer_id",
+  "first_name",
+  "last_name",
+  "title",
+  "now"
+ ],
+ "opening": {
+  "first_sentence": "Hello, this is the digital assistant of Brightwater Mutual Insurance. This call is recorded for quality and training.",
+  "confirm_question": "Am I speaking with {title} {last_name}?",
+  "confirm_accept": [
+   "yes",
+   "that's me",
+   "speaking",
+   "the policyholder's own name"
+  ],
+  "confirm_reject": [
+   "hello",
+   "go ahead",
+   "who is calling"
+  ],
+  "max_asks": 2,
+  "banned_before_verify": [
+   "premium",
+   "overdue",
+   "payment",
+   "arrears",
+   "car insurance",
+   "home insurance",
+   "life insurance",
+   "the type of policy"
+  ]
+ },
+ "third_party": {
+  "say_nothing_beyond_opening": true,
+  "callback": {
+   "days": [
+    "today",
+    "next_business_day"
+   ],
+   "from": "09:00",
+   "to": "18:00",
+   "inclusive": true,
+   "after_now": true
+  },
+  "window_retries": 1,
+  "fixed_sentences": {
+   "deceased": "I am very sorry to hear that."
+  }
+ },
+ "identity": {
+  "questions": [
+   {
+    "field": "date_of_birth",
+    "ask": "What is your date of birth?",
+    "format": "date",
+    "date_order": "DMY"
+   },
+   {
+    "field": "postcode",
+    "ask": "What is the postcode of your registered address?",
+    "format": "text"
+   }
+  ],
+  "max_wrong": 3,
+  "wrong_scope": "total",
+  "non_counting_hints": {
+   "day_month_swapped": "Could you say the month as a word, please?"
+  },
+  "decline_explanation": "These questions protect your policies.",
+  "decline_limit": 2,
+  "failed_advice": "Please call the number on your policy documents or use the Brightwater app."
+ },
+ "calendar": {
+  "weekdays": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "holidays": [
+   "2026-10-19",
+   "2026-11-09",
+   "2026-11-27",
+   "2026-12-24",
+   "2026-12-25",
+   "2026-12-31",
+   "2027-01-01"
+  ]
+ },
+ "products": {
+  "car_insurance": {
+   "words": "car insurance policy ending {policy_number_last4}",
+   "floor_field": "minimum_instalment",
+   "amount_field": "premium_due",
+   "days_late_field": "days_overdue"
+  },
+  "home_insurance": {
+   "words": "home insurance policy ending {policy_number_last4}",
+   "floor_field": "minimum_instalment",
+   "amount_field": "premium_due",
+   "days_late_field": "days_overdue"
+  },
+  "life_insurance": {
+   "words": "life insurance policy ending {policy_number_last4}",
+   "floor_field": "minimum_instalment",
+   "amount_field": "premium_due",
+   "days_late_field": "days_overdue"
+  }
+ },
+ "bands": [
+  {
+   "name": "grace",
+   "days_late": [
+    1,
+    15
+   ],
+   "deadline": {
+    "rule": "nth_business_day",
+    "n": 5
+   },
+   "attempts": [
+    {
+     "amount": "current",
+     "date": "deadline"
+    }
+   ]
+  },
+  {
+   "name": "lapse-risk",
+   "days_late": [
+    16,
+    60
+   ],
+   "deadline": {
+    "rule": "nth_business_day",
+    "n": 10
+   },
+   "attempts": [
+    {
+     "amount": "current",
+     "date": "last_business_day_of_week"
+    },
+    {
+     "amount": "floor",
+     "date": "deadline"
+    }
+   ]
+  },
+  {
+   "name": "lapsed",
+   "days_late": [
+    61,
+    100000
+   ],
+   "deadline": {
+    "rule": "nth_business_day",
+    "n": 0
+   },
+   "attempts": []
+  }
+ ],
+ "negotiation": {
+  "debt_statement": "I am calling about an overdue premium: your {product_words} has a premium due of {past_due} and is {days_late} days overdue.",
+  "debt_statement_per_product": "Your {product_words} has a premium due of {past_due} and is {days_late} days overdue.",
+  "first_ask": "Can you pay this today?",
+  "first_ask_all": "Can you pay all of these today?",
+  "floor_offer": {
+   "times": 1,
+   "sentence_suffix": "The rest of the premium stays overdue."
+  },
+  "below_floor": "offer_floor_once",
+  "vague_date": "ask_once_then_deadline",
+  "weekday_words": {
+   "next": "following_week",
+   "this": "current_week"
+  },
+  "non_business_day": "next_business_day",
+  "after_deadline": "offer_deadline",
+  "never_ask_how_much": true,
+  "banned_offers": [
+   "a discount",
+   "a premium reduction",
+   "a change of cover",
+   "a payment holiday",
+   "any term that is not in this brief",
+   "saying the cover is safe or guaranteed beyond the confirmation sentence",
+   "any term that is not in the brief",
+   "saying the cover is safe or guaranteed (beyond the confirmation sentence)"
+  ]
+ },
+ "events": [
+  {
+   "id": "unclear",
+   "trigger": "Still no clear confirmation (yes, that's me, speaking, or the policyholder's own name) after the confirmation question was asked twice.",
+   "stages": [
+    "opening"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "no_contact",
+   "reason": "unclear"
+  },
+  {
+   "id": "wrong_number",
+   "trigger": "The person says the number does not belong to the policyholder.",
+   "stages": [
+    "opening",
+    "third_party"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "no_contact",
+   "reason": "wrong_number"
+  },
+  {
+   "id": "callback",
+   "trigger": "Someone else answered and gives a callback day and time today or the next business day, from 09:00 to 18:00, later than now; call schedule_callback with the date and time.",
+   "stages": [
+    "third_party"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "no_contact",
+   "reason": "callback"
+  },
+  {
+   "id": "no_callback",
+   "trigger": "Someone else answered and, after being asked once for another time, again offers a day or time outside the callback window (or none); do not schedule.",
+   "stages": [
+    "third_party"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "no_contact",
+   "reason": "no_callback"
+  },
+  {
+   "id": "deceased",
+   "trigger": "The person says the policyholder has died.",
+   "stages": [
+    "opening",
+    "third_party"
+   ],
+   "say": "I am very sorry to hear that.",
+   "instruction": "Ask nothing else. Do not mention life insurance or claims.",
+   "action": "close",
+   "outcome": "no_contact",
+   "reason": "deceased"
+  },
+  {
+   "id": "failed",
+   "trigger": "Three wrong security answers in total, whichever question they were on.",
+   "stages": [
+    "identity"
+   ],
+   "say": null,
+   "instruction": "Say nothing about the policies; give the failed advice, then close.",
+   "action": "close",
+   "outcome": "identity_failed",
+   "reason": "wrong_answers"
+  },
+  {
+   "id": "declined",
+   "trigger": "The customer still declines to answer a security question after the explanation, or asks a second time what the call is about instead of answering; or, before identity is verified, says a second time that they do not want to talk.",
+   "stages": [
+    "opening",
+    "identity"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "identity_failed",
+   "reason": "declined"
+  },
+  {
+   "id": "policy_lapsed",
+   "trigger": "get_account returns a policy with days_overdue above 60 (lapsed).",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "Your {product_words} policy has lapsed, so its cover has stopped.",
+   "instruction": "Do not ask for payment on any policy in this call. Say that the retention team can talk about reinstating it and offer the transfer. Add no notes.",
+   "action": "offer_transfer_else_close",
+   "queue": "retention",
+   "outcome": "transferred",
+   "reason": "policy_lapsed",
+   "else_outcome": "no_promise",
+   "else_reason": "policy_lapsed",
+   "overrides_persuasion": true,
+   "per_product_note": null
+  },
+  {
+   "id": "cancellation",
+   "trigger": "The customer says they want to cancel a policy.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not argue and do not explain cancellation terms.",
+   "action": "transfer",
+   "queue": "retention",
+   "outcome": "transferred",
+   "reason": "cancellation"
+  },
+  {
+   "id": "restructuring",
+   "trigger": "The customer asks to spread the premium over months or to change the payment day.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not describe a plan.",
+   "action": "transfer",
+   "queue": "customer_care",
+   "outcome": "transferred",
+   "reason": "payment_plan"
+  },
+  {
+   "id": "human",
+   "trigger": "The customer asks to speak to a human.",
+   "stages": [
+    "any"
+   ],
+   "say": "Can I help you with this first?",
+   "instruction": "Ask once whether you can help first; transfer only if they insist.",
+   "action": "insist_once_then_transfer",
+   "queue": "customer_care",
+   "outcome": "transferred",
+   "reason": "human_request"
+  },
+  {
+   "id": "hardship",
+   "trigger": "The customer mentions illness, a death in the family or job loss.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Say one short sentence of sympathy, make no persuasion attempt on any policy, and offer to connect them with the hardship team.",
+   "action": "offer_transfer_else_close",
+   "queue": "hardship_team",
+   "outcome": "transferred",
+   "reason": "hardship_support",
+   "else_outcome": "no_promise",
+   "else_reason": "hardship",
+   "overrides_persuasion": true,
+   "per_product_note": "hardship"
+  },
+  {
+   "id": "paid",
+   "trigger": "The customer says they already paid a policy's premium.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "Payments can take two business days to appear.",
+   "instruction": "Take no promise for that policy and continue with the other policies.",
+   "action": "note_and_continue",
+   "outcome": "already_paid",
+   "reason": null,
+   "per_product_note": "already_paid"
+  },
+  {
+   "id": "dispute",
+   "trigger": "The customer says \"This is not my policy\" or \"I cancelled that policy\".",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not argue, take no promise for that policy, and continue with the other policies.",
+   "action": "note_and_continue",
+   "outcome": "no_promise",
+   "reason": "disputed",
+   "per_product_note": "disputed"
+  },
+  {
+   "id": "refused",
+   "trigger": "A policy's persuasion attempts are used up without a promise.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Stop for that policy and continue with the next one. Do not repeat an offer the customer already refused.",
+   "action": "note_and_continue",
+   "outcome": "no_promise",
+   "reason": "refused",
+   "per_product_note": "refused"
+  },
+  {
+   "id": "service_error",
+   "trigger": "create_promise fails twice for a policy, or get_account fails twice (HTTP error or ok false with a service error).",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "create_promise: say you could not record that one, keep the promises already recorded, note system_error for it and continue. get_account: say you cannot see the policies right now and close with no notes.",
+   "action": "note_and_continue",
+   "outcome": "no_promise",
+   "reason": "system_error",
+   "per_product_note": "system_error"
+  },
+  {
+   "id": "not_talk",
+   "trigger": "After identity is verified, the customer says a second time that they do not want to talk.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Treat every policy without a promise as refused.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "refused",
+   "times": 2,
+   "per_product_note": "refused"
+  },
+  {
+   "id": "promise_recorded",
+   "trigger": "At least one promise was recorded with create_promise returning ok true, and no transfer happened.",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "promise_to_pay",
+   "reason": null
+  }
+ ],
+ "say_rules": [
+  {
+   "trigger": "Asked whether you are a robot or an AI.",
+   "say": "I am Brightwater Mutual's digital assistant.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "Asked \"Is this a scam?\".",
+   "say": "You can check this call by phoning the number on your policy documents.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "A question about a claim, the cover or the renewal price.",
+   "say": "I do not have that information, but the customer service team on the number on your documents can help.",
+   "stages": [
+    "negotiate"
+   ]
+  }
+ ],
+ "confirmation": {
+  "question": "Do you confirm?",
+  "retries": 1,
+  "success_sentence": "Your cover stays in force while this promise is kept, and you will receive an email confirming it.",
+  "failure_event": "service_error",
+  "change_note": null
+ },
+ "multi_product": {
+  "order": "get_account",
+  "ask_all_today_first": true,
+  "single_readback": true,
+  "shared_date_after_deadline": "cap_to_product_deadline_and_say_so",
+  "notes": {
+   "enabled": true,
+   "reasons": [
+    "refused",
+    "hardship",
+    "disputed",
+    "already_paid",
+    "system_error"
+   ],
+   "on_transfer": "none",
+   "timing": "at_close",
+   "paid_note_reason": "already_paid"
+  },
+  "no_promise_reason": "first_non_paid_note",
+  "all_paid_outcome": "already_paid"
+ },
+ "closing": {
+  "thank_and_goodbye": true
+ },
+ "outcomes": [
+  {
+   "outcome": "promise_to_pay",
+   "reason": null,
+   "event": "promise_recorded"
+  },
+  {
+   "outcome": "already_paid",
+   "reason": null,
+   "event": "paid"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "policy_lapsed",
+   "event": "policy_lapsed"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "cancellation",
+   "event": "cancellation"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "payment_plan",
+   "event": "restructuring"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "hardship_support",
+   "event": "hardship"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "human_request",
+   "event": "human"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "event": "refused"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "event": "not_talk"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "hardship",
+   "event": "hardship"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "disputed",
+   "event": "dispute"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "system_error",
+   "event": "service_error"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "policy_lapsed",
+   "event": "policy_lapsed"
+  },
+  {
+   "outcome": "identity_failed",
+   "reason": "wrong_answers",
+   "event": "failed"
+  },
+  {
+   "outcome": "identity_failed",
+   "reason": "declined",
+   "event": "declined"
+  },
+  {
+   "outcome": "no_contact",
+   "reason": "callback",
+   "event": "callback"
+  },
+  {
+   "outcome": "no_contact",
+   "reason": "no_callback",
+   "event": "no_callback"
+  },
+  {
+   "outcome": "no_contact",
+   "reason": "wrong_number",
+   "event": "wrong_number"
+  },
+  {
+   "outcome": "no_contact",
+   "reason": "deceased",
+   "event": "deceased"
+  },
+  {
+   "outcome": "no_contact",
+   "reason": "unclear",
+   "event": "unclear"
+  }
+ ],
+ "unused_outcomes": [],
+ "extra_rules": [
+  {
+   "stage": "opening",
+   "text": "If the person asks a question instead of confirming, answer it first (robot or scam answer); the confirmation question asked after that answer counts as the second ask."
+  },
+  {
+   "stage": "third_party",
+   "text": "Ask when the policyholder can be reached. A family member or anyone else may not answer the security questions and may not be told anything about the policies, even if they offer to pay."
+  },
+  {
+   "stage": "negotiate",
+   "text": "Right after get_account, if any policy has days_overdue above 60, handle the lapsed policy before anything else: do not say you are calling about an overdue premium, ask for no payment on any policy in this call, and add no notes, even when the customer refuses the transfer."
+  },
+  {
+   "stage": "negotiate",
+   "text": "A no to paying today with no date and no amount is a flat refusal. Refusing the offered deadline or the offered floor is also a flat refusal and uses one persuasion attempt for that policy. A date or an amount the customer proposes is never a refusal."
+  },
+  {
+   "stage": "negotiate",
+   "text": "In hardship, if the customer still names a date or an amount themselves, record that promise under the normal date and amount rules."
+  },
+  {
+   "stage": "negotiate",
+   "text": "Say the confirmation sentence once, after the last recorded promise of the call, not after each one."
+  },
+  {
+   "stage": "negotiate",
+   "text": "On a transfer, promises recorded before it stay; promises agreed but not yet recorded are not recorded."
+  },
+  {
+   "stage": "negotiate",
+   "text": "Never invent figures, dates or reasons about claims, cover or renewal prices."
+  }
+ ],
+ "custom_code": [
+  {
+   "name": "lapse_risk_attempt2_date",
+   "inputs": [
+    "today",
+    "holidays"
+   ],
+   "outputs": [
+    "date"
+   ],
+   "body": "from datetime import date, timedelta\nd = date.fromisoformat(today) if isinstance(today, str) else today\nhol = set(holidays)\nn = 0\nwhile n < 5:\n    d = d + timedelta(days=1)\n    if d.weekday() < 5 and d.isoformat() not in hol:\n        n += 1\nreturn d.isoformat()"
+  }
+ ],
+ "examples": [
+  {
+   "kind": "deadline",
+   "today": "2026-10-15",
+   "days_late": 15,
+   "expect": "2026-10-23",
+   "source": "grace deadline, crosses holiday 2026-10-19"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-10-15",
+   "days_late": 16,
+   "expect": "2026-10-30",
+   "source": "lapse-risk deadline, crosses holiday 2026-10-19"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-11-05",
+   "days_late": 1,
+   "expect": "2026-11-13",
+   "source": "grace deadline, crosses holiday 2026-11-09"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-12-21",
+   "days_late": 60,
+   "expect": "2027-01-08",
+   "source": "lapse-risk deadline, crosses 12-24, 12-25, 12-31, 01-01"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-15",
+   "days_late": 5,
+   "attempt_index": 1,
+   "expect": "2026-10-23",
+   "source": "grace attempt 1 on the deadline"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-14",
+   "days_late": 20,
+   "attempt_index": 1,
+   "expect": "2026-10-16",
+   "source": "lapse-risk attempt 1, last business day of this week"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-16",
+   "days_late": 20,
+   "attempt_index": 1,
+   "expect": "2026-10-23",
+   "source": "lapse-risk attempt 1, today is the last business day, so next week"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-11-24",
+   "days_late": 40,
+   "attempt_index": 1,
+   "expect": "2026-11-26",
+   "source": "lapse-risk attempt 1, Friday 2026-11-27 is a holiday"
+  }
+ ],
+ "conflicts": [
+  {
+   "field": "bands[2].days_late",
+   "kept": "[61, 100000]",
+   "overridden": "brief gives only 'above 60' with no upper bound",
+   "why": "Gap: the schema needs a maximum; a very large bound keeps every value above 60 in the lapsed band."
+  },
+  {
+   "field": "bands[2].deadline",
+   "kept": "nth_business_day n=0 with no attempts",
+   "overridden": "brief: 'no promise (rule 37)'",
+   "why": "Gap: the lapsed band takes no promise; the deadline is a required placeholder and the policy_lapsed event blocks any payment ask."
+  },
+  {
+   "field": "bands[1].attempts[1].date",
+   "kept": "custom_code lapse_risk_attempt2_date (5th business day after today); enum slot set to deadline",
+   "overridden": "no attempt date enum for 'the 5th business day after today'",
+   "why": "Gap: rule 30 lapse-risk attempt 2 is the minimum_instalment on the 5th business day after today, which no attempt date enum expresses; no attempt-2 example added because the validator recomputes from the enum."
+  },
+  {
+   "field": "events[policy_lapsed].say",
+   "kept": "Your {product_words} policy has lapsed, so its cover has stopped.",
+   "overridden": "Your {policy in words} policy has lapsed, so its cover has stopped.",
+   "why": "Gap: {policy in words} is not an allowed placeholder; mapped to {product_words} and kept the rest word for word."
+  },
+  {
+   "field": "events[human].say",
+   "kept": "Can I help you with this first?",
+   "overridden": "brief only describes: 'Ask once whether you can help first'",
+   "why": "Gap: brief gives no wording; one plain sentence that says exactly that."
+  },
+  {
+   "field": "events[declined].trigger",
+   "kept": "declined event also covers 'does not want to talk' twice before verification",
+   "overridden": "separate not_talk event before verification",
+   "why": "Rule 46 closes as identity_failed / declined before verification, the same outcome and reason as the declined event in that stage."
+  },
+  {
+   "field": "multi_product.notes.timing",
+   "kept": "at_close",
+   "overridden": "immediate",
+   "why": "Rule 41: on any transfer, add no notes at all, before or after it; writing notes at close keeps a later transfer note-free."
+  }
+ ],
+ "sources": {
+  "bank_name": "section 1",
+  "assistant_identity": "rule 4",
+  "address_as": "section 2",
+  "call_variables": "section 2",
+  "opening": [
+   "rule 1",
+   "rule 2",
+   "rule 3"
+  ],
+  "third_party": [
+   "rules 5-10"
+  ],
+  "identity": [
+   "rules 11-15"
+  ],
+  "calendar": "section 7",
+  "products": [
+   "rule 16",
+   "rule 18",
+   "rule 26"
+  ],
+  "bands": [
+   "rule 19",
+   "rule 30"
+  ],
+  "negotiation": [
+   "rules 18, 20-30, 33"
+  ],
+  "events": "section 11",
+  "events[unclear]": "rule 3",
+  "events[wrong_number]": "rule 8",
+  "events[callback]": "rule 6",
+  "events[no_callback]": "rule 7",
+  "events[deceased]": "rule 9",
+  "events[failed]": [
+   "rule 12",
+   "rule 14"
+  ],
+  "events[declined]": [
+   "rule 15",
+   "rule 46"
+  ],
+  "events[policy_lapsed]": [
+   "rule 17",
+   "rule 37"
+  ],
+  "events[cancellation]": "rule 38",
+  "events[restructuring]": "rule 39",
+  "events[human]": "rule 40",
+  "events[hardship]": "rule 32",
+  "events[paid]": "rule 42",
+  "events[dispute]": "rule 43",
+  "events[refused]": [
+   "rule 30",
+   "rule 31"
+  ],
+  "events[service_error]": "rule 35",
+  "events[not_talk]": "rule 46",
+  "events[promise_recorded]": [
+   "rule 35",
+   "section 12 table"
+  ],
+  "say_rules": [
+   "rule 4",
+   "rule 44",
+   "rule 45"
+  ],
+  "confirmation": [
+   "rule 34",
+   "rule 35",
+   "rule 36"
+  ],
+  "multi_product": [
+   "rule 18",
+   "rule 23",
+   "rule 29",
+   "rule 34",
+   "rule 41",
+   "rule 47",
+   "section 12 table"
+  ],
+  "closing": "rule 48",
+  "outcomes": "section 12 table",
+  "unused_outcomes": "section 12 table",
+  "extra_rules": [
+   "rule 3",
+   "rules 5, 10",
+   "rules 17, 37",
+   "rules 23, 27, 28, 30",
+   "rule 32",
+   "rule 36",
+   "rule 41",
+   "rule 44"
+  ],
+  "custom_code": "rule 30",
+  "examples": [
+   "section 7",
+   "rule 19",
+   "rule 30"
+  ],
+  "conflicts": [
+   "rule 30",
+   "rule 37",
+   "rule 40",
+   "rule 41",
+   "rule 46"
+  ]
+ },
+ "facts": [
+  {
+   "id": "f1",
+   "quote": "premium is overdue on one to three insurance policies",
+   "maps_to": "multi_product.order"
+  },
+  {
+   "id": "f2",
+   "quote": "car insurance, home insurance or life insurance",
+   "maps_to": "products"
+  },
+  {
+   "id": "f3",
+   "quote": "`customer_id` | `c_91be...` | Pass it to every tool call.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f4",
+   "quote": "`first_name`, `last_name` | `Agnes`, `Whitfield` | The policyholder to ask for.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f5",
+   "quote": "Address the policyholder as title plus last name.",
+   "maps_to": "address_as"
+  },
+  {
+   "id": "f6",
+   "quote": "`now` | `2026-10-15T10:00` | The current date and time.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f7",
+   "quote": "\"Hello, this is the digital assistant of Brightwater Mutual Insurance. This call is recorded for quality and training.\"",
+   "maps_to": "opening.first_sentence"
+  },
+  {
+   "id": "f8",
+   "quote": "Do not say \"premium\", \"overdue\", \"payment\", \"arrears\" or the type of policy before identity is verified.",
+   "maps_to": "opening.banned_before_verify"
+  },
+  {
+   "id": "f9",
+   "quote": "This applies to everyone, including family members.",
+   "maps_to": "opening.banned_before_verify"
+  },
+  {
+   "id": "f10",
+   "quote": "Ask \"Am I speaking with {title} {last_name}?\".",
+   "maps_to": "opening.confirm_question"
+  },
+  {
+   "id": "f11",
+   "quote": "Only \"yes\", \"that's me\", \"speaking\" or the policyholder's own name counts as confirmation.",
+   "maps_to": "opening.confirm_accept"
+  },
+  {
+   "id": "f12",
+   "quote": "\"Hello\", \"go ahead\" and \"who is calling\" do not.",
+   "maps_to": "opening.confirm_reject"
+  },
+  {
+   "id": "f13",
+   "quote": "Ask once more.",
+   "maps_to": "opening.max_asks"
+  },
+  {
+   "id": "f14",
+   "quote": "If it is still unclear after the second ask, close as `no_contact` / `unclear`.",
+   "maps_to": "events[unclear].reason"
+  },
+  {
+   "id": "f15",
+   "quote": "Answer a question from the caller first (rules 4 and 45). The ask that follows is the second ask.",
+   "maps_to": "extra_rules[0]"
+  },
+  {
+   "id": "f16",
+   "quote": "say that you are Brightwater Mutual's digital assistant and continue",
+   "maps_to": "say_rules[0].say"
+  },
+  {
+   "id": "f17",
+   "quote": "Do not say why you are calling. Say nothing beyond the opening sentence of rule 1.",
+   "maps_to": "third_party.say_nothing_beyond_opening"
+  },
+  {
+   "id": "f18",
+   "quote": "Ask when the policyholder can be reached.",
+   "maps_to": "extra_rules[1]"
+  },
+  {
+   "id": "f19",
+   "quote": "A callback is for today or the next business day",
+   "maps_to": "third_party.callback.days"
+  },
+  {
+   "id": "f20",
+   "quote": "from 09:00",
+   "maps_to": "third_party.callback.from"
+  },
+  {
+   "id": "f21",
+   "quote": "to 18:00, both included",
+   "maps_to": "third_party.callback.to"
+  },
+  {
+   "id": "f22",
+   "quote": "both included",
+   "maps_to": "third_party.callback.inclusive"
+  },
+  {
+   "id": "f23",
+   "quote": "and later than `now`",
+   "maps_to": "third_party.callback.after_now"
+  },
+  {
+   "id": "f24",
+   "quote": "Call `schedule_callback` with the date and the time, then close as `no_contact` / `callback`.",
+   "maps_to": "events[callback].reason"
+  },
+  {
+   "id": "f25",
+   "quote": "ask once for another time",
+   "maps_to": "third_party.window_retries"
+  },
+  {
+   "id": "f26",
+   "quote": "If that is also outside it, do not schedule. Close as `no_contact` / `no_callback`.",
+   "maps_to": "events[no_callback].reason"
+  },
+  {
+   "id": "f27",
+   "quote": "the number does not belong to the policyholder, close as `no_contact` / `wrong_number`",
+   "maps_to": "events[wrong_number].reason"
+  },
+  {
+   "id": "f28",
+   "quote": "say \"I am very sorry to hear that.\"",
+   "maps_to": "third_party.fixed_sentences.deceased"
+  },
+  {
+   "id": "f29",
+   "quote": "ask nothing else, and close as `no_contact` / `deceased`",
+   "maps_to": "events[deceased].reason"
+  },
+  {
+   "id": "f30",
+   "quote": "Do not mention life insurance or claims.",
+   "maps_to": "events[deceased].instruction"
+  },
+  {
+   "id": "f31",
+   "quote": "A family member or anyone else may not answer the security questions and may not be told anything about the policies, even if they offer to pay.",
+   "maps_to": "extra_rules[1]"
+  },
+  {
+   "id": "f32",
+   "quote": "Ask two security questions, one at a time: first the date of birth",
+   "maps_to": "identity.questions[0].field"
+  },
+  {
+   "id": "f33",
+   "quote": "then the postcode of the registered address",
+   "maps_to": "identity.questions[1].field"
+  },
+  {
+   "id": "f34",
+   "quote": "Call `verify_identity` after each answer.",
+   "maps_to": "identity.questions"
+  },
+  {
+   "id": "f35",
+   "quote": "Send a date of birth as `YYYY-MM-DD`",
+   "maps_to": "identity.questions[0].format"
+  },
+  {
+   "id": "f36",
+   "quote": "Read a date given only as numbers as day, then month, then year.",
+   "maps_to": "identity.questions[0].date_order"
+  },
+  {
+   "id": "f37",
+   "quote": "Send the postcode as the customer said it, letters and digits; spaces do not matter.",
+   "maps_to": "identity.questions[1].format"
+  },
+  {
+   "id": "f38",
+   "quote": "Three wrong answers in total end the check",
+   "maps_to": "identity.max_wrong"
+  },
+  {
+   "id": "f39",
+   "quote": "whichever question they were on",
+   "maps_to": "identity.wrong_scope"
+  },
+  {
+   "id": "f40",
+   "quote": "returns `hint: \"day_month_swapped\"`. Ask them to say the month as a word. That retry does not count as a wrong answer.",
+   "maps_to": "identity.non_counting_hints.day_month_swapped"
+  },
+  {
+   "id": "f41",
+   "quote": "say nothing about the policies",
+   "maps_to": "events[failed].instruction"
+  },
+  {
+   "id": "f42",
+   "quote": "Tell the customer to call the number on their policy documents or use the Brightwater app.",
+   "maps_to": "identity.failed_advice"
+  },
+  {
+   "id": "f43",
+   "quote": "Close as `identity_failed` / `wrong_answers`.",
+   "maps_to": "events[failed].reason"
+  },
+  {
+   "id": "f44",
+   "quote": "explain once that the questions protect their policies",
+   "maps_to": "identity.decline_explanation"
+  },
+  {
+   "id": "f45",
+   "quote": "If they still decline, close as `identity_failed` / `declined`.",
+   "maps_to": "events[declined].reason"
+  },
+  {
+   "id": "f46",
+   "quote": "A second refusal or a second such question closes the call.",
+   "maps_to": "identity.decline_limit"
+  },
+  {
+   "id": "f47",
+   "quote": "Asking what the call is about instead of answering counts as declining.",
+   "maps_to": "events[declined].trigger"
+  },
+  {
+   "id": "f48",
+   "quote": "After both questions pass, call `get_account`. It returns one to three policies.",
+   "maps_to": "multi_product.order"
+  },
+  {
+   "id": "f49",
+   "quote": "`premium_due`",
+   "maps_to": "products.car_insurance.amount_field"
+  },
+  {
+   "id": "f50",
+   "quote": "`days_overdue`",
+   "maps_to": "products.car_insurance.days_late_field"
+  },
+  {
+   "id": "f51",
+   "quote": "If any policy has `days_overdue` above 60, rule 37 applies before anything else in this section.",
+   "maps_to": "extra_rules[2]"
+  },
+  {
+   "id": "f52",
+   "quote": "Otherwise say that you are calling about an overdue premium.",
+   "maps_to": "negotiation.debt_statement"
+  },
+  {
+   "id": "f53",
+   "quote": "State every policy, one sentence each, in the order `get_account` returned them",
+   "maps_to": "negotiation.debt_statement_per_product"
+  },
+  {
+   "id": "f54",
+   "quote": "\"car insurance policy ending 3307\"",
+   "maps_to": "products.car_insurance.words"
+  },
+  {
+   "id": "f55",
+   "quote": "\"home insurance policy ending 5120\"",
+   "maps_to": "products.home_insurance.words"
+  },
+  {
+   "id": "f56",
+   "quote": "\"life insurance policy ending 7781\"",
+   "maps_to": "products.life_insurance.words"
+  },
+  {
+   "id": "f57",
+   "quote": "the `premium_due` and how many days overdue it is",
+   "maps_to": "negotiation.debt_statement_per_product"
+  },
+  {
+   "id": "f58",
+   "quote": "Business days are Monday to Friday",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f59",
+   "quote": "2026-10-19, 2026-11-09, 2026-11-27, 2026-12-24, 2026-12-25, 2026-12-31, 2027-01-01",
+   "maps_to": "calendar.holidays"
+  },
+  {
+   "id": "f60",
+   "quote": "The band, the deadline and the ladder are per policy, from that policy's `days_overdue`.",
+   "maps_to": "bands"
+  },
+  {
+   "id": "f61",
+   "quote": "1 to 15 | grace",
+   "maps_to": "bands[0].days_late"
+  },
+  {
+   "id": "f62",
+   "quote": "the 5th business day after today",
+   "maps_to": "bands[0].deadline.n"
+  },
+  {
+   "id": "f63",
+   "quote": "grace | the 5th business day after today | 1",
+   "maps_to": "bands[0].attempts"
+  },
+  {
+   "id": "f64",
+   "quote": "16 to 60 | lapse-risk",
+   "maps_to": "bands[1].days_late"
+  },
+  {
+   "id": "f65",
+   "quote": "the 10th business day after today",
+   "maps_to": "bands[1].deadline.n"
+  },
+  {
+   "id": "f66",
+   "quote": "lapse-risk | the 10th business day after today | 2",
+   "maps_to": "bands[1].attempts"
+  },
+  {
+   "id": "f67",
+   "quote": "above 60 | lapsed",
+   "maps_to": "bands[2].days_late"
+  },
+  {
+   "id": "f68",
+   "quote": "no promise (rule 37) | 0",
+   "maps_to": "bands[2].attempts"
+  },
+  {
+   "id": "f69",
+   "quote": "A promise date must be today or later, a business day, and not after that policy's deadline.",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f70",
+   "quote": "If the customer names a weekend day or a holiday that is not after the deadline, offer the next business day.",
+   "maps_to": "negotiation.non_business_day"
+  },
+  {
+   "id": "f71",
+   "quote": "ask once for the exact day. If they still give none, propose the deadline.",
+   "maps_to": "negotiation.vague_date"
+  },
+  {
+   "id": "f72",
+   "quote": "say the latest date you can record for that policy is its deadline and offer it",
+   "maps_to": "negotiation.after_deadline"
+  },
+  {
+   "id": "f73",
+   "quote": "record that policy on its own deadline, keep the named date for the others, and say so in the read-back",
+   "maps_to": "multi_product.shared_date_after_deadline"
+  },
+  {
+   "id": "f74",
+   "quote": "If the customer refuses the deadline, treat it as a flat refusal (rule 30).",
+   "maps_to": "extra_rules[3]"
+  },
+  {
+   "id": "f75",
+   "quote": "\"Next <weekday>\" means that weekday in the following calendar week.",
+   "maps_to": "negotiation.weekday_words.next"
+  },
+  {
+   "id": "f76",
+   "quote": "\"This <weekday>\" means the one in the current week.",
+   "maps_to": "negotiation.weekday_words.this"
+  },
+  {
+   "id": "f77",
+   "quote": "Ask for the full `premium_due` first.",
+   "maps_to": "bands[0].attempts[0].amount"
+  },
+  {
+   "id": "f78",
+   "quote": "Never ask \"how much can you pay?\". The agent proposes every amount.",
+   "maps_to": "negotiation.never_ask_how_much"
+  },
+  {
+   "id": "f79",
+   "quote": "The floor is `minimum_instalment`, for every type of policy.",
+   "maps_to": "products.car_insurance.floor_field"
+  },
+  {
+   "id": "f80",
+   "quote": "offer the floor, once per policy",
+   "maps_to": "negotiation.floor_offer.times"
+  },
+  {
+   "id": "f81",
+   "quote": "\"The rest of the premium stays overdue.\"",
+   "maps_to": "negotiation.floor_offer.sentence_suffix"
+  },
+  {
+   "id": "f82",
+   "quote": "If the customer refuses the floor, treat it as a flat refusal (rule 30).",
+   "maps_to": "extra_rules[3]"
+  },
+  {
+   "id": "f83",
+   "quote": "If the customer proposes an amount from the floor up to the full premium, both included, accept it.",
+   "maps_to": "negotiation.below_floor"
+  },
+  {
+   "id": "f84",
+   "quote": "Below the floor, say it cannot be recorded and offer the floor once.",
+   "maps_to": "negotiation.below_floor"
+  },
+  {
+   "id": "f85",
+   "quote": "If the customer does not accept the floor, treat it as a flat refusal (rule 30).",
+   "maps_to": "extra_rules[3]"
+  },
+  {
+   "id": "f86",
+   "quote": "\"Can you pay this today?\" with one policy",
+   "maps_to": "negotiation.first_ask"
+  },
+  {
+   "id": "f87",
+   "quote": "\"Can you pay all of these today?\" with several",
+   "maps_to": "negotiation.first_ask_all"
+  },
+  {
+   "id": "f88",
+   "quote": "If not, go through the policies one by one in the order `get_account` returned them. Do not ask about today again for each policy.",
+   "maps_to": "multi_product.ask_all_today_first"
+  },
+  {
+   "id": "f89",
+   "quote": "A flat refusal or a non-answer uses one persuasion attempt for that policy.",
+   "maps_to": "bands"
+  },
+  {
+   "id": "f90",
+   "quote": "A no to paying today with no date and no amount is a flat refusal. A date or an amount the customer proposes is never a refusal",
+   "maps_to": "extra_rules[3]"
+  },
+  {
+   "id": "f91",
+   "quote": "Grace band, attempt 1: the full premium on the policy's deadline.",
+   "maps_to": "bands[0].attempts[0].date"
+  },
+  {
+   "id": "f92",
+   "quote": "Lapse-risk band, attempt 1: the full premium on the last business day of this week. If today is that day, the last business day of next week.",
+   "maps_to": "bands[1].attempts[0].date"
+  },
+  {
+   "id": "f93",
+   "quote": "Lapse-risk band, attempt 2: the `minimum_instalment`",
+   "maps_to": "bands[1].attempts[1].amount"
+  },
+  {
+   "id": "f94",
+   "quote": "on the 5th business day after today",
+   "maps_to": "custom_code[0].body"
+  },
+  {
+   "id": "f95",
+   "quote": "every attempt for that policy names the floor instead of the full premium",
+   "maps_to": "bands[1].attempts[0].amount"
+  },
+  {
+   "id": "f96",
+   "quote": "When a policy's attempts are used up, stop for that policy. Do not repeat an offer the customer already refused.",
+   "maps_to": "events[refused].instruction"
+  },
+  {
+   "id": "f97",
+   "quote": "If the customer mentions illness, a death in the family or job loss",
+   "maps_to": "events[hardship].trigger"
+  },
+  {
+   "id": "f98",
+   "quote": "say one short sentence of sympathy and make no persuasion attempt on any policy",
+   "maps_to": "events[hardship].overrides_persuasion"
+  },
+  {
+   "id": "f99",
+   "quote": "call `transfer_to_agent` with queue `hardship_team`",
+   "maps_to": "events[hardship].queue"
+  },
+  {
+   "id": "f100",
+   "quote": "close as `transferred` / `hardship_support`",
+   "maps_to": "events[hardship].reason"
+  },
+  {
+   "id": "f101",
+   "quote": "If they decline, close as `no_promise` / `hardship`",
+   "maps_to": "events[hardship].else_reason"
+  },
+  {
+   "id": "f102",
+   "quote": "with an `add_note` reason `hardship` for every policy without a promise",
+   "maps_to": "events[hardship].per_product_note"
+  },
+  {
+   "id": "f103",
+   "quote": "This rule comes before rules 30 and 39.",
+   "maps_to": "events[hardship].overrides_persuasion"
+  },
+  {
+   "id": "f104",
+   "quote": "If the customer still names a date or an amount themselves, record that promise under sections 7 and 8.",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f105",
+   "quote": "Never offer a discount, a premium reduction, a change of cover, a payment holiday or any term that is not in this brief.",
+   "maps_to": "negotiation.banned_offers"
+  },
+  {
+   "id": "f106",
+   "quote": "Never say the cover is safe or guaranteed beyond the sentence of rule 36.",
+   "maps_to": "negotiation.banned_offers"
+  },
+  {
+   "id": "f107",
+   "quote": "Read every agreed promise back together (policy, amount, date)",
+   "maps_to": "multi_product.single_readback"
+  },
+  {
+   "id": "f108",
+   "quote": "ask \"Do you confirm?\"",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f109",
+   "quote": "Call `create_promise` once per policy, only after a clear yes. If the customer changes a date or an amount at this step, check it against sections 7 and 8 and read it back again.",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f110",
+   "quote": "Say a promise is recorded only after `create_promise` returns `ok: true`.",
+   "maps_to": "confirmation.success_sentence"
+  },
+  {
+   "id": "f111",
+   "quote": "If a tool call fails (an HTTP error or `ok: false` with a service error), try it once more.",
+   "maps_to": "confirmation.retries"
+  },
+  {
+   "id": "f112",
+   "quote": "If `create_promise` fails twice for a policy, say you could not record that one, keep the promises already recorded, and call `add_note` with reason `system_error` for it.",
+   "maps_to": "events[service_error].per_product_note"
+  },
+  {
+   "id": "f113",
+   "quote": "If `get_account` fails twice, say you cannot see the policies right now and close as `no_promise` / `system_error`.",
+   "maps_to": "events[service_error].trigger"
+  },
+  {
+   "id": "f114",
+   "quote": "\"Your cover stays in force while this promise is kept, and you will receive an email confirming it.\"",
+   "maps_to": "confirmation.success_sentence"
+  },
+  {
+   "id": "f115",
+   "quote": "After the last recorded promise, say this sentence",
+   "maps_to": "extra_rules[5]"
+  },
+  {
+   "id": "f116",
+   "quote": "A policy with `days_overdue` above 60 has lapsed.",
+   "maps_to": "events[policy_lapsed].trigger"
+  },
+  {
+   "id": "f117",
+   "quote": "Say: \"Your {policy in words} policy has lapsed, so its cover has stopped.\"",
+   "maps_to": "events[policy_lapsed].say"
+  },
+  {
+   "id": "f118",
+   "quote": "Do not ask for payment on any policy in this call.",
+   "maps_to": "events[policy_lapsed].overrides_persuasion"
+  },
+  {
+   "id": "f119",
+   "quote": "Say that the retention team can talk about reinstating it",
+   "maps_to": "events[policy_lapsed].instruction"
+  },
+  {
+   "id": "f120",
+   "quote": "call `transfer_to_agent` with queue `retention`, and close as `transferred` / `policy_lapsed`",
+   "maps_to": "events[policy_lapsed].queue"
+  },
+  {
+   "id": "f121",
+   "quote": "close as `transferred` / `policy_lapsed`",
+   "maps_to": "events[policy_lapsed].reason"
+  },
+  {
+   "id": "f122",
+   "quote": "If the customer refuses the transfer, close as `no_promise` / `policy_lapsed`.",
+   "maps_to": "events[policy_lapsed].else_reason"
+  },
+  {
+   "id": "f123",
+   "quote": "Add no notes.",
+   "maps_to": "extra_rules[2]"
+  },
+  {
+   "id": "f124",
+   "quote": "If the customer says they want to cancel a policy, do not argue and do not explain cancellation terms.",
+   "maps_to": "events[cancellation].instruction"
+  },
+  {
+   "id": "f125",
+   "quote": "Call `transfer_to_agent` with queue `retention` and close as `transferred` / `cancellation`.",
+   "maps_to": "events[cancellation].queue"
+  },
+  {
+   "id": "f126",
+   "quote": "close as `transferred` / `cancellation`",
+   "maps_to": "events[cancellation].reason"
+  },
+  {
+   "id": "f127",
+   "quote": "A request to spread the premium over months or to change the payment day: do not describe a plan.",
+   "maps_to": "events[restructuring].trigger"
+  },
+  {
+   "id": "f128",
+   "quote": "Call `transfer_to_agent` with queue `customer_care` and close as `transferred` / `payment_plan`.",
+   "maps_to": "events[restructuring].queue"
+  },
+  {
+   "id": "f129",
+   "quote": "close as `transferred` / `payment_plan`",
+   "maps_to": "events[restructuring].reason"
+  },
+  {
+   "id": "f130",
+   "quote": "Ask once whether you can help first.",
+   "maps_to": "events[human].action"
+  },
+  {
+   "id": "f131",
+   "quote": "If they insist, call `transfer_to_agent` with queue `customer_care`",
+   "maps_to": "events[human].queue"
+  },
+  {
+   "id": "f132",
+   "quote": "close as `transferred` / `human_request`",
+   "maps_to": "events[human].reason"
+  },
+  {
+   "id": "f133",
+   "quote": "On any transfer, add no notes at all, before or after it.",
+   "maps_to": "multi_product.notes.on_transfer"
+  },
+  {
+   "id": "f134",
+   "quote": "Promises recorded before the transfer stay; promises agreed but not yet recorded are not recorded.",
+   "maps_to": "extra_rules[6]"
+  },
+  {
+   "id": "f135",
+   "quote": "say that payments can take two business days to appear",
+   "maps_to": "events[paid].say"
+  },
+  {
+   "id": "f136",
+   "quote": "take no promise for that policy. Note it with reason `already_paid` and continue with the other policies.",
+   "maps_to": "events[paid].per_product_note"
+  },
+  {
+   "id": "f137",
+   "quote": "\"This is not my policy\" or \"I cancelled that policy\"",
+   "maps_to": "events[dispute].trigger"
+  },
+  {
+   "id": "f138",
+   "quote": "Note it with reason `disputed` and continue with the other policies.",
+   "maps_to": "events[dispute].per_product_note"
+  },
+  {
+   "id": "f139",
+   "quote": "A question about a claim, the cover or the renewal price: say you do not have that information and that the customer service team on the number on their documents can help.",
+   "maps_to": "say_rules[2].say"
+  },
+  {
+   "id": "f140",
+   "quote": "Do not invent figures, dates or reasons.",
+   "maps_to": "extra_rules[7]"
+  },
+  {
+   "id": "f141",
+   "quote": "\"Is this a scam?\": say they can check the call by phoning the number on their policy documents, and continue.",
+   "maps_to": "say_rules[1].say"
+  },
+  {
+   "id": "f142",
+   "quote": "If the customer says twice that they do not want to talk, treat every policy without a promise as refused.",
+   "maps_to": "events[not_talk].times"
+  },
+  {
+   "id": "f143",
+   "quote": "Before identity is verified, close as `identity_failed` / `declined`.",
+   "maps_to": "events[declined].trigger"
+  },
+  {
+   "id": "f144",
+   "quote": "call `add_note` with that `product_id` and its reason: `refused`, `hardship`, `disputed`, `already_paid` or `system_error`",
+   "maps_to": "multi_product.notes.reasons"
+  },
+  {
+   "id": "f145",
+   "quote": "This also applies with one policy, and when no policy gets a promise.",
+   "maps_to": "multi_product.notes.enabled"
+  },
+  {
+   "id": "f146",
+   "quote": "Rules 37 and 41 override this.",
+   "maps_to": "multi_product.notes.timing"
+  },
+  {
+   "id": "f147",
+   "quote": "A call that ends before `get_account` adds no notes.",
+   "maps_to": "multi_product.notes.timing"
+  },
+  {
+   "id": "f148",
+   "quote": "Thank the customer and say goodbye.",
+   "maps_to": "closing.thank_and_goodbye"
+  },
+  {
+   "id": "f149",
+   "quote": "Then end with exactly one `close_call`. It is the last tool call.",
+   "maps_to": "outcomes"
+  },
+  {
+   "id": "f150",
+   "quote": "`promise_to_pay` | none | at least one promise was recorded",
+   "maps_to": "events[promise_recorded].outcome"
+  },
+  {
+   "id": "f151",
+   "quote": "`already_paid` | none | no promise, and every policy was noted `already_paid`",
+   "maps_to": "multi_product.all_paid_outcome"
+  },
+  {
+   "id": "f152",
+   "quote": "the reason of the first policy, in `get_account` order, whose note is not `already_paid`",
+   "maps_to": "multi_product.no_promise_reason"
+  },
+  {
+   "id": "f153",
+   "quote": "`already_paid`",
+   "maps_to": "multi_product.notes.paid_note_reason"
+  },
+  {
+   "id": "f154",
+   "quote": "`promise_to_pay` wins whenever at least one promise was recorded, except after a transfer: a transfer always closes as `transferred` with that transfer's reason.",
+   "maps_to": "outcomes[0]"
+  },
+  {
+   "id": "f155",
+   "quote": "`no_promise` | `refused`",
+   "maps_to": "events[refused].reason"
+  },
+  {
+   "id": "f156",
+   "quote": "Brightwater Mutual Insurance",
+   "maps_to": "bank_name"
+  },
+  {
+   "id": "f157",
+   "quote": "you are Brightwater Mutual's digital assistant",
+   "maps_to": "assistant_identity"
+  }
+ ]
+}
