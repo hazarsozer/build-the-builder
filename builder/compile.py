@@ -2352,7 +2352,10 @@ HOW TO GET A PROMISE
         }
 
     def account_nodes(self):
-        ga = self.tool("get_account", {}, [], retries=2, post=GET_ACCOUNT_POST)
+        # F3: maxRetries 0. The platform does repeat an HTTP 500 maxRetries times inside one node (live EDF-07 call
+        # 7ce32110: 3 + 2 attempts, the fifth read succeeded and the call negotiated), so "retry once" is one attempt
+        # in load_account and one in load_account_retry.
+        ga = self.tool("get_account", {}, [], retries=0, post=GET_ACCOUNT_POST)
         self.nodes["load_account"] = {
             "name": "load_account", "node_type": "api_request", "passthrough": True, "passthrough_default_transition": "prepare_account",
             "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True, "suppress_tool_results": True,
@@ -2362,10 +2365,16 @@ HOW TO GET A PROMISE
                                  {"path": "data.products_json", "variable": "acct_products_json"}],
             "transitions": [always("prepare_account")],
         }
-        # A24: a read without ok -> get_account once more (maxRetries does not repeat an HTTP 500); prepare_account
-        # then closes as the account error if there are still no facts. A retry that fails keeps a first read's data.
+        # A24: a read without ok -> get_account once more; a second read without ok -> the account error close
+        # (F3: routed here, not left to prepare_account, so no later step can reach a negotiation without facts).
         retry = copy.deepcopy(self.nodes["load_account"])
         retry["name"] = "load_account_retry"
+        retry["passthrough_default_transition"] = "close_account_error"
+        retry["response_mapping"].append({"path": "data.ok", "variable": "acct_retry_ok"})
+        retry["transitions"] = [go("prepare_account", "Account read on the retry",
+                                   is_true("acct_retry_ok", *self.resp_vars("get_account", "ok", "load_account_retry"),
+                                           *self.resp_vars("get_account", "ok"))),
+                                always("close_account_error")]
         self.nodes["load_account_retry"] = retry
         first = self.nodes["load_account"]
         first["response_mapping"].append({"path": "data.ok", "variable": "acct_ok"})
