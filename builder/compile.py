@@ -1718,7 +1718,7 @@ HOW TO RUN THE CALL
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
    - refused, after EVERY refusal of an attempt (see 3).%(notes)s
-   Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
+   Its result (what_to_do_next) names the next product. Say a product is noted only after a result that starts with "Noted"; after "NOT accepted", "Not counted yet" or any other result, nothing is noted: do what it says. Never read promises back or ask for confirmation yourself. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded or registered.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
