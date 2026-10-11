@@ -108,7 +108,8 @@ def test_spec_a_node_set_unchanged():
         "human_ask_opening", "human_hold_opening", "human_ask_identity", "human_hold_identity",
         "human_ask_negotiate", "human_hold_negotiate",
         "human_back_opening", "human_back_identity", "human_back_negotiate",
-        "hardship_offer", "hardship_hold", "hardship_back"}  # A10 support offer latch
+        "hardship_offer", "hardship_hold", "hardship_back",  # A10 support offer latch
+        "id_decline_gate"}  # A10 SELF-06: a decline with an answer in it is checked first
     assert [t["function"]["name"] for t in w["nodes"]["negotiate"]["tools"]] == ["create_promise"]
 
 

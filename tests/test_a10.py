@@ -216,6 +216,65 @@ def test_reference_specs_lint_clean_with_latch():
         assert lint(C(s, OA), s) == []
 
 
+# ---------------------------------------------------------------- item 2: SELF-06 (wrong answers in words)
+
+DRESS_A = "tests/fixtures/a10-dress-A.spec.json"
+
+
+def _verify(w, v, field, answer, left, verified=False):
+    """One verify_identity call as the platform runs it (pre-hook, bank, post-hook, response mapping)."""
+    t = w["nodes"]["identity"]["tools"][0]
+    cfg = {"url": "x", "body": {"field": field, "answer": answer}}
+    exec(t["pre_process_code"], {"vars": v, "config": cfg})
+    r = {"status": "success", "data": {"ok": True, "verified": verified, "wrong_answers_left": left, "all_verified": False}}
+    exec(t["post_process_code"], {"vars": v, "result": r})
+    v["id_left"] = str(left)
+    return cfg["body"]
+
+
+def test_self06_replay_answer_with_a_question_is_checked_not_declined():
+    for spec in (A, json.load(open(DRESS_A))):
+        w = C(spec, OA)
+        n = w["nodes"]
+        v = {}
+        # two wrong dates in words, each checked (the post-hook spends the parts)
+        v.update(id_partial="the eighteenth of April, one nine five four", id_partial_field="date_of_birth", id_event="continue")
+        assert _verify(w, v, "date_of_birth", "1954-04-18", 2)["answer"] == "1954-04-18"
+        v.update(id_partial="The eighteenth of May, one nine five five", id_partial_field="date_of_birth", id_event="continue")
+        _verify(w, v, "date_of_birth", "1955-05-18", 1)
+        # "the eighteenth of July, one nine five six. This is ridiculous, how much do I owe?" -> declined (0.78)
+        v.update(id_event="declined", id_partial="the eighteenth of July, one nine five six", id_partial_field="date_of_birth")
+        k = route(n["identity"], v)
+        assert k == "id_decline_gate"
+        exec(_code(n[k]), {"vars": v})
+        assert route(n[k], v) == "identity" and v["id_event"] == "continue"
+        # back in identity the model checks it: the third wrong answer closes as failed
+        _verify(w, v, "date_of_birth", "1956-07-18", 0)
+        assert route(n["identity"], v) == "close_failed"
+        f = {}
+        exec(_code(n["close_failed"]), {"vars": f})
+        assert (f["outcome"], f["reason"]) == ("not_verified", "failed")
+        assert "Please use the mobile app or visit a branch." in f["farewell"]
+
+
+def test_identity_decline_without_new_answer_still_closes():
+    w = C(A, OA)
+    n = w["nodes"]
+    v = {"id_event": "declined", "id_partial": "", "id_partial_spent": "14 March 1988"}
+    k = route(n["identity"], v)
+    exec(_code(n[k]), {"vars": v})
+    assert route(n[k], v) == "close_declined"
+    # parts the gate already sent back once do not send it back again
+    v = {"id_event": "declined", "id_partial": "14 March"}
+    exec(_code(n["id_decline_gate"]), {"vars": v})
+    assert route(n["id_decline_gate"], v) == "identity"
+    v["id_event"] = "declined"
+    exec(_code(n["id_decline_gate"]), {"vars": v})
+    assert route(n["id_decline_gate"], v) == "close_declined"
+    d = n["identity"]["extraction_schema"][0]["description"]
+    assert "in digits or in words, right or wrong) is continue, never a decline" in d
+
+
 # ---------------------------------------------------------------- item 1: neg_event audit (single product)
 
 def test_audit_paid_and_dispute_have_a_model_backup_close():

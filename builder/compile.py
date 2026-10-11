@@ -745,6 +745,18 @@ except Exception:
     pass
 '''
 
+# A10: identity's decline route. A message whose extracted answer parts are new (not the parts the last checked call
+# used, not the parts this gate already sent back) carries an answer: back to identity to check it, once per parts.
+ID_DECLINE_GATE = r'''
+part = str(vars.get('id_partial') or '').strip()
+if part and part != str(vars.get('id_partial_spent') or '').strip() and part != str(vars.get('id_gate_part') or ''):
+    vars['id_gate_part'] = part
+    vars['id_event'] = 'continue'
+    vars['id_gate'] = 'answer'
+else:
+    vars['id_gate'] = 'close'
+'''
+
 PROMISE_POST = r'''
 try:
     if isinstance(result, dict):
@@ -1675,6 +1687,15 @@ HOW TO GET A PROMISE
         answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
         declined = self.fallback_close("identity", ["declined"])
+        if self.has("declined"):
+            # A10 (SELF-06): a decline extracted from a message that also carries an unchecked answer goes back to
+            # identity once, so the answer is checked (a third wrong answer then closes as failed, not declined)
+            gate = "id_decline_gate"
+            self.nodes[gate] = code_node(gate, ID_DECLINE_GATE, self.close_key("declined"),
+                                         [go("identity", "The message carried an answer to check", cond_any(eq("id_gate", "answer")))])
+            for t in trans:
+                if t["target_node"] == self.close_key("declined") and not t.get("is_tool_call"):
+                    t["target_node"] = gate
         return {
             "name": "identity", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": enter},
@@ -1691,7 +1712,9 @@ HOW TO GET A PROMISE
                 "name": "id_event", "type": "string", "min_confidence": 0.6,
                 "enum_values": ["continue"] + values,
                 "description": " ".join(desc + ["continue: anything else, including a first refusal. A partial answer (only part of a date, "
-                                                "some of the digits), \"give me a second\", a self-correction or a question back is continue, never a refusal."]),
+                                                "some of the digits), \"give me a second\", a self-correction or a question back is continue, never a refusal. "
+                                                "A message that gives an answer to the security question (in digits or in words, right or wrong) is continue, "
+                                                "never a decline, even if it also complains or asks what the call is about."]),
             }, {
                 "name": "id_partial", "type": "string", "min_confidence": 0.5,
                 "description": ("The parts of the answer to the security question currently being asked, as said so far across the customer's "
