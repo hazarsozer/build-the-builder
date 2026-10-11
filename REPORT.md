@@ -178,8 +178,13 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
     - An Opus diagnosis is running.
 - [x] All 10 final-review fixes, plus outage resilience (§8), were reviewed clean and combined on branch `candidate-1` @ 58c3477. The suite passes at 538. It is not merged to `builder` until it passes the 3-run gate, which is next.
 - [x] Judge-wording audit (§6): no breaches found. Wording polish is queued.
-- [ ] Re-check of the merged builder: Brief A and B at 3 runs
-- [ ] Dress rehearsal on Brief A: build time and 3 runs
+- [x] Re-check of `candidate-1` on the reference specs, 3 runs: **Brief A 8/10, Brief B 3/3.** The merge bar is not met, so nothing has merged yet. PUB-05 hit a sandbox parse-error flake. PUB-06 re-offered the floor amount after a message was cut off.
+- [x] Dress rehearsal on Brief A (on `candidate-1`): **build 363 s** (extraction 173 s), trace complete, export clean.
+  - Self-test: 8/11.
+  - The dress agent on the organisers' bank, 3 runs: **8/10**.
+  - PUB-09 failed on the platform, which returned no analysis.
+  - PUB-05: the customer's "no" to hardship support was extracted at confidence 0.49 and dropped. The agent then kept persuading and the call ended as refused. Next fix: lock the hardship state in code.
+  - Further fixes in progress: A9 (the multi-product tool made visible to the model, attempts counted in code, prompt fixes) and A10 (the hardship lock, plus robustness to the corrects, in_words and asks_back styles).
 - [ ] Dress rehearsal on Brief A+B: build time and 3 runs
 - [ ] Bench over the 10 test briefs
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
