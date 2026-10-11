@@ -28,6 +28,8 @@ on its deadline in mp_state; the model spoke both answers (the deadline, then th
 from builder.lib import dates, embed, money
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
 
+AFTER_RECORD_STEP = "after_record_step"
+AFTER_RECORD_VISITS = 3   # after_record entries before the call ends as "nothing else"
 SLOTS = 3          # products per call the engine can record / note (the brief allows up to three)
 SET_TOOL = "set_product"
 SET_MODE = "api"   # "api" (get_account route + pre/post hooks; the model reads what_to_do_next) or "code" (code_exec, data null)
@@ -919,8 +921,10 @@ class Multi:
         with the recorded promises kept and no notes on a transfer: a transfer event transfers; a request for a human
         gets its ask-once step; a support event gets its own offer step, whose yes transfers and whose every other
         reply ends like "nothing else". "nothing else" / goodbye or the turn cap: notes, then the close as before.
-        Only built when negotiate has a transfer, ask-once or support event."""
+        Only built when negotiate has a transfer, ask-once or support event.
+        after_record is a code node (visit counter) in front of the conversation step after_record_step."""
         c = self.c
+        STEP = AFTER_RECORD_STEP
         stage = "after_record"
         values, desc, trans = [], [], []
         for ev in c.stage_events("negotiate"):
@@ -945,6 +949,9 @@ class Multi:
                 values.append(eid)
                 desc.append("%s: %s." % (eid, trig))
                 t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
+                # offered once per call: already offered in negotiate -> no second offer or sympathy, end as nothing else
+                trans.append(go("after_record_done", "After recording, support already offered: " + eid,
+                                all_of(eq("ar_answer", eid), eq(eid + "_offered", "yes"))))
                 trans.append(go(c.support_nodes(ev, t, after="after_record_done"), "After recording, support offer: " + eid,
                                 cond_any(eq("ar_answer", eid))))
         if not values:
@@ -957,8 +964,14 @@ class Multi:
             "after_record_done", "vars['mp_said'] = ''\n", "finish",
             [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else [])
         change = self.s["confirmation"].get("change_note")
-        nodes["after_record"] = {
-            "name": "after_record", "node_type": "conversation",
+        # entered from wrap_recorded and again from an ask-once step that returns: a visit counter in code bounds
+        # the loop whatever the engine's per-node turn counting does
+        nodes["after_record"] = code_node(
+            "after_record", "try:\n    n = int(str(vars.get('ar_visits') or '0'))\nexcept Exception:\n    n = 0\n"
+            "vars['ar_visits'] = str(n + 1)\nvars['ar_more'] = 'yes' if n + 1 <= %d else 'no'\n" % AFTER_RECORD_VISITS,
+            "after_record_done", [go(STEP, "Ask whether there is anything else", cond_any(eq("ar_more", "yes")))])
+        nodes[STEP] = {
+            "name": STEP, "node_type": "conversation",
             "on_enter": {"type": "tts", "text": "{{mp_said}} Is there anything else I can help you with?"},
             # an ask-once step that returns here does not repeat the recorded sentence
             "on_enter_first_entry_only": True,
