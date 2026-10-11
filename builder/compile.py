@@ -2579,7 +2579,8 @@ HOW TO RUN THE CALL
             by.setdefault(o["outcome"], [])
             if o.get("reason") and o["reason"] not in by[o["outcome"]]:
                 by[o["outcome"]].append(o["reason"])
-        reasonless = sorted({o["outcome"] for o in self.s["outcomes"] if not o.get("reason")})
+        # M3: an outcome is reasonless only when none of its rows has a reason (a reasoned row keeps its reason)
+        reasonless = sorted(k for k, v in by.items() if not v)
         rdesc = " ".join("%s: %s." % (k, ", ".join(v) if v else "leave out") for k, v in by.items())
         t = self.tool("close_call", {
             "outcome": {"enum": enum, "default": "{{outcome}}", "description": "How the call ended: one of " + ", ".join(enum) + "."},

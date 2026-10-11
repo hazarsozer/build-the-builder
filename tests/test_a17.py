@@ -140,7 +140,7 @@ def test_sme_failed_promise_closes_as_the_service_failure_and_says_so():
     w = C(SME, SME_OA, base_url=URL)
     close, out, notes, v = _wrap(w, "wrap_recorded", "agreed", confirmed=True, recorded=False)
     assert out == ("no_promise", "service_error") and notes == []
-    assert v["farewell"].startswith("I am sorry, I could not record your promise. This concerns your business")
+    assert v["farewell"].startswith("I am sorry, I could not save your promise. This concerns your business")
     close, out, _, v = _wrap(w, "wrap_recorded", "agreed", confirmed=True, recorded=True)
     assert out == ("promise", None)
 

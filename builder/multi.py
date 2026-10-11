@@ -660,7 +660,7 @@ except Exception:
 
 END_NODE = "negotiate_end"
 # A17: said for a confirmed promise that was not recorded when the failure event has no sentence of its own
-FAIL_SAY_DEFAULT = "I am sorry, I could not record your promise."
+FAIL_SAY_DEFAULT = "I am sorry, I could not save your promise."   # M8: no record* word
 NEG_END_CODE = r'''
 try:
     st = _load(vars)

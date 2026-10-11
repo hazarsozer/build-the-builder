@@ -280,6 +280,22 @@ def test_i5_test_variables_invent_nothing_and_leave_the_clock_real():
     assert v["today_text"] in (speak(dt.date.today()), speak(dt.datetime.now().date()))
 
 
+# ---------------------------------------------------------------- minors
+
+def test_m3_an_outcome_with_a_reasoned_row_keeps_its_reason():
+    s = copy.deepcopy(A)
+    row = next(o for o in s["outcomes"] if o["outcome"] == "no_promise" and o.get("reason"))
+    s["outcomes"].append(dict(row, reason=None))
+    pre = next(t for t in C(s, OA)["tools"] if t["function"]["name"] == "close_call")["pre_process_code"]
+    line = next(x for x in pre.splitlines() if x.startswith("REASONLESS"))
+    assert "no_promise" not in line and "promise" in line
+
+
+def test_m8_multi_default_failure_sentence_says_no_record_word():
+    from builder.multi import FAIL_SAY_DEFAULT
+    assert "record" not in FAIL_SAY_DEFAULT.lower()
+
+
 def test_i2_reference_specs_have_no_stage_variants():
     stages = ("_opening", "_identity", "_negotiate", "_third_party")
     for s in (A, B):
