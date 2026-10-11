@@ -74,7 +74,9 @@ SCENARIOS = {
 def http(base, path, body=None):
     req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(),
                                  method="GET" if body is None else "POST",
-                                 headers={"Content-Type": "application/json", "x-team-key": "ignored"})
+                                 headers={"Content-Type": "application/json", "x-team-key": "ignored",
+                                          # Cloudflare's browser-signature check (error 1010) blocks Python-urllib's default agent
+                                          "User-Agent": "parity-check/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=15) as r: return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e: return e.code, json.loads(e.read())
