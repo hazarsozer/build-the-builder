@@ -46,28 +46,33 @@ def opening_warnings(sentence):
 # ("Right after the first sentence, say this second sentence word for word: "...""). The opening is spoken from fixed
 # text, so the rule never takes effect; the compiler speaks the sentence in the opening and drops the rule.
 _VERBATIM_WORDS = re.compile(r"\bword[ -]for[ -]word\b|\bverbatim\b|\bexact(?:ly| words?)\b", re.I)
-_OPENING_PLACE = re.compile(r"\bopening\b|\bfirst sentence\b|\b(?:second|third) sentence\b|\bgreeting\b|"
-                            r"\b(?:start|beginning) of (?:the|every|each) call\b|\bbefore anything else\b", re.I)
-_CONDITIONAL = re.compile(r"^\s*(?:if|when|whenever|asked|should|in case)\b", re.I)
+# Conservative on purpose (review of e32b29a): a missed rule stays a prompt rule as before; a wrongly moved one
+# would be spoken on every call.
+_OPENING_PLACE = re.compile(r"\bopening\b(?!\s+offers?\b)|\b(?:first|second|third) sentence\b(?!\s+of\s+your\s+(?:answer|reply|response)\b)|"
+                            r"\bgreeting\b|\b(?:start|beginning) of (?:the|every|each) call\b", re.I)
+_NEGATION = re.compile(r"\b(?:do not|don't|never|avoid|must not|no longer)\b", re.I)
+_CONDITION = re.compile(r"\b(?:if|when|whenever|unless|only|asked|in case|once)\b", re.I)
 _QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”')
+_PLACEHOLDER = re.compile(r"\[|\]|\{\{|\}\}")
 
 
 def opening_verbatim_rules(spec):
-    """[(rule, sentence)]: extra rules (stage opening or any) that require a quoted sentence word for word in the
-    opening, unconditionally. Rule order is brief order; a sentence is listed once."""
+    """[(rule, sentence)]: extra rules of stage opening that require one quoted sentence word for word in the
+    opening, with no negation and no condition anywhere in the rule. Rule order is brief order; a sentence is listed
+    once (a later rule for the same sentence comes with None)."""
     out, seen = [], set()
     for r in spec.get("extra_rules", []) or []:
-        st = r.get("stage")
-        st = [st] if isinstance(st, str) else (st or [])
         text = r.get("text") or ""
-        if not ({"opening", "any"} & set(st)) or _CONDITIONAL.match(text):
+        if r.get("stage") != "opening" or _NEGATION.search(text) or _CONDITION.search(text):
             continue
-        if not (_VERBATIM_WORDS.search(text) and _OPENING_PLACE.search(text)):
+        if not (_VERBATIM_WORDS.search(text) and _OPENING_PLACE.search(_QUOTED.sub(" ", text))):
             continue
         quoted = [(m.group(1) or m.group(2)).strip() for m in _QUOTED.finditer(text)]
         quoted = [x for x in quoted if len(x.split()) >= 3]
-        if len(quoted) != 1:
-            continue  # several quotes: which one is the opening sentence is not clear; leave the rule as it is
+        if len(quoted) != 1 or _PLACEHOLDER.search(quoted[0]):
+            continue  # several quotes (which one is unclear) or a placeholder: leave the rule as it is
+        if not re.search(r"[.!?]$", quoted[0]):
+            quoted[0] += "."
         if quoted[0] not in seen:
             seen.add(quoted[0])
             out.append((r, quoted[0]))
@@ -275,8 +280,9 @@ def lint(workflow, spec):
         for t in spoken:
             if first_rx:
                 t = first_rx.sub(" ", t or "")
-            for rx in moved:
-                t = rx.sub(" ", t or "")
+            if k == "opening":   # F2: the moved sentences are exempt in the opening line only
+                for rx in moved:
+                    t = rx.sub(" ", t or "")
             if _RECORD.search(t or ""):
                 errs.append("node %s: spoken text says %r before a promise is recorded: %r" % (k, _RECORD.search(t).group(0), t[:80]))
     for word in op.get("banned_before_verify", []):

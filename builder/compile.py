@@ -1957,21 +1957,22 @@ class _Compiler:
         brief requires word for word (opening.verbatim) is left as it is."""
         op = self.s["opening"]
         keep = [tpl(op["first_sentence"])] if op.get("verbatim") and op.get("first_sentence") else []   # as spoken
-        keep += [tpl(x) for _, x in opening_verbatim_rules(self.s) if x]   # F2: word-for-word opening sentences
+        moved = [tpl(x) for _, x in opening_verbatim_rules(self.s) if x]   # F2: word-for-word opening sentences
 
-        def fix(text, i=0):
+        def fix(text, i=0, keep=keep):
             if i == len(keep):
                 return safe_pre_success(text)[0]
             if keep[i] and keep[i] in text:
-                return keep[i].join(fix(p, i + 1) for p in text.split(keep[i]))
-            return fix(text, i + 1)
+                return keep[i].join(fix(p, i + 1, keep) for p in text.split(keep[i]))
+            return fix(text, i + 1, keep)
 
         for k in SPOKEN_BEFORE_SUCCESS:
             n = nodes.get(k)
             if not n:
                 continue
             if (n.get("on_enter") or {}).get("type") == "tts" and isinstance(n["on_enter"].get("text"), str):
-                n["on_enter"]["text"] = fix(n["on_enter"]["text"])
+                # F2: the moved sentences are kept as written in the opening line only
+                n["on_enter"]["text"] = fix(n["on_enter"]["text"], 0, keep + moved if k == "opening" else keep)
             if isinstance(n.get("task_message"), str):
                 n["task_message"] = re.sub(r'"([^"]*)"', lambda m: '"%s"' % fix(m.group(1)), n["task_message"])
 

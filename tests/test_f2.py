@@ -57,16 +57,32 @@ def test_rule_shapes_detected():
     assert [s for _, s in opening_verbatim_rules(SW)] == [PRIVACY]
     shapes = [
         ("opening", 'Right after the first sentence, say this second sentence word for word: "One two three four."'),
-        ("any", 'At the start of the call, before anything else, say verbatim: "One two three four."'),
+        ("opening", 'At the start of the call, say verbatim: "One two three four."'),
+        ("opening", 'In the greeting, say word for word: "One two three four"'),  # period added
         ("opening", 'Say exactly "One two three four." as the second opening sentence.'),
         ("opening", "In the opening, say word for word: “One two three four.”"),
     ]
     for stage, text in shapes:
         sp = {"opening": {}, "extra_rules": [{"stage": stage, "text": text}]}
         assert [s for _, s in opening_verbatim_rules(sp)] == ["One two three four."], text
+    rules = [{"stage": "opening", "text": 'In the greeting, say word for word: "One two three four"'}]
+    assert "One two three four. Am I" in opening_text(wf(dict(SW, extra_rules=rules)))
     not_shapes = [
         ("opening", 'If the person asks who is calling, say word for word: "One two three four."'),
         ("negotiate", 'At the start of negotiation, say word for word: "One two three four."'),
+        ("any", 'At the start of the call, say verbatim: "One two three four."'),
+        # review of e32b29a: negations, conditions, other places, placeholders are never moved
+        ("opening", 'Do not say exactly "this call is being recorded" in the opening.'),
+        ("opening", 'In the greeting never say "this call is recorded" word for word.'),
+        ("opening", 'Before anything else, if the person asks who gave their number, say exactly "We received it from your bank."'),
+        ("opening", 'Say exactly "I will call you back later." if the person says they are busy at the start of the call.'),
+        ("opening", 'Only when asked, at the start of the call say word for word "This call may be recorded for quality."'),
+        ("opening", 'Never go below the opening offer; when refusing say exactly "That is the lowest we can go."'),
+        ("opening", 'Never repeat the opening. If the person asks about fees, say exactly "There are no extra fees for you."'),
+        ("opening", 'The first sentence of your answer to a complaint must be exactly "I am sorry to hear that."'),
+        ("opening", 'In the opening, say word for word: "Hello [name], this is your bank."'),
+        ("opening", 'In the opening, say word for word: "Hello {{first_name}}, this is your bank."'),
+        ("opening", 'Say exactly "We value your call." as the opening offer.'),
         ("opening", 'Right after the first sentence, mention the privacy notice.'),
         ("identity", 'After both questions pass, say this sentence word for word, before anything about the account: "One two three four."'),
     ]
@@ -85,7 +101,7 @@ def test_no_duplicate_when_already_in_opening():
 def test_two_rules_in_brief_order_once_each():
     sp = copy.deepcopy(SW)
     sp["extra_rules"].append({"stage": "opening", "text": 'As the third opening sentence, say word for word: "Calls may be reviewed by our compliance team."'})
-    sp["extra_rules"].append({"stage": "any", "text": 'In the opening, say word for word: "Your personal data is processed under our privacy notice, which you can read on our website or at any branch."'})
+    sp["extra_rules"].append({"stage": "opening", "text": 'In the opening, say word for word: "Your personal data is processed under our privacy notice, which you can read on our website or at any branch."'})
     t = opening_text(wf(sp))
     assert t.count(PRIVACY) == 1
     assert t.index(PRIVACY) < t.index("Calls may be reviewed by our compliance team.") < t.index("Am I speaking with")
@@ -104,3 +120,20 @@ def test_spec_without_such_rules_unchanged():
     for spec in (A, B):
         assert opening_verbatim_rules(spec) == []
         assert json.dumps(wf(spec), sort_keys=True) == json.dumps(wf(copy.deepcopy(spec)), sort_keys=True)
+
+
+def test_record_exemption_is_opening_only():
+    """A moved sentence is exempt from the no-record checks in the opening line only; the same words quoted in
+    another step spoken before a promise is recorded are still flagged."""
+    from builder.lint import SPOKEN_BEFORE_SUCCESS
+    sp = copy.deepcopy(SW)
+    legal = "Your recorded call is kept for five years under banking law."
+    sp["extra_rules"].insert(1, {"stage": "opening", "text": 'Then say word for word as the third sentence: "%s"' % legal})
+    w = wf(sp)
+    assert legal in opening_text(w)
+    assert [e for e in lint(w, sp) if not e.startswith("warning")] == []
+    other = [k for k in SPOKEN_BEFORE_SUCCESS if k != "opening" and isinstance(w["nodes"].get(k, {}).get("task_message"), str)]
+    assert other
+    k = other[0]
+    w["nodes"][k]["task_message"] += ' Say "%s"' % legal
+    assert any(("node %s" % k) in e and "record" in e for e in lint(w, sp))
