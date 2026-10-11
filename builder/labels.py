@@ -46,15 +46,37 @@ CODE_PURPOSE = [
 ]
 
 
+# conversation steps shown by their role, not their node name (edge labels and code-step descriptions)
+STEP_NAMES = [
+    (r"after_record(?:_step)?", "after-recording step"),
+    (r"after_record_done", "notes and close after recording"),
+    (r"(.+)_hold_after_record", "{0} reply, after-recording step"),
+    (r"(.+)_hold_(.+)", "{0} reply, {1} step"),
+    (r"(.+)_hold", "{0} offer reply"),
+]
+
+
 def words(name):
     return name.replace("_", " ").strip()
+
+
+def step_words(name):
+    for pat, text in STEP_NAMES:
+        m = re.fullmatch(pat, name)
+        if m:
+            return text.format(*[words(g) for g in m.groups()])
+    return words(name)
+
+
+def _group_words(g):
+    return "after-recording" if g == "after_record" else words(g)
 
 
 def code_purpose(name):
     for pat, text in CODE_PURPOSE:
         m = re.fullmatch(pat, name)
         if m:
-            return text.format(*[words(g) for g in m.groups()])
+            return text.format(*[_group_words(g) for g in m.groups()])
     return "Code step: %s." % words(name)
 
 
@@ -67,7 +89,7 @@ def target_label(target, nodes, otherwise=False):
     m = re.fullmatch(r"close_(.+)", target)
     if m:
         return lead + "close the call (%s)" % words(m.group(1))
-    return lead + words(target)
+    return lead + step_words(target)
 
 
 def describe(wf):

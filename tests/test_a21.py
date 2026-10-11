@@ -245,6 +245,19 @@ def test_third_party_cap_still_ends_the_step():
     assert e.user(tp_status="continue") == "close_no_callback"
 
 
+def test_after_record_steps_have_readable_names():
+    n = wf(B)["nodes"]
+    lab = {(k, t["target_node"]): t["description"] for k, nd in n.items() for t in nd.get("transitions") or []}
+    assert lab[("hardship_offer_after_record", "hardship_hold_after_record")] == "Next: hardship reply, after-recording step"
+    assert lab[("human_ask_after_record", "human_hold_after_record")] == "Next: human reply, after-recording step"
+    assert lab[("human_back_after_record", "after_record")] == "Next: after-recording step"
+    assert lab[("after_record", "after_record_done")] == "Otherwise: notes and close after recording"
+    d = n["human_back_after_record"]["pre_actions"][0]["function"]["description"]
+    assert d == "Clears the reply and returns to the after-recording step."
+    import re
+    assert not [v for v in lab.values() if re.search(r"\bafter record\b|\bhold\b", v)]
+
+
 def test_opening_max_asks_follows_the_spec():
     import copy
     s = copy.deepcopy(A)
