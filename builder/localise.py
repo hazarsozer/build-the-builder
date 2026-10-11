@@ -253,12 +253,18 @@ def readback_override(t):
 
 
 def _map_code(wf, fn):
+    """Apply fn to every code string: node pre_action code and node tools' pre/post_process_code."""
     for n in (wf.get("nodes") or {}).values():
         for a in n.get("pre_actions") or []:
             props = ((a.get("function") or {}).get("parameters") or {}).get("properties") or {}
             c = (props.get("code") or {}).get("default")
             if isinstance(c, str):
                 props["code"]["default"] = fn(c)
+        for t in n.get("tools") or []:
+            if isinstance(t, dict):
+                for k in ("pre_process_code", "post_process_code"):
+                    if isinstance(t.get(k), str):
+                        t[k] = fn(t[k])
 
 
 def _wants(wf, header):
@@ -280,6 +286,129 @@ def apply_dates(wf, weekdays, months):
 def apply_readback(wf, t):
     block = readback_override(t)
     _map_code(wf, lambda c: _inject_after(c, "def _readback(st):", block))
+
+
+# ---------------------------------------------------------------- reading the customer's date words
+
+# Relative-day words and the cardinals 1-31, translated in the same call; mapped back onto the English words the
+# date reader (builder/lib/dates.py _tokens/_mentions) already understands.
+RELATIVE = {"today": "today", "tomorrow": "tomorrow", "the day after tomorrow": "day after tomorrow",
+            "next week": "next week"}
+MODIFIERS = {"next Friday": "next", "this Friday": "this"}      # the Friday name is stripped from the translation
+_UNITS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+          "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+NUMBERS = _UNITS + ["twenty"] + ["twenty-" + u for u in _UNITS[:9]] + ["thirty", "thirty-one"]   # 1..31
+PARSE_SOURCES = list(RELATIVE) + list(MODIFIERS) + NUMBERS
+MAX_SUFFIX = 5      # letters a name may carry after it ("cumaya", "ekimde", "pazartesiye")
+MIN_PREFIX = 3      # shorter words match only whole
+
+# Runtime code (also exec'd here, so the table builder and the code node fold text the same way). No braces.
+NORM_CODE = r'''
+_L10N_FOLD = [('̇', ''), ('ı', 'i'), ('ş', 's'), ('ğ', 'g'), ('ç', 'c'), ('ö', 'o'), ('ü', 'u'), ('â', 'a'),
+              ('î', 'i'), ('û', 'u'), ('á', 'a'), ('à', 'a'), ('ä', 'a'), ('é', 'e'), ('è', 'e'), ('ê', 'e'),
+              ('í', 'i'), ('ó', 'o'), ('ò', 'o'), ('ú', 'u'), ('ñ', 'n'), ('ß', 'ss'), ('œ', 'oe'), ('’', "'")]
+
+
+def _l10n_fold(t):
+    t = str(t or '').lower()
+    for a, b in _L10N_FOLD:
+        t = t.replace(a, b)
+    return t
+
+
+def _l10n_key(w):
+    return re.sub(r'[\W_]+', '', w)
+
+
+def _l10n_norm(text):
+    """The customer's words with the brief language's day words rewritten as the English ones _tokens reads."""
+    t = re.sub(r"(\w)'\w*", r'\1', _l10n_fold(text))
+    ws = t.split()
+    out = []
+    i = 0
+    while i < len(ws):
+        hit = None
+        for words, eng in L10N_MAP:
+            n = len(words)
+            if i + n > len(ws):
+                continue
+            keys = [_l10n_key(w) for w in ws[i:i + n]]
+            if keys[:-1] != words[:-1]:
+                continue
+            last, want = keys[-1], words[-1]
+            if last == want or (len(want) >= L10N_MIN and last.startswith(want) and len(last) - len(want) <= L10N_SUFFIX):
+                hit = (n, eng)
+                break
+        if hit:
+            out.append(hit[1])
+            i += hit[0]
+        else:
+            out.append(ws[i])
+            i += 1
+    return ' '.join(out)
+'''
+
+
+def _norm_ns():
+    ns = {"re": re}
+    exec(NORM_CODE, ns)  # noqa: S102 - our own constant code
+    return ns
+
+
+def parse_table(weekdays, months, parse_tr=None):
+    """[[folded words], english] longest first: weekday and month names, plus (when given) the relative words,
+    the next/this modifiers and the cardinals 1-31. Entries that would map one phrase to two meanings are dropped."""
+    ns = _norm_ns()
+
+    def words(s):
+        return [ns["_l10n_key"](w) for w in ns["_l10n_fold"](s).split() if ns["_l10n_key"](w)]
+    rows = [(words(t), e.lower()) for t, e in zip(list(weekdays) + list(months), WEEKDAYS + MONTHS)]
+    if parse_tr:
+        tr = dict(zip(PARSE_SOURCES, parse_tr))
+        rows += [(words(tr[k]), v) for k, v in RELATIVE.items()]
+        fri = words(weekdays[4])
+        for k, v in MODIFIERS.items():
+            w = words(tr[k])
+            rest = [x for x in w if not (fri and x.startswith(fri[0][:max(MIN_PREFIX, len(fri[0]) - 1)]))]
+            if rest and len(rest) < len(w):
+                rows.append((rest, v))
+        rows += [(words(tr[k]), str(i + 1)) for i, k in enumerate(NUMBERS)]
+    seen, out = {}, []
+    for w, e in rows:
+        if not w:
+            continue
+        k = tuple(w)
+        if k in seen and seen[k] != e:
+            out = [r for r in out if tuple(r[0]) != k]
+            seen[k] = None
+            continue
+        if k not in seen:
+            seen[k] = e
+            out.append([w, e])
+    out = [r for r in out if seen.get(tuple(r[0]))]
+    out.sort(key=lambda r: (-len(" ".join(r[0])), r[0]))
+    return out
+
+
+def parse_override(table):
+    """Code that wraps _tokens: the brief language's day words first become the English ones."""
+    return ("L10N_MAP = %r\nL10N_MIN = %d\nL10N_SUFFIX = %d\n%s\n\n_tokens_en = _tokens\n\n\n"
+            "def _tokens(text):\n    return _tokens_en(_l10n_norm(text))\n"
+            % (table, MIN_PREFIX, MAX_SUFFIX, NORM_CODE))
+
+
+def apply_parse(wf, table):
+    block = parse_override(table)
+    _map_code(wf, lambda c: _inject_after(c, "def _tokens(text):", block))
+
+
+def check_words(sources, translated):
+    """Short plain phrases: non-empty, no digits, braces, quotes or newlines."""
+    errs = check(sources, translated)
+    if errs:
+        return errs
+    return ["phrase %d is not a plain phrase: %r" % (i, t) for i, t in enumerate(translated)
+            if len(t) > 40 or re.search(r"[\d{}\"\\\n()]", t)]
 
 
 def check_names(sources, translated):
@@ -307,6 +436,8 @@ def localise(wf, lang, translate, trace=None):
         groups["dates"] = (WEEKDAYS + MONTHS, check_names)
     if _wants(wf, "def _readback(st):"):
         groups["readback"] = (list(READBACK.values()), check)
+    if "dates" in groups and _wants(wf, "def _tokens(text):"):
+        groups["parse"] = (PARSE_SOURCES, check_words)
     allt = list(dict.fromkeys(t for g in groups.values() for t in g[0]))
     todo = [t for t in allt if _key(lang, t) not in _CACHE]
     report = {"language": lang["code"], "strings": len(allt), "from_cache": len(allt) - len(todo), "parts": {}}
@@ -321,6 +452,7 @@ def localise(wf, lang, translate, trace=None):
         except Exception as e:  # noqa: BLE001 - never crash the build
             call_err = "%s: %s" % (type(e).__name__, str(e)[:300])
     errors = []
+    names = parse_tr = None
     for name, (src, checker) in groups.items():
         if call_err:
             errs = [call_err]
@@ -338,8 +470,17 @@ def localise(wf, lang, translate, trace=None):
             _apply(wf, items, [_CACHE[_key(lang, t)] for _, t in items])
         elif name == "dates":
             apply_dates(wf, tr[:7], tr[7:])
-        else:
+            names = tr
+        elif name == "readback":
             apply_readback(wf, dict(zip(READBACK, tr)))
+        else:
+            parse_tr = tr
+    if names is not None and "parse" in groups:
+        # the date reader: the names alone when the relative words or numbers failed their check
+        apply_parse(wf, parse_table(names[:7], names[7:], parse_tr))
+        report["parts"]["parse"] = "localised" if parse_tr else "names only"
+    elif "parse" in groups:
+        report["parts"]["parse"] = "english"      # no translated names: the reader stays English
     report["localised"] = len(groups["spoken"][0]) if report["parts"].get("spoken") == "localised" else 0
     if errors:
         report["errors"] = errors[:8]
