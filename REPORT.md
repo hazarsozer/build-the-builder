@@ -4,7 +4,7 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 
 ## 1. The short version
 
-> **Latest (Sun ~04:50):** the full builder, run from the brief alone on A+B, produced an agent that scored **PUB-B 3/3 at 3 runs** (build 631 s). Earlier: `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
+> **Latest (Sun ~06:00):** A12 passed (PUB-A 10/10, PUB-B 3/3). The bench so far, on test briefs the builder has never seen: bands3 8/8, calendar 8/8, fields 7/8. Before that (~04:50): the full builder, run from the brief alone on A+B, produced an agent that scored **PUB-B 3/3 at 3 runs** (build 631 s). Earlier: `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
 
 - **The builder exists end to end and is merged.** `python -m builder.main <brief files>` reads a brief and writes a policy spec, compiles a Freya workflow, tests it on our own copy of the bank, fixes the spec, then exports the workflow and writes a trace. Code: branch `builder`, 451 tests passing.
 - **Live results on the organisers' bank were perfect on the practice set at the `gate-green-1` tag.** Later checks with pieces-style customers show gaps (see section 10):
@@ -208,8 +208,13 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 - [x] A12 (date checks for a single product in code; the promise guard fails closed): 5 fix rounds, final review clean.
   - Gate on an earlier A12 build, 3 runs: **PUB-A 10/10, PUB-B 2/3.** The PUB-12 run had the right records, but the judge failed it: the model refused one product without making it any offer.
   - Fix A14 (a refusal counts only after an offer) is in progress.
-  - The A12 final gate (a12c) is pending, and the merge waits for the bench.
-- [ ] Bench over the 10 test briefs
+  - **A12 final gate (a12c), 3 runs: PUB-A 10/10, PUB-B 3/3.** It merges after the bench run.
+- [ ] Bench over the 10 test briefs, **in progress**:
+  - bands3 8/8
+  - calendar 8/8
+  - fields 7/8
+  - builds take about 220 s each
+  - the rest are still running
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
 - [ ] Customer styles at 3 runs, different "today" dates, variance at 5 runs
 - [ ] Fallback live check (for the 16:00 decision)
