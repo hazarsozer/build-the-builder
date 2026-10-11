@@ -22,8 +22,8 @@ reads (it spoke a token that existed only in what_to_do_next). A code_exec tool 
 model never sees a rejection: api is the default. A non-2xx response is a function_call_error and skips the post-hook.
 Body leaves need a {{sp_<field>}} default to be model-filled: without one only customer_id was sent (regate-a9-B).
 Verified 11 Oct (chat-API probe, call b17bfc2f, seeded and verified PUB-13 customer): the model's product_id, outcome,
-amount and date reach config['body']; the pre-hook rejected 30 Oct, then stored p2 agreed for 23 Oct in mp_state;
-the model spoke both answers (the deadline 23 Oct, then the credit card's attempt 1).
+amount and date reach config['body']; the pre-hook rejected a date after the deadline, then stored the product as agreed
+on its deadline in mp_state; the model spoke both answers (the deadline, then the next product's attempt 1).
 """
 from builder.lib import dates, embed, money
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
