@@ -315,6 +315,41 @@ def test_support_event_after_recording_offers_then_transfers_or_ends_as_nothing_
     assert n["hardship_hold"]["max_turn_transition"] == "wrap_hardship"
 
 
+def test_safe_pre_success_rephrases_record_words():
+    from builder.lint import safe_pre_success as f
+    assert f("A recorded promise cannot be changed in this call; you can change it in the mobile app.") == (
+        "A promise cannot be changed in this call; you can change it in the mobile app.", True)
+    assert f("We have recorded your date.")[0] == "We have your date."
+    assert f("Your promise is already recorded.")[0] == "Your promise is already noted."
+    assert f("We record every call.")[0] == "We note every call."
+    assert f("You can change it in the mobile app.") == ("You can change it in the mobile app.", False)
+
+
+def test_change_note_before_success_is_rephrased_and_lints_clean():
+    for spec, oa in ((MRW, MRW_OA), (STW, STW_OA)):
+        s = copy.deepcopy(spec)
+        s["confirmation"]["change_note"] = "A recorded promise cannot be changed in this call; you can change it in the mobile app."
+        w = C(s, oa, base_url=URL)
+        assert '"A promise cannot be changed in this call; you can change it in the mobile app."' in w["nodes"]["negotiate"]["task_message"]
+        assert [e for e in lint(w, s) if not e.startswith("warning:")] == []
+    # after the promise is recorded the brief's sentence is said as written
+    s = copy.deepcopy(MRW)
+    s["confirmation"]["change_note"] = "A recorded promise cannot be changed in this call."
+    assert '"A recorded promise cannot be changed in this call."' in C(s, MRW_OA, base_url=URL)["nodes"]["after_record"]["task_message"]
+
+
+def test_rephrase_skips_the_verbatim_first_sentence_and_leaves_reference_specs_alone(monkeypatch):
+    from builder import compile as comp
+    s = copy.deepcopy(INS)
+    s["opening"]["verbatim"] = True
+    w = C(s, INS_OA, base_url=URL)
+    assert w["nodes"]["opening"]["on_enter"]["text"].startswith(s["opening"]["first_sentence"] + " ")
+    base = {k: C(x, OA) for k, x in (("a", A), ("b", B))}
+    monkeypatch.setattr(comp._Compiler, "safe_before_success", lambda self, nodes: None)
+    for k, x in (("a", A), ("b", B)):
+        assert json.dumps(C(x, OA), sort_keys=True) == json.dumps(base[k], sort_keys=True)
+
+
 def test_question_offer_sentence_ends_the_turn():
     """The cannot-offer step comes before a fixed sentence that is the offer question."""
     t = _hold(OUT, OUT_OA)
