@@ -294,6 +294,19 @@ def test_self_test_case_for_an_account_event_uses_that_band():
     assert "Declines the offer of a transfer" in c["script"]
 
 
+def test_ids08_tomorrow_holiday_is_named_outside_the_window():
+    """IDS-08: Tue 10 Nov 16:30; tomorrow (Wed 11 Nov) is a holiday. The agent booked Thu 12 Nov without saying so."""
+    w = C(IDS, IDS_OA, base_url="https://bank.example/v1")
+    v = {"now": "2026-11-10T16:30"}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    assert "Tomorrow, Wednesday 11 November 2026 (2026-11-11), is not a business day" in v["callback_rules"], v["callback_rules"]
+    assert "Thursday 12 November 2026" in v["callback_rules"]
+    assert "Never move the day or time they name" in w["nodes"]["third_party"]["task_message"]
+    v = {"now": "2026-11-09T16:30"}   # Monday: tomorrow is the next business day, no note
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    assert "is not a business day" not in v["callback_rules"]
+
+
 def test_no_lapsed_policy_negotiates_as_before():
     s = _ins_lapsed()
     w = C(s, INS_OA, base_url="https://bank.example/v1")

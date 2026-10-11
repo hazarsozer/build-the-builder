@@ -203,6 +203,10 @@ try:
                 notes.append('It is already too late for today, so not today.')
         elif kind == 'next_business_day':
             parts.append('on the next business day, ' + speak(next_bd(today, CAL)) + ', ' + win)
+            tm = today + datetime.timedelta(days=1)
+            if next_bd(today, CAL) != tm and 'next_day' not in CB['days']:
+                # A15 (IDS-08): "tomorrow" is a holiday or a weekend day; the model silently booked the next business day
+                notes.append('Tomorrow, ' + speak(tm) + ', is not a business day, so tomorrow is outside the window.')
         elif kind == 'next_day':
             parts.append('tomorrow, ' + speak(today + datetime.timedelta(days=1)) + ', ' + win)
         elif kind == 'any_business_day':
@@ -1743,6 +1747,8 @@ class _Compiler:
             '- If they give a day and time inside the window, call schedule_callback with date as YYYY-MM-DD and time as HH:MM (24 hour). "Tomorrow morning around eleven" means 11:00 on the next day.',
             "- If what they offer is outside the window, say you can only call back %s, and ask %s for another time. Do not schedule anything outside the window."
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
+            "- Never move the day or time they name to another one yourself: book only a day and time they said. A day outside the window "
+            "(a weekend day, a holiday, a day too far ahead) is handled like any time outside it: say so and ask.",
         ]
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
         lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
