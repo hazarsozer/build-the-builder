@@ -321,9 +321,18 @@ def test_safe_pre_success_rephrases_record_words():
         "A promise cannot be changed in this call; you can change it in the mobile app.", True)
     assert f("We have recorded your promise.")[0] == "We have taken your promise."
     assert f("Record the payment date now.")[0] == "Take the payment date now."
-    assert f("Your promise is already recorded.")[0] == "Your promise is already noted."
-    assert f("The payment date has been recorded.")[0] == "The payment date has been noted."
+    # a passive claim is kept, never reworded to "noted" (that still claims the promise exists): lint flags it
+    for t in ("Your promise is already recorded.", "The payment date has been recorded.", "Your promises are noted."):
+        assert f(t) == (t, False), t
     assert f("You can change it in the mobile app.") == ("You can change it in the mobile app.", False)
+
+
+def test_passive_record_claim_before_success_is_flagged_not_reworded():
+    s = copy.deepcopy(MRW)
+    s["confirmation"]["change_note"] = "Your promise is already recorded."
+    w = C(s, MRW_OA, base_url=URL)
+    assert "already noted" not in w["nodes"]["negotiate"]["task_message"]
+    assert any("before a promise is recorded" in e for e in lint(w, s) if not e.startswith("warning:"))
 
 
 def test_safe_pre_success_keeps_every_other_record_word():

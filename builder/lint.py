@@ -58,17 +58,17 @@ _REC_DET = re.compile(r"\b(%s)\s+recorded\s+(?=%s\b)" % (_DET, _PROMISE_NOUN), r
 # "we have recorded your promise" -> "we have taken your promise"; "record the promise" -> "take the promise"
 _REC_VERB = re.compile(r"\b(record(?:s|ed|ing)?)(\s+(?:%s\s+)?%s\b)" % (_DET, _PROMISE_NOUN), re.I)
 _TAKE = {"record": "take", "records": "takes", "recorded": "taken", "recording": "taking"}
-# "the promise is (already) recorded" / "has been recorded" -> "... noted"
-_REC_PASSIVE = re.compile(r"\b(%s\s+(?:is|are|was|were|will\s+be|has\s+been|have\s+been|had\s+been)\s+(?:already\s+)?)recorded\b"
-                          % _PROMISE_NOUN, re.I)
+# "the promise is (already) recorded" is NOT rewritten: "noted" before success still claims the promise exists, so
+# the sentence is kept and lint flags it
 
 
 def safe_pre_success(text):
     """Text spoken before a promise can be recorded, without record* words about the promise and with the same
     meaning (the honesty check reads any "record*" before a successful create_promise literally). Returns
     (text, changed). Only promise phrasings are rewritten: "A recorded promise cannot ..." -> "A promise cannot ...",
-    "we have recorded your promise" -> "we have taken your promise", "the promise is recorded" -> "the promise is
-    noted". Every other record* word is kept (lint flags it)."""
+    "we have recorded your promise" -> "we have taken your promise". A passive claim ("the promise is recorded") is
+    kept: rewording it ("noted") would still claim the promise exists, so lint flags it. Every other record* word is
+    kept (lint flags it)."""
     if not text or not _RECORD.search(text):
         return text or "", False
     t = _REC_DET.sub(lambda m: m.group(1) + " ", text)
@@ -81,7 +81,6 @@ def safe_pre_success(text):
         out = _TAKE[w.lower()]
         return (out[0].upper() + out[1:] if w[0].isupper() else out) + m.group(2)
     t = _REC_VERB.sub(verb, t)
-    t = _REC_PASSIVE.sub(lambda m: m.group(1) + "noted", t)
     return t, t != text
 
 
