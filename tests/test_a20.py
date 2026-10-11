@@ -199,3 +199,49 @@ def test_set_product_code_mode_says_no_record():
     c.build()
     t = c.multi.set_tool(mode="code")
     assert t["function"]["description"].endswith("The answer is kept in the call and changes no bank record.")
+
+
+# ---------------------------------------------------------------- 7. trace summary
+
+def _trace_md(tmp_path, monkeypatch):
+    from builder import trace
+    from builder.redact import is_secret_name
+    import os
+    for k in list(os.environ):
+        if is_secret_name(k):
+            monkeypatch.delenv(k)
+    t = trace.Trace(tmp_path / "20261011T013308Z-dress-B.jsonl")
+    t.event("start", briefs=[str(trace.REPO / "briefs" / "brief_b.md")], openapi=str(trace.REPO / "tools" / "openapi.json"))
+    for k in (1, 2):
+        t.event("saved", slot="dress-B-selftest", workflow_id="w-self", agent_id="a-self", url_kind="tunnel", round=k)
+    t.event("saved", slot="dress-B", workflow_id="w-final", agent_id="a-final", url_kind="official", spec="extract")
+    t.event("export", path=str(trace.REPO / "submission" / "dress-B.workflow.json"))
+    t.event("note", where=str(trace.Path.home() / "elsewhere" / "x.json"))
+    t.event("end", duration_s=1, ok=True)
+    return t.write_markdown().read_text()
+
+
+def test_trace_has_no_absolute_local_paths(tmp_path, monkeypatch):
+    from builder import trace
+    text = _trace_md(tmp_path, monkeypatch)
+    assert str(trace.REPO) not in text and str(trace.Path.home()) not in text
+    assert "/home/" not in text
+    assert "- submission/dress-B.workflow.json" in text
+    assert "briefs/brief_b.md" in text
+
+
+def test_trace_saved_rows_once_and_plain_words(tmp_path, monkeypatch):
+    text = _trace_md(tmp_path, monkeypatch)
+    assert text.count("| dress-B-selftest | w-self | a-self |") == 1
+    assert "| dress-B-selftest | w-self | a-self | local mock bank (self-test) | self-test rounds 1, 2 |" in text
+    assert "| dress-B | w-final | a-final | official mock bank | final agent |" in text
+    assert "tunnel" not in text.lower()
+    assert text.startswith("# Build trace: dress-B (run 20261011T013308Z)")
+
+
+def test_relative_paths_leaves_lookalike_paths():
+    from builder import trace
+    base = str(trace.REPO)
+    assert trace.relative_paths(base + "-other/x").endswith("-other/x")       # a sibling directory is not cut
+    assert not trace.relative_paths(base + "-other/x").startswith(".")
+    assert trace.relative_paths(base + "/a/b.json") == "a/b.json"

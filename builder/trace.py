@@ -10,6 +10,8 @@ Lines are flushed as they are written, so a crash leaves a usable trace.
 """
 import datetime
 import json
+import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -89,9 +91,50 @@ def _cell(v, n=160):
     return s if len(s) <= n else s[:n] + "..."
 
 
+REPO = Path(__file__).resolve().parents[1]
+# the saved event's url_kind, in words (the self-test runs against a local copy of the mock bank)
+BANK = {"tunnel": "local mock bank (self-test)", "official": "official mock bank"}
+
+
+def relative_paths(text):
+    """No absolute local paths in the summary: repo and working-directory paths become relative, home becomes ~."""
+    for base in sorted({str(REPO), os.getcwd()}, key=len, reverse=True):
+        if base and base != os.sep:
+            text = text.replace(base + os.sep, "")
+            text = re.sub(re.escape(base) + r"(?![\w.-])", ".", text)
+    home = str(Path.home())
+    return text.replace(home + os.sep, "~" + os.sep) if home and home != os.sep else text
+
+
+def _saved_rows(events):
+    """One row per saved agent: a self-test agent reused for several rounds is listed once, with its rounds."""
+    rows, order = {}, []
+    for s in _of(events, "saved"):
+        key = (s.get("slot"), s.get("workflow_id"), s.get("agent_id"), s.get("url_kind"))
+        if key not in rows:
+            rows[key] = []
+            order.append(key)
+        if s.get("round") is not None:
+            rows[key].append(str(s.get("round")))
+    out = []
+    for key in order:
+        slot, wf, agent, kind = key
+        rounds = rows[key]
+        use = ("self-test round%s %s" % ("s" if len(rounds) > 1 else "", ", ".join(rounds)) if rounds
+               else "final agent" if kind == "official" else "-")
+        out.append("| %s | %s | %s | %s | %s |" % (_cell(slot), _cell(wf), _cell(agent), _cell(BANK.get(kind, kind or "")), use))
+    return out
+
+
 def render_markdown(events, name):
+    return relative_paths(_render(events, name))
+
+
+def _render(events, name):
     start, end = _one(events, "start"), _one(events, "end")
-    out = ["# Build trace %s" % name, ""]
+    stem = name.rsplit(".", 1)[0]
+    run, _, label = stem.partition("-")
+    out = [("# Build trace: %s (run %s)" % (label, run)) if label else "# Build trace %s" % stem, ""]
     out += ["| | |", "|---|---|",
             "| Started (UTC) | %s |" % start.get("t", "?"),
             "| Ended (UTC) | %s |" % end.get("t", "(no end event)"),
@@ -108,9 +151,8 @@ def render_markdown(events, name):
     out += ["| %s | %s | %s | %s |" % (c.get("s"), _cell(c.get("model")), _cell(c.get("purpose")), _cell(c.get("about", ""))) for c in calls]
     out.append("")
 
-    out += ["## Created on Freya", "", "| Slot | Workflow ID | Agent ID | Base URL kind |", "|---|---|---|---|"]
-    out += ["| %s | %s | %s | %s |" % (_cell(s.get("slot")), _cell(s.get("workflow_id")), _cell(s.get("agent_id")),
-                                       _cell(s.get("url_kind"))) for s in _of(events, "saved")]
+    out += ["## Created on Freya", "", "| Slot | Workflow ID | Agent ID | Bank service | Used for |", "|---|---|---|---|---|"]
+    out += _saved_rows(events)
     out.append("")
 
     out += ["## Spec", ""]
