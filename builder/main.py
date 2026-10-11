@@ -31,7 +31,10 @@ self-test is unchanged: it still runs against our local bank through the tunnel.
 Hard stop: at --budget-min minus FINAL_RESERVE_S, whatever is running is abandoned and the best spec so far goes to
 the final step. Every phase is wrapped: once a spec exists, a crash anywhere still ends in a saved, exported agent.
 No spec at all: exit 2 with a `no_spec` trace event. No openapi: exit 2 with a `no_openapi` trace event (the openapi is
---openapi, else openapi.json next to the briefs, else the single OpenAPI .json among the briefs; never a default).
+--openapi, else openapi.json next to the briefs, else the single OpenAPI .json/.yaml/.yml under the brief folders,
+searched recursively; never a silent default). Only with --openapi-fallback (builder/build.py's final run, which also
+requires --mock-url) does "no OpenAPI document at all" fall back to the kit's tools/openapi.json, for the tool shapes
+only: an `openapi_fallback` trace event and a loud log line say so, and the exported workflow still calls the mock.
 
 Trace: traces/<UTC time>-<slot>.jsonl (every line through redact.scrub) plus a .md summary of the same events.
 Exit code: 0 when the workflow was exported, 1 when a spec existed but the final step failed, 2 with no spec or no openapi.
@@ -144,7 +147,27 @@ def run_fix(*a, **kw):
 # ---------------------------------------------------------------------------------------------------------- inputs
 
 class OpenapiNotFound(Exception):
-    """No single OpenAPI document was found next to the briefs and --openapi was not given."""
+    """No single OpenAPI document was found next to the briefs and --openapi was not given. .none: there was none
+    at all (as opposed to several)."""
+
+    def __init__(self, msg, none=False):
+        super().__init__(msg)
+        self.none = none
+
+
+KIT_OPENAPI = ROOT / "tools" / "openapi.json"
+OPENAPI_SUFFIXES = (".json", ".yaml", ".yml")
+
+
+def _openapi_files(d):
+    """OpenAPI documents under folder d, recursively, hidden files and folders left out, sorted."""
+    out = []
+    for x in sorted(d.rglob("*")):
+        rel = x.relative_to(d)
+        if x.suffix.lower() in OPENAPI_SUFFIXES and not any(q.startswith(".") for q in rel.parts) \
+                and sdk.is_openapi_file(x):
+            out.append(x.resolve())
+    return out
 
 
 def resolve_openapi(briefs, override):
@@ -158,13 +181,13 @@ def resolve_openapi(briefs, override):
         if (d / "openapi.json").is_file():
             return d / "openapi.json"
     cands = [Path(b).resolve() for b in briefs if sdk.is_openapi_file(b)]
-    cands += [x.resolve() for d in dirs if d.is_dir() for x in sorted(d.glob("*.json")) if sdk.is_openapi_file(x)]
+    cands += [x for d in dirs if d.is_dir() for x in _openapi_files(d)]
     cands = list(dict.fromkeys(cands))
     if len(cands) == 1:
         return cands[0]
     if not cands:
-        raise OpenapiNotFound("no OpenAPI document (a .json with `openapi` and `paths`) next to the briefs in %s; "
-                              "pass --openapi PATH" % ", ".join(map(str, dirs)))
+        raise OpenapiNotFound("no OpenAPI document (a .json/.yaml with `openapi` and `paths`) next to the briefs "
+                              "in %s; pass --openapi PATH" % ", ".join(map(str, dirs)), none=True)
     raise OpenapiNotFound("several OpenAPI documents next to the briefs (%s); pass --openapi PATH"
                           % ", ".join(map(str, cands)))
 
@@ -371,10 +394,16 @@ class Build:
 
     def _run(self):
         a = self.a
-        oa_path, oa_error = None, None
+        oa_path, oa_error, oa_fallback = None, None, None
         try:
-            oa_path = resolve_openapi(self.briefs, a.openapi)
-            openapi = json.loads(Path(oa_path).read_text())
+            try:
+                oa_path = resolve_openapi(self.briefs, a.openapi)
+            except OpenapiNotFound as e:
+                if not (e.none and getattr(a, "openapi_fallback", False) and getattr(a, "mock_url", None)):
+                    raise
+                oa_fallback = e
+                oa_path = KIT_OPENAPI
+            openapi = sdk.load_openapi(oa_path)
             if not isinstance(openapi, dict) or "paths" not in openapi:
                 raise OpenapiNotFound("%s is not an OpenAPI document (no `paths`)" % oa_path)
         except (OpenapiNotFound, OSError, ValueError) as e:
@@ -382,6 +411,12 @@ class Build:
         self.ev("start", briefs=self.briefs, slot=self.slot, git_commit=git_commit(), model=sdk.model_name(),
                 openapi=str(oa_path) if oa_path else None, budget_min=a.budget_min, selftest=not a.no_selftest,
                 now=a.now, out_dir=str(self.out_dir), argv=sys.argv[1:], mock_url=getattr(a, "mock_url", None))
+        if oa_fallback is not None and oa_error is None:
+            why = ("THE SERVICE CONTRACT WAS NOT MACHINE-READABLE: %s. Using the kit's %s for the tool shapes ONLY; "
+                   "the exported workflow calls the mock %s" % (_err(oa_fallback), KIT_OPENAPI, a.mock_url))
+            self.ev("openapi_fallback", error=_err(oa_fallback), openapi=str(KIT_OPENAPI), mock_url=a.mock_url)
+            for _ in range(3):
+                self.log("WARNING " + why)
         if oa_error is not None:
             self.ev("no_openapi", error=_err(oa_error))
             self.log("no openapi: %s" % _err(oa_error))
@@ -756,6 +791,8 @@ def parse_args(argv=None):
     ap.add_argument("--slot", help="Freya slot name, used exactly (default: the first brief's folder and name plus a hash of the brief set)")
     ap.add_argument("--openapi", help="the bank's OpenAPI file (default: openapi.json next to the briefs, else the only OpenAPI .json "
                     "there; none or several is an error)")
+    ap.add_argument("--openapi-fallback", action="store_true", help="when no OpenAPI document exists at all, use the "
+                    "kit's tools/openapi.json for the tool shapes (logged loudly); needs --mock-url (builder/build.py)")
     ap.add_argument("--no-selftest", action="store_true", help="skip the bank, the tunnel and the self-test")
     ap.add_argument("--budget-min", type=float, default=27.0, help="hard stop, minutes (default 27)")
     ap.add_argument("--now", help="call variable `now` for self-test cases (ISO, e.g. 2026-10-14T11:00)")
@@ -763,7 +800,10 @@ def parse_args(argv=None):
     ap.add_argument("--mock-url", type=_mock_url_arg, help="the final (exported) workflow calls this https mock instead of "
                     "the openapi servers[0] URL; servers[0]'s path (/v1) is appended unless the URL already ends with it")
     ap.add_argument("--trace-dir", default=str(ROOT / "traces"), help=argparse.SUPPRESS)
-    return ap.parse_args(argv)
+    a = ap.parse_args(argv)
+    if a.openapi_fallback and not a.mock_url:
+        ap.error("--openapi-fallback needs --mock-url: the final workflow must never call the kit's host")
+    return a
 
 
 def main(argv=None):

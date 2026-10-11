@@ -156,10 +156,9 @@ def test_build_finds_openapi_under_other_name(tmp_path):
     assert argv[argv.index("--openapi") + 1] == str((d / "bank-api.json").resolve())
 
 
-def test_build_fails_on_no_or_several_openapi(tmp_path):
-    with pytest.raises(SystemExit) as e:
-        BD.main_argv([str(case(tmp_path, "none", ()) ), MOCK])
-    assert e.value.code == 2
+def test_build_falls_back_on_no_openapi_and_fails_on_several(tmp_path):
+    argv = BD.main_argv([str(case(tmp_path, "none", ())), MOCK])   # D1: no contract file -> loud kit fallback
+    assert "--openapi-fallback" in argv and "--openapi" not in argv and argv[argv.index("--mock-url") + 1] == MOCK
     with pytest.raises(SystemExit) as e:
         BD.main_argv([str(case(tmp_path, "two", ("a.json", "b.json"))), MOCK])
     assert e.value.code == 2
