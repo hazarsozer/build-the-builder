@@ -595,7 +595,9 @@ def test_a9_timeout_with_agreed_product_reads_back_and_records():
     assert outcome == "promise"
 
 
-def test_a9_timeout_never_notes_an_agreed_product_refused():
+def test_a9_timeout_unconfirmed_agreed_product_still_gets_a_note():
+    """Fix round 1: brief B rule 8, every product without a promise gets a note (the refused note at wrap_done);
+    the false refusal of diag-t5r5 is prevented by the read-back at negotiate_end, not by dropping the note."""
     s = Sim("PUB-12")
     _pub12_r3(s)
     s.run("negotiate_end")
@@ -606,8 +608,7 @@ def test_a9_timeout_never_notes_an_agreed_product_refused():
     s.end = s.route(s.w["nodes"]["readback_reset"])
     assert s.end == "wrap_done"  # no second negotiation
     promises, notes, close, outcome, reason = s.chain()
-    assert promises == [] and ("p1", "refused") not in notes
-    assert notes == [("p2", "refused"), ("p3", "refused")]
+    assert promises == [] and notes == [("p1", "refused"), ("p2", "refused"), ("p3", "refused")]
 
 
 def test_a9_goodbye_with_nothing_agreed_goes_to_wrap_done():
@@ -635,17 +636,13 @@ def test_a9_normal_readback_change_still_goes_back_to_negotiate():
     assert s.route(s.w["nodes"]["readback_reset"]) == "negotiate"
 
 
-def test_a9_other_wraps_keep_their_own_note_for_agreed():
-    s = Sim("PUB-12")
-    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
-    s.end = "wrap_hardship"
-    promises, notes, close, outcome, reason = s.chain()
-    assert ("p1", "hardship") in notes
-    s = Sim("PUB-12")
-    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
-    s.end = "wrap_not_talk"
-    promises, notes, close, outcome, reason = s.chain()
-    assert ("p1", "refused") not in notes
+def test_a9_every_wrap_notes_every_product_without_a_promise():
+    for end, want in (("wrap_hardship", "hardship"), ("wrap_not_talk", "refused"), ("wrap_done", "refused")):
+        s = Sim("PUB-12")
+        s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+        s.end = end
+        promises, notes, close, outcome, reason = s.chain()
+        assert promises == [] and {p for p, _ in notes} == {"p1", "p2", "p3"} and ("p1", want) in notes, end
 
 
 def test_weekend_after_deadline_offers_deadline():

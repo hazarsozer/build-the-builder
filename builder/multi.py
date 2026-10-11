@@ -474,8 +474,8 @@ for q in (st.get('ga') or order):
         continue
     stt = P.get('status')
     if stt == 'agreed':
-        # an agreed product is never noted as refused: unconfirmed at a wrap, it gets the wrap's own note or none
-        r = FAIL_NOTE if RECORDING else AGREED_NOTE
+        # every product without a promise gets a note; negotiate_end reads agreed products back before any wrap
+        r = FAIL_NOTE if RECORDING else END_NOTE
         if RECORDING:
             failed.append(P['words'])
     elif stt == 'pending':
@@ -653,7 +653,6 @@ class Multi:
             lead[t] = " ".join(parts)
         code = ("import json\n" + embed.source(dates, money) + "\n" + "SLOTS = %d\n" % SLOTS +
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
-                "AGREED_NOTE = %r\n" % (None if end_note == self.refused_note else end_note) +
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
