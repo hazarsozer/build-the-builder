@@ -26,6 +26,7 @@ amount and date reach config['body']; the pre-hook rejected a date after the dea
 on its deadline in mp_state; the model spoke both answers (the deadline, then the next product's attempt 1).
 """
 from builder.lib import dates, embed, money
+from builder.triggers import subj
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
 
 SLOTS = 3          # products per call the engine can record / note (the brief allows up to three)
@@ -847,7 +848,7 @@ class Multi:
     def outcome_words(self, o):
         for e in self.s["events"]:
             if e.get("per_product_note") == o and e["action"] == "note_and_continue":
-                return "the customer " + e["trigger"]
+                return subj("the customer", e["trigger"])
         return o
 
     def account_code(self):
@@ -892,20 +893,20 @@ class Multi:
             eid, act, trig = ev["id"], ev["action"], ev["trigger"]
             if act == "transfer":
                 values.append(eid)
-                desc.append("%s: the customer %s." % (eid, trig))
+                desc.append("%s: %s." % (eid, subj("the customer", trig)))
                 t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq("rb_answer", eid))))
             elif act == "insist_once_then_transfer":
                 values += [eid + "_first_request", eid + "_insists"]
-                desc.append("%s_first_request: the customer %s (the first time)." % (eid, trig))
-                desc.append("%s_insists: the agent already asked whether it can help first and the customer %s again." % (eid, trig))
+                desc.append("%s_first_request: %s (the first time)." % (eid, subj("the customer", trig)))
+                desc.append("%s_insists: the agent already asked whether it can help first and %s again." % (eid, subj("the customer", trig)))
                 t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
                 trans.append(go(t, "Insists: " + eid, all_of(eq("rb_answer", eid + "_insists"), eq(eid + "_asked", "yes"))))
                 trans.append(go(c.ask_once_nodes("readback", ev, t), "First request: " + eid,
                                 cond_any(eq("rb_answer", eid + "_first_request"), eq("rb_answer", eid + "_insists"))))
             elif act == "offer_transfer_else_close":
                 values.append(eid)
-                desc.append("%s: the customer %s." % (eid, trig))
+                desc.append("%s: %s." % (eid, subj("the customer", trig)))
                 # A10: the support offer step (spoken once, reply routed in code), as from negotiate
                 t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
                 trans.append(go(c.support_nodes(ev, t), "Support offer: " + eid, cond_any(eq("rb_answer", eid))))

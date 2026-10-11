@@ -23,6 +23,7 @@ from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
 from builder import layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
+from builder.triggers import verb_led, bare_trigger, split_trigger, subj, trigger_rest
 from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
                            cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
 
@@ -121,20 +122,8 @@ def with_article(s):
     return ("an " if s[:1].lower() in "aeiou" else "a ") + s
 
 
-def bare_trigger(t):
-    """A trigger without its subject ("The customer asks X." -> "asks X")."""
-    t = re.sub(r"^(?:the customer|the person)\s+", "", (t or "").strip().rstrip(". "), flags=re.I)
-    return t[:1].lower() + t[1:]
-
-
 def team_words(queue):
     return "a colleague" if queue == "general" else "our " + queue.replace("_", " ") + " team"
-
-
-def subj(who, trigger):
-    """'the person says X' when the trigger starts with a verb, else the trigger alone."""
-    w = (trigger.split() or [""])[0].lower()
-    return (who + " " + trigger) if (w.endswith("s") or w == "still") and w not in ("this", "is") else trigger
 
 
 def stages_of(ev):
@@ -1406,9 +1395,10 @@ class _Compiler:
             times = ev.get("times") or 1
             if self.counted_close(stage, ev):
                 nth = "" if ("second" in trig or "twice" in trig) else " (for the %s time)" % ORD.get(times, str(times))
+                said = subj("the customer", trig)
                 trans.append({"target_node": self.latch_gate(self.end_target(stage, eid)), "is_tool_call": True,
-                              "description": "Call this when the customer %s%s. The goodbye is spoken automatically." % (trig, nth),
-                              "condition": {"operator": "matches_intent", "description": "The customer %s%s" % (trig, nth)}})
+                              "description": "Call this when %s%s. The goodbye is spoken automatically." % (said, nth),
+                              "condition": {"operator": "matches_intent", "description": (said[:1].upper() + said[1:] + nth)}})
                 continue
             extra = (" It must be the %s time; an earlier time is NOT %s." % (ORD.get(times, str(times)), eid)
                      if times > 1 and "second" not in trig and "twice" not in trig else "")
@@ -1448,7 +1438,9 @@ class _Compiler:
                 values.append(eid)
                 not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s."
                           % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid)) if stage == "negotiate" else ""
-                desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, trig, extra, not_it)) if subj(who, trig) != trig else ("%s: %s.%s %s" % (eid, trig, extra, not_it)))
+                own, pred, _ = split_trigger(trig)
+                desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, pred, extra, not_it)) if not own and verb_led(pred)
+                            else ("%s: %s.%s %s" % (eid, subj(who, trig), extra, not_it)))
                 t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
             else:  # close, note_and_continue (single product: close)
@@ -1459,8 +1451,8 @@ class _Compiler:
                     # A10 audit: a missed extraction must not leave the model persuading a customer who disputes or
                     # has paid; the model can end the call itself (the extraction normally routes before it speaks)
                     trans.append({"target_node": self.end_target(stage, eid), "is_tool_call": True,
-                                  "description": "Call this when the customer %s. The goodbye is spoken automatically." % trig.rstrip(". "),
-                                  "condition": {"operator": "matches_intent", "description": "The customer %s" % trig.rstrip(". ")}})
+                                  "description": "Call this when %s. The goodbye is spoken automatically." % subj("the customer", trig),
+                                  "condition": {"operator": "matches_intent", "description": "The customer %s" % bare_trigger(trig)}})
         desc.append(self.not_events(stage))
         return values, desc, trans
 
@@ -1471,7 +1463,10 @@ class _Compiler:
         if not trig:
             return ""
         default = "not_confirmed" if stage == "opening" else "continue"
-        return ("These are NOT any transfer or close event (value %s): the person %s." % (default, "; or ".join(trig)))
+        # verb-led triggers share the leading "the person"; one with its own subject keeps it
+        said = [(bare_trigger(t) if i and not split_trigger(t)[0] and verb_led(bare_trigger(t)) else subj("the person", t))
+                for i, t in enumerate(trig)]
+        return ("These are NOT any transfer or close event (value %s): %s." % (default, "; or ".join(said)))
 
     def ask_once_nodes(self, stage, ev, transfer):
         """insist_once_then_transfer: a code node sets <id>_asked, then a conversation node speaks the ask-once line
@@ -1496,7 +1491,7 @@ class _Compiler:
                 "name": eid + "_reply", "type": "string", "min_confidence": 0.6, "enum_values": ["pending", "insists", "other"],
                 "description": ("The LATEST message, a reply to %s. insists: %s still %s (says yes, repeats it, or refuses help). "
                                 "other: anything else (accepts help, answers a question, asks something). pending: no reply yet."
-                                % (q(say), who, ev["trigger"]))}],
+                                % (q(say), who, bare_trigger(ev["trigger"])))}],
             "max_node_turns": 2, "max_turn_transition": back,
             "transitions": [go(transfer, "Insists: " + eid, cond_any(eq(eid + "_reply", "insists"))),
                             go(back, "Back to the conversation", cond_any(eq(eid + "_reply", "other")))]}
@@ -1559,7 +1554,7 @@ class _Compiler:
         steps.append("Offer to connect them with %s, as a yes/no question." % team)
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
                   "not have that information), then ask once more whether they want to be connected. Do this only once."]
-        answer += ["Rule (%s): say %s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])))
+        answer += ["Rule (%s): say %s%s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])), trigger_rest(r["trigger"]))
                    for r in self.s.get("say_rules", []) if {"any", "negotiate"} & set(r.get("stages") or ["any"])]
         # a request for a human keeps its own ask-once handling (brief rules apply after the offer too)
         values, routes, hdesc = [], [], []
@@ -1567,11 +1562,11 @@ class _Compiler:
             if h["action"] == "insist_once_then_transfer":
                 v = h["id"] + "_request"
                 values.append(v)
-                hdesc.append("%s: they %s." % (v, h["trigger"].rstrip(". ")))
+                hdesc.append("%s: they %s." % (v, bare_trigger(h["trigger"])))
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
                 routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
-        situation = ("the customer " + bare_trigger(ev["trigger"])) if not account else (
+        situation = subj("the customer", ev["trigger"]) if not account else (
             "the account shows: " + bare_trigger(ev["trigger"]) + ". The product concerned: {{product_words}}")
         pay = go(end if account else back, eid + (": the customer names a payment, none is taken" if account else ": the customer names a payment"),
                  cond_any(eq(reply, "names_payment")))
@@ -1629,7 +1624,7 @@ class _Compiler:
         for ev in self.stage_events(stage):
             if ev["action"] == "offer_transfer_else_close":
                 out.append({"name": ev["id"] + "_seen", "type": "string", "min_confidence": 0.6, "enum_values": ["yes", "no"],
-                            "description": "yes if anywhere in the conversation the customer %s. Otherwise no." % ev["trigger"]})
+                            "description": "yes if anywhere in the conversation %s. Otherwise no." % subj("the customer", ev["trigger"])})
         return out
 
     def event_guidance(self, stage):
@@ -1637,23 +1632,24 @@ class _Compiler:
         for ev in self.stage_events(stage):
             ins = (ev.get("instruction") or "").strip()
             if ev["action"] == "insist_once_then_transfer":
-                lines.append("If %s: the ask-once question is spoken automatically." % (
-                    subj("the customer" if stage == "negotiate" else "the person", ev["trigger"])))
+                lines.append("If %s: the ask-once question is spoken automatically.%s" % (
+                    subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), trigger_rest(ev["trigger"])))
             elif ev["action"] == "offer_transfer_else_close" and stage == "negotiate":
                 lines.append("If %s: the offer of %s is made automatically; never make it yourself and make no persuasion attempt. "
-                             "Offer status: {{%s_rule}}" % ("the customer " + bare_trigger(ev["trigger"]),
+                             "Offer status: {{%s_rule}}" % (subj("the customer", ev["trigger"]),
                                                             team_words(ev["queue"]).replace("our ", "the "), ev["id"]))
             elif ev["action"] == "offer_transfer_else_close":
                 extra = (" This comes before persuasion: make no persuasion attempt."
                          if ev.get("overrides_persuasion") and "persuasion" not in ins else "")
-                lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s" % (subj("the customer", ev["trigger"]), ins, extra))
+                lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s%s" % (subj("the customer", ev["trigger"]), ins, extra, trigger_rest(ev["trigger"])))
             elif self.counted_close(stage, ev):
-                lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.end_target(stage, ev["id"]), (" " + ins) if ins else ""))
+                lines.append("If %s: call transition_to_%s.%s%s" % (subj("the customer", ev["trigger"]), self.end_target(stage, ev["id"]),
+                                                                   trigger_rest(ev["trigger"]), (" " + ins) if ins else ""))
             elif self.backup_close(stage, ev):
-                lines.append("If %s: %sThen call transition_to_%s." % (subj("the customer", ev["trigger"]).rstrip(". "),
-                                                                                (ins + " ") if ins else "", self.end_target(stage, ev["id"])))
+                lines.append("If %s: %s%sThen call transition_to_%s." % (subj("the customer", ev["trigger"]), (trigger_rest(ev["trigger"]).strip() + " ") if trigger_rest(ev["trigger"]) else "",
+                                                                                  (ins + " ") if ins else "", self.end_target(stage, ev["id"])))
             elif ins:
-                lines.append("If %s: %s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins))
+                lines.append("If %s: %s%s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins, trigger_rest(ev["trigger"])))
         return lines
 
     def backup_close(self, stage, ev):
@@ -1663,7 +1659,7 @@ class _Compiler:
                 and ev["id"] != self.fail_ev and (ev.get("times") or 1) == 1)
 
     def say_lines(self, stage):
-        return ["If the person %s: say %s, then continue." % (r["trigger"], q(tpl(r["say"])))
+        return ["If %s: say %s, then continue.%s" % (subj("the person", r["trigger"]), q(tpl(r["say"])), trigger_rest(r["trigger"]))
                 for r in rules_for(self.s.get("say_rules", []), stage, key="stages")]
 
     def extra(self, stage):
@@ -2219,7 +2215,7 @@ HOW TO RUN THE CALL
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded or registered.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
-            notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
+            notes="".join("\n   - %s, when %s; then continue with the other products." % (o, self.multi.outcome_words(o)) for o in notes))
         for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
             t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
         if conf.get("change_note"):
