@@ -121,7 +121,7 @@ def test_main_reps_void_rep_does_not_fail_a_case(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     lines = out.splitlines()
     assert "PASS PUB-11 3/3" in lines
-    assert [x for x in lines if x.startswith("FAIL ")] == ["FAIL PUB-13 1/3"]   # a real failure in rep 1 still fails
+    assert [x for x in lines if x.startswith("FAIL ")] == ["FAIL PUB-13 1/3 (1 void)"]   # a real failure in rep 1 still fails
     assert any(x.startswith("VOID PUB-12 ") for x in lines)                      # 2 passes and 1 retried run: no verdict
     line = [x for x in lines if "passed (bank" in x][0]
     assert line.startswith("1 / 2 passed (bank") and "PUB-12" in line
