@@ -2,7 +2,18 @@
 
 Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date while the successor session, dev-2d ("builder orchestrator 2"), works overnight.
 
-## 0. Check this first (Sun 12:30)
+## 0. Check this first (Sun 14:20, orchestrator-3)
+
+- **Freya staging has been flaky since ~13:00** (504s, 503 "API key validation temporarily unavailable"; your login showed "service unavailable"). It cost the bench ~45 min and killed one build (`sme`: final save got a 503).
+- **Three new fixes, all Opus-reviewed, on branch `a24` @ b6eb689 (1096 tests). Not merged yet:**
+  - **A23:** every Freya call retries transient 5xx for up to ~2 min, and stops when the builder's time budget ends.
+  - **A24 (your go at 13:30):** generic tool-failure policy. Any bank tool except create_promise retries once; a second failure closes no_promise/service_error and claims nothing. A recorded promise is kept if a later transfer fails.
+  - **b6eb689:** retry messages go to stderr (they broke the gate's JSON parse).
+- **New edge-case bench** `bench/edge-days-faults-3p` (13 cases: awkward days, tool failures, third parties) is on a side branch, not run live yet.
+- **In flight:** gate on a24 (PUB-A/B, 3 reps), and the bench (ours: insurance 7/8, outcomes 6/8, ids lost to the outage, sme build died; fields running; then the fallback on the 4 comparison briefs).
+- **16:00:** the comparison may be incomplete because of the outage. The table will be added here.
+
+Earlier (12:30):
 
 - **Orchestrator-3 (session dev-ab) took over from dev-2d at 11:55.** It merged A22 (polling retry and deadline) and the docs cleanup, putting `builder` at 7b1af54 with 1028 tests passing.
 - The g5 bench hung on a stuck Freya simulation, which was cancelled. **A re-run is under way:**
