@@ -49,8 +49,9 @@ CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an a
            'say only "Go on." and read it with the next message.')
 DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
              'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
-MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?"): "That is the <amount> I mentioned; could you '
-             'pay it by <date>?", never a new offer, never %s again. Never restate a figure already offered.')
+MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?", "how much?"): "That is the <minimum payment / amount> I '
+             'mentioned. Can you pay it <date of that offer>?": no figure, no new date (keep that date unless they refused it), never a new '
+             'offer, never %s again. Never restate a figure already offered.')
 # Runtime names usable in spec sentences -> the workflow variable that holds them.
 ALIAS = {"past_due": "past_due_text", "days_late": "days_late_text", "floor": "floor_text",
          "deadline": "deadline_text", "product": "product_words"}
@@ -271,13 +272,13 @@ def product_facts(p):
         if prev is not None and a['amount'] == prev:
             txt = 'propose only the new date ' + when + ' for that same amount, without saying the figure again.'
         elif a['amount'] == 'floor':
-            txt = ('propose the floor amount ' + fmt(floor) + ' ' + when + '. If the floor was already offered, propose only the date ' +
+            txt = ('propose the lower amount ' + fmt(floor) + ' ' + when + '. If it was already offered, propose only the date ' +
                    'for that amount, without saying the figure again.')
         elif a['amount'] == 'full':
             txt = 'propose the full amount ' + fmt(past_due) + ' ' + when + '.'
         else:
             txt = ('propose the full amount ' + fmt(past_due) + ' ' + when + '. If the customer already said the full amount is too much, ' +
-                   'the floor ' + fmt(floor) + ' is already on the table: propose only the date for that amount, without saying the figure again.')
+                   'the lower amount ' + fmt(floor) + ' is already on the table: propose only the date for that amount, without saying the figure again.')
         prev = a['amount']
         attempts.append(dict(date=d, text='Attempt ' + str(i + 1) + ': ' + txt))
     n = len(attempts)
@@ -738,7 +739,8 @@ try:
         elif str(left) == '0':
             d['what_to_do_next'] = 'That was the last wrong answer allowed. The check has ended. Do not ask anything else.'
         else:
-            d['what_to_do_next'] = 'This answer does not match the details on file. Say so and ask the SAME question again. Wrong answers left: ' + str(left) + '.'
+            d['what_to_do_next'] = ('This answer is not correct. Say "I am sorry, that is not correct." (never "records" or "on file") and ask the SAME question again. Wrong answers left: ' +
+                                    str(left) + '.')
 except Exception:
     pass
 '''
@@ -1257,8 +1259,9 @@ class _Compiler:
         ]
         if banned:
             lines.append("- Never offer %s, or any term not given in your instructions." % join_or([with_article(b) for b in banned]))
-        lines.append("- Never say that something is recorded, booked or done unless the tool result says so. Until a tool result says a promise is recorded, "
-                     "never use the words 'record' or 'recorded' at all (not for the call, not for a date or an amount): say 'note down' or 'register'.")
+        lines.append("- Never say that something is recorded, registered, saved, booked or done unless the tool result says so. Until a tool result says a promise is recorded, "
+                     "never use the words 'record', 'recorded', 'register' or 'registered' at all (not for the call, not for a date or an amount): say 'noted'.")
+        lines.append("- Your instructions use internal words (floor, band, persuasion plan, attempt, product_id). Never say them to the customer: say the amount or the date itself.")
         lines += ["- " + l for l in self.say_lines("any")]
         lines += ["- After every tool result, speak to the customer or call the next tool. Never end a turn with nothing. Call one tool per message.",
                   "- When a tool result contains what_to_do_next, follow it."]
@@ -1716,7 +1719,7 @@ HOW TO RUN THE CALL
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
    - refused, after EVERY refusal of an attempt (see 3).%(notes)s
    Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
-5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded.""" % dict(
+5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded or registered.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
             mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))

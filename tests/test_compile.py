@@ -324,7 +324,7 @@ def test_extra_rules_naming_other_tools_are_dropped():
 def test_negotiate_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
     # A9 raised it from 4000 for the day-number, cut-off and date-only rules of diag t5r5.
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4700
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4800
 
 
 def test_reference_specs_still_valid():
@@ -452,3 +452,28 @@ def test_a9_date_only_takes_the_current_attempt_amount():
     t = wf()["nodes"]["negotiate"]["task_message"]
     step1 = t.split("HOW TO GET A PROMISE")[1].split("\n2. ")[0]
     assert '"twelve"... "fifty" = 1250' in step1 and "the rest of it" in step1 and "A date with no amount" in step1
+
+
+def test_a9_refer_back_speaks_no_figure_and_keeps_the_date():
+    """Item 6 (PUB-06 re-gate): asked about an amount already offered, refer back without the number or a new date."""
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert '"That is the <minimum payment / amount> I mentioned. Can you pay it <date of that offer>?"' in t
+        assert "no figure, no new date (keep that date unless they refused it)" in t
+        assert "the <amount> I mentioned" not in t
+
+
+def test_a9_no_internal_or_premature_record_words():
+    """Wording audit: no "floor amount" to speak, no "our records"/"on file", "registered" only after a tool result."""
+    for spec in (A, json.load(open("specs/reference/spec-b.json"))):
+        w = C(spec, OA)
+        sp = w["system_prompt"]
+        assert "say 'note down' or 'register'" not in sp and "say 'noted'" in sp
+        assert "'register' or 'registered'" in sp and "recorded, registered, saved" in sp
+        assert "Never say them to the customer" in sp and "floor" in sp.split("internal words")[1]
+        allcode = json.dumps(w)
+        assert "propose the floor amount" not in allcode and "the details on file" not in allcode
+        assert "never \\\"records\\\" or \\\"on file\\\"" in allcode
+    v = _run_account("2026-10-14T11:00", dict(CARD, days_late=20))
+    assert "propose the lower amount 35.00 on the deadline" in v["attempt_plan"]
+    assert "floor" not in v["attempt_plan"]

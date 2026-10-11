@@ -729,7 +729,7 @@ class Multi:
             "name": "readback", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": "{{mp_readback}}"},
             "task_message": ("You just read back every promise and asked %s. If the customer asks a question, answer it briefly "
-                             "from the read-back and ask %s again. Nothing is registered yet: never say anything is recorded. "
+                             "from the read-back and ask %s again. Nothing is registered yet: never say anything is recorded or registered. "
                              "No tool call is allowed in this step." % (q, q)),
             "extraction_schema": [{
                 "name": "rb_answer", "type": "string", "min_confidence": 0.6,

@@ -697,7 +697,7 @@ def test_validate_spec_b_against_freya_dry_run():  # live; skipped without FREYA
 def test_l1_mentioned_amount_rule_in_both_templates():
     for w in (wf(), C(A, OA)):
         t = w["nodes"]["negotiate"]["task_message"]
-        assert "the <amount> I mentioned" in t and "in the same sentence as the date" in t
+        assert "<minimum payment / amount> I mentioned" in t and "in the same sentence as the date" in t
         assert 'never "The rest stays overdue." again' in t
 
 
