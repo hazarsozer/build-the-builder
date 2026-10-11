@@ -241,3 +241,24 @@ def test_bench_summarize_reports_void_separately():
     assert s["void"] == [{"id": "C", "rep": 1}]
     md = br.render_md({"builder": "ours", "started": "t", "reps": 1}, [{"name": "x", "sim": s}])
     assert "void" in md.lower() and "C" in md
+
+
+# ----------------------------------------------------------------------------------------- tools/conformance.py
+
+def test_conformance_drops_retried_runs(monkeypatch, tmp_path, capsys):
+    import conformance as cf
+    monkeypatch.setattr(cf.freya, "run_simulation", lambda *a, **k: ("sim1", "it1", "completed"))
+    it = _iteration()
+    it["runs"][1]["attempts"] = 0                                                # PUB-13 healthy, PUB-11/12 retried
+    monkeypatch.setattr(cf.freya, "get_iteration", lambda s, i: it)
+    got = cf.live("ag", CASES, {c["id"]: _pid(c["id"]) for c in CASES}, lambda i: {"customer_id": "c-" + i},
+                  lambda cid: LEDGER.get(cid[2:], EMPTY), "ours")
+    assert sorted(got) == ["PUB-13"]                    # an interleaved ledger says nothing about the bank
+    assert "VOID PUB-12 (platform retried the run)" in capsys.readouterr().out
+    # official ledgers taken from an earlier run_cases output skip its void rows
+    p = tmp_path / "run.json"
+    p.write_text(json.dumps({"rows": [{"id": "PUB-12", "customer_id": "c1", "void": True},
+                                      {"id": "PUB-13", "customer_id": "c2"}]}))
+    monkeypatch.setattr(cf, "official", lambda path, body=None: LEDGER["PUB-13"])
+    off = cf.load_official([p], CASES)
+    assert off["PUB-12"] == [] and len(off["PUB-13"]) == 1
