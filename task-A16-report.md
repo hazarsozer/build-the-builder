@@ -6,3 +6,6 @@ Checked other word-for-word fields: safe_opening is the only rewriting function 
 
 Tests: tests/test_a16.py (4): insurance verbatim byte-exact + lint no errors; no flag/false still rewritten; verbatim exempts only the first sentence; reference specs lint clean, no flag. Full suite: 753 passed, 6 skipped.
 Concern: the bench-insurance fixture does not set verbatim (extractor decides it).
+
+## Merge of 635644b
+Merged cleanly (no conflicts); opening.verbatim wording passes test_no_corpus_words_in_generic_text. Reconcile (lint.required_pre_verify_sentences) is on branch builder (071db36), not in this lineage; skipped per controller. At final merge it must use opening.first_sentence unchanged when opening.verbatim is true.
