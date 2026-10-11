@@ -11,10 +11,13 @@ Steps (design spec §4 and the Task 8 rulings):
   round 1  compile with base URL <tunnel>/v1 -> save_workflow(<slot>-selftest) -> cases.generate(n=10, or 11 when
            multi-product notes are enabled; seed 0) -> selftest.run. All passed: no round 2 (build time is a tie-break).
            A run Freya retried on its own is VOID (selftest `void`): logged, never a failure for the fix round, not
-           compared between rounds. Every run void: `selftest_no_signal`, no fix, the extracted spec is kept.
+           compared between rounds. Every run void: `selftest_no_signal`. A round with fewer than half its runs scored
+           is low signal: with ROUND2_MIN_S left it is re-run once on the same spec (`selftest_rerun`) and decided on
+           the scored runs of both (a case failing in either fails); still low, or no time: `selftest_low_signal`, and
+           the round goes on with what was scored (all void: no fix, the extracted spec is kept).
   fix      otherwise, and with > 12 min left: one short LLM session edits the spec, each change with a brief quote
            (builder.fix); re-validate, recompile, round 2 on cases generated the same way. The spec with the best pass
-           count is kept (a tie keeps the fixed spec: its changes are quote-backed).
+           count on the comparable cases is kept (a tie keeps round 1's spec).
   final    compile with the openapi servers[0] URL; assert the workflow JSON has no trycloudflare URL and does have the
            servers[0] host; save_workflow(<slot>); export to <out-dir>/<slot>.workflow.json; write <slot>.spec.json.
 
@@ -245,6 +248,27 @@ def round2_cases(cs1, cs2):
         if c1 is None or _expected_key(c1) != _expected_key(c):
             extra.append(dict(c, id="SELF-R2-%02d" % (len(extra) + 1)))
     return list(cs1) + extra, comparable, extra
+
+
+def low_signal(res, n_cases):
+    """Fewer than half of a round's cases were scored (the rest void: the platform retried them)."""
+    return n_cases > 0 and 2 * res.get("total", 0) < n_cases
+
+
+def merge_runs(a, b, cs):
+    """Two runs of one round on the same spec -> one result over the scored runs of both. Per case: a failing scored
+    run fails it, else a passing one passes it, else it stays void."""
+    rows, void = [], []
+    for c in cs:
+        got = [r for res in (a, b) for r in res.get("rows") or [] if r["id"] == c["id"]]
+        if got:
+            rows.append(next((r for r in got if not r.get("pass")), got[-1]))
+        else:
+            void.append(next((v for res in (b, a) for v in res.get("void") or [] if v["id"] == c["id"]),
+                             {"id": c["id"], "void": True}))
+    return dict(b, rows=rows, void=void, passed=sum(bool(r.get("pass")) for r in rows), total=len(rows),
+                passed_ids={r["id"] for r in rows if r.get("pass")}, void_ids={v["id"] for v in void},
+                simulation_ids=[a.get("simulation_id"), b.get("simulation_id")])
 
 
 def _notes_on(spec):
@@ -550,6 +574,26 @@ class Build:
             self.log("round %d: no signal, the platform retried every run" % k)
         return res
 
+    def _signal_round(self, k, spec, cs, url):
+        """_round, re-run once on the same spec when it is low signal and the time for one more round is there."""
+        res = self._round(k, spec, cs, url)
+        if not low_signal(res, len(cs)):
+            return res
+        if self.test_left() < ROUND2_MIN_S:
+            self.ev("selftest_low_signal", round=k, scored=res["total"], cases=len(cs), rerun=False,
+                    why="%.0f s left for tests, below %d s: no re-run" % (self.test_left(), ROUND2_MIN_S))
+            return res
+        self.ev("selftest_rerun", round=k, scored=res["total"], cases=len(cs),
+                why="fewer than half the runs were scored (the platform retried the rest)")
+        res = merge_runs(res, self._round(k, spec, cs, url), cs)
+        self.ev("selftest_combined", round=k, passed=res["passed"], total=res["total"], void=sorted(res["void_ids"]),
+                failing=[r["id"] for r in res["rows"] if not r.get("pass")])
+        self.log("round %d combined: %d/%d passed, %d void" % (k, res["passed"], res["total"], len(res["void_ids"])))
+        if low_signal(res, len(cs)):
+            self.ev("selftest_low_signal", round=k, scored=res["total"], cases=len(cs), rerun=True,
+                    why="still fewer than half the runs scored after one re-run")
+        return res
+
     def _cases(self, spec, now):
         n = 11 if _notes_on(spec) else 10
         cs = cases.generate(spec, self.openapi, now, n=n, seed=SEED)
@@ -563,7 +607,7 @@ class Build:
         self.ev("tunnel", url_kind="tunnel")   # never the word trycloudflare: the RUNBOOK secret scan looks for tunnel URLs
         now = resolve_now(self.a.now, spec, self.briefs)
         cs = self._cases(spec, now)
-        res1 = self._round(1, spec, cs, url)
+        res1 = self._signal_round(1, spec, cs, url)
         self.best = (spec, res1["passed"], "extract")
         if res1["void_ids"] and not res1["total"]:
             return                         # no signal (selftest_no_signal): nothing to fix, keep the extracted spec
@@ -600,7 +644,7 @@ class Build:
         run2, comparable, extra = round2_cases(cs, cs2)
         self.ev("round2_plan", rerun=len(cs), extra=[c["id"] + ":" + str(c.get("scenario")) for c in extra],
                 comparable=sorted(comparable))
-        res2 = self._round(2, new, run2, url)
+        res2 = self._signal_round(2, new, run2, url)
         comparable = comparable - res1["void_ids"] - res2["void_ids"]   # a void run says nothing about either spec
         p1 = len(comparable & res1["passed_ids"])
         p2 = len(comparable & res2["passed_ids"])
