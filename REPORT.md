@@ -185,6 +185,10 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
   - PUB-09 failed on the platform, which returned no analysis.
   - PUB-05: the customer's "no" to hardship support was extracted at confidence 0.49 and dropped. The agent then kept persuading and the call ended as refused. Next fix: lock the hardship state in code.
   - Further fixes in progress: A9 (the multi-product tool made visible to the model, attempts counted in code, prompt fixes) and A10 (the hardship lock, plus robustness to the corrects, in_words and asks_back styles).
+- [x] **A9 and A10 reviewed clean** (588 tests; the gate run is queued).
+  - A9: the multi-product tool is now visible to the model, and attempts are counted in code.
+  - A10: a hardship lock routes through the support offer in code. A backup close is added for paid/dispute. A customer who declines but also gives an answer returns to identity once. A date the customer names past the deadline moves to the deadline.
+- [x] `RUNBOOK.md` for Sunday 20:00–23:00 is committed on `builder` (submission readiness, part of AFTER-PLAN §9).
 - [ ] Dress rehearsal on Brief A+B: build time and 3 runs
 - [ ] Bench over the 10 test briefs
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
