@@ -1179,6 +1179,12 @@ class _Compiler:
                 values.append(eid)
                 desc.append("%s: %s.%s" % (eid, subj(who, trig), extra))
                 trans.append(go(self.end_target(stage, eid), "Close: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
+                if self.backup_close(stage, ev):
+                    # A10 audit: a missed extraction must not leave the model persuading a customer who disputes or
+                    # has paid; the model can end the call itself (the extraction normally routes before it speaks)
+                    trans.append({"target_node": self.end_target(stage, eid), "is_tool_call": True,
+                                  "description": "Call this when the customer %s. The goodbye is spoken automatically." % trig.rstrip(". "),
+                                  "condition": {"operator": "matches_intent", "description": "The customer %s" % trig.rstrip(". ")}})
         desc.append(self.not_events(stage))
         return values, desc, trans
 
@@ -1331,9 +1337,18 @@ class _Compiler:
                 lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s" % (subj("the customer", ev["trigger"]), ins, extra))
             elif self.counted_close(stage, ev):
                 lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.end_target(stage, ev["id"]), (" " + ins) if ins else ""))
+            elif self.backup_close(stage, ev):
+                lines.append("If %s: %sThen call transition_to_%s at once." % (subj("the customer", ev["trigger"]).rstrip(". "),
+                                                                                (ins + " ") if ins else "", self.end_target(stage, ev["id"])))
             elif ins:
                 lines.append("If %s: %s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins))
         return lines
+
+    def backup_close(self, stage, ev):
+        """Single-product negotiate close events (paid, dispute, ...): also a model tool call, so one missed
+        extraction cannot keep the call in persuasion (A10 audit)."""
+        return (stage == "negotiate" and not self.multi and ev["action"] == "close" and ev.get("outcome")
+                and ev["id"] != self.fail_ev and (ev.get("times") or 1) == 1)
 
     def say_lines(self, stage):
         return ["If the person %s: say %s, then continue." % (r["trigger"], q(tpl(r["say"])))

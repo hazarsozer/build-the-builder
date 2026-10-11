@@ -214,3 +214,21 @@ def test_multi_readback_hardship_goes_to_the_offer_step():
 def test_reference_specs_lint_clean_with_latch():
     for s in (A, B):
         assert lint(C(s, OA), s) == []
+
+
+# ---------------------------------------------------------------- item 1: neg_event audit (single product)
+
+def test_audit_paid_and_dispute_have_a_model_backup_close():
+    c = Call()
+    tools = {t["target_node"]: t for t in c.n["negotiate"]["transitions"] if t.get("is_tool_call")}
+    assert {"close_paid", "close_dispute", "close_refused", "close_not_talk"} <= set(tools)
+    t = c.n["negotiate"]["task_message"]
+    assert "Do not argue and do not take a promise. Then call transition_to_close_dispute at once." in t
+    assert "Take no promise. Then call transition_to_close_paid at once." in t
+    # a paid claim after the support offer keeps its own outcome (no latch redirect on paid/dispute)
+    c.user(neg_event="hardship", hardship_seen="yes")
+    c.user(hardship_reply="names_payment")
+    c.tool("close_paid")
+    assert c.close()[:2] == ("paid", None)
+    # several products: paid/dispute are per-product set_product outcomes, no extra tools
+    assert [t["target_node"] for t in C(B, OA)["nodes"]["negotiate"]["transitions"] if t.get("is_tool_call")] == ["wrap_not_talk"]
