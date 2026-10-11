@@ -143,8 +143,9 @@ def test_a12_verdict_follows_the_spec_policies():
     assert D.date_verdict(dt.date(2026, 11, 6), t, dl, CAL, after="reject") == ("after_deadline", None)
     assert D.date_verdict(dt.date(2026, 10, 13), t, dl, CAL) == ("past", None)
     assert D.date_verdict(dt.date(2026, 10, 27), t, dl, CAL) == ("ok", dt.date(2026, 10, 27))
-    # a weekend day whose next business day is past the deadline: the deadline
-    assert D.date_verdict(dt.date(2026, 10, 24), t, dt.date(2026, 10, 24), CAL) == ("not_business_day", dt.date(2026, 10, 24))
+    # a weekend day whose next business day is past the deadline: the last business day on or before the deadline
+    assert D.date_verdict(dt.date(2026, 10, 24), t, dt.date(2026, 10, 24), CAL) == ("not_business_day", dt.date(2026, 10, 23))
+    assert D.date_verdict(dt.date(2026, 10, 25), t, dt.date(2026, 10, 25), CAL) == ("not_business_day", dt.date(2026, 10, 23))
 
 
 def test_a12_weekday_words_policy():

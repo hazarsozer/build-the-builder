@@ -458,7 +458,7 @@ def date_verdict(d, today, dl, cal, nbd='next_business_day', after='offer_deadli
     """(kind, date to offer or None) for a date the customer named, by the spec's rules.
     kind: ok (accept d) | past | after_deadline | not_business_day. The offered date is d itself for ok; the deadline
     after the deadline (after=offer_deadline); the next / previous business day (or the deadline when the next one is
-    past it) for a weekend day or holiday; None when the rule is to reject and ask again."""
+    past it, the last business day on or before the deadline) for a weekend day or holiday; None when the rule is to reject and ask again."""
     if d < today:
         return 'past', None
     if d > dl:
@@ -471,5 +471,8 @@ def date_verdict(d, today, dl, cal, nbd='next_business_day', after='offer_deadli
             if p >= today:
                 return 'not_business_day', p
         n = next_bd(d, cal)
-        return 'not_business_day', (n if n <= dl else dl)
+        if n <= dl:
+            return 'not_business_day', n
+        last = snap_back(dl, cal)
+        return 'not_business_day', (last if last >= today else None)
     return 'ok', d
