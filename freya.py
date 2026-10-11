@@ -3,14 +3,16 @@
     export FREYA_API_KEY=fak_...            # your workspace key
     export FREYA_API_URL=https://staging-app.freyavoice.ai   # default
 """
-import json, os, re, time, urllib.request, urllib.error, urllib.parse
+import json, os, re, socket, ssl, threading, time, urllib.request, urllib.error, urllib.parse
 
 URL = os.environ.get("FREYA_API_URL", "https://staging-app.freyavoice.ai")
 # Cloudflare rejects requests without a browser-like User-Agent (error 1010).
 HEADERS = {"Authorization": "Bearer " + os.environ.get("FREYA_API_KEY", ""), "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (build-the-builder)"}
 
-def api(method, path, body=None, **params):
-    """Call the API and return the `result` part of its {success, data: {message, result}} envelope."""
+RETRY_S = (5, 10, 20, 30, 30)      # waits between attempts of one api() call on a transient failure (~95 s, ~2 min with the attempts)
+
+def _send(method, path, body, params):
+    """One HTTP attempt. HTTP errors become RuntimeError('METHOD path -> code: body'); network errors stay OSErrors."""
     q = "?" + urllib.parse.urlencode(params) if params else ""
     req = urllib.request.Request(URL + path + q, data=json.dumps(body).encode() if body is not None else None, headers=HEADERS, method=method)
     try:
@@ -18,6 +20,85 @@ def api(method, path, body=None, **params):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode()[:1500]}") from None
     return out.get("data", {}).get("result", out) if isinstance(out, dict) else out
+
+def _status(e):
+    """'502', '503', ... for an HTTP error from _send, else the exception's class name (never its text: no URLs, no headers)."""
+    m = re.search(r" -> (\d{3}):", str(e)) if isinstance(e, RuntimeError) else None
+    return m.group(1) if m else type(getattr(e, "reason", None) if isinstance(e, urllib.error.URLError) else e).__name__
+
+def _unhandled(e):
+    """The request certainly never reached a handler, so even a non-idempotent POST may be repeated:
+    - the auth layer's 'API key validation is temporarily unavailable. Retry shortly.' (seen live as a 503; also
+      accepted as 401/403, because an auth outage could surface as either, and the body itself says retry);
+    - connection refused or DNS failure: nothing was sent."""
+    if isinstance(e, RuntimeError):
+        return _status(e) in ("401", "403", "503") and "api key validation is temporarily unavailable" in str(e).lower()
+    reason = getattr(e, "reason", e)
+    return isinstance(reason, (ConnectionRefusedError, socket.gaierror))
+
+def _maybe_handled(e):
+    """Transient, but the server may have acted on the request: HTTP 502/503/504, connection reset, timeouts.
+    Other 4xx/5xx and certificate failures are not transient and are never retried."""
+    if isinstance(e, RuntimeError): return _status(e) in ("502", "503", "504")
+    return isinstance(e, OSError) and not isinstance(getattr(e, "reason", e), ssl.SSLCertVerificationError)
+
+# POST policy per endpoint. GET, PUT and DELETE are idempotent and retried on every transient failure.
+#   /api/v2/workflow?dryRun=true            all: validation only, creates nothing.
+#   /api/v2/workflow                        all: a duplicate is an orphan workflow with its own timestamped name; the
+#                                           state file keeps the one we got. One workspace slot is cheaper than a brief.
+#   /api/v2/versions/workflow/{id}/publish  all: publishing the same versionId again changes nothing.
+#   /api/v2/personas                        all: a duplicate is a set of unused personas; callers use the returned ids.
+#   /api/v2/simulations/{id}/cancel         all: cancel is idempotent.
+#   /api/v2/simulations (create)            only when the request was never handled (_unhandled). After a 502/504 or
+#                                           a timeout the simulation may exist: a second one would hold the
+#                                           one-simulation-per-workspace slot for up to 40 min, so we raise instead.
+#   any other POST                          only when never handled.
+def _retryable(method, path, params, e):
+    if _unhandled(e): return True
+    if not _maybe_handled(e): return False
+    if method != "POST": return True
+    return params.get("dryRun") == "true" or path in ("/api/v2/workflow", "/api/v2/personas") \
+        or bool(re.fullmatch(r"/api/v2/(versions/workflow/[^/]+/publish|simulations/[^/]+/cancel)", path))
+
+class CallAbandoned(Exception):
+    """The caller stopped waiting for this thread (builder.main's Bg timed out): no further request, wait or file write."""
+
+# Per-thread caller limits, set by builder.main.Bg in its worker thread. Unbound threads (tools, tests) keep the
+# plain behaviour: full RETRY_S backoff with time.sleep.
+_call = threading.local()
+
+def bind_call(stop, deadline=None):
+    """api() in the current thread stops once `stop` (a threading.Event) is set, and never starts a retry wait that
+    would end after `deadline` (a time.monotonic() value; None: no deadline)."""
+    _call.stop, _call.deadline = stop, deadline
+
+def _check_stopped():
+    stop = getattr(_call, "stop", None)
+    if stop is not None and stop.is_set(): raise CallAbandoned("the caller stopped waiting")
+
+def _wait(seconds):
+    stop = getattr(_call, "stop", None)
+    if stop is None: time.sleep(seconds)
+    elif stop.wait(seconds): raise CallAbandoned("the caller stopped waiting")
+
+def api(method, path, body=None, *, retry=True, **params):
+    """Call the API and return the `result` part of its {success, data: {message, result}} envelope.
+
+    Transient failures are retried with RETRY_S backoff, per _retryable; when they run out, or the next wait would end
+    after the caller's deadline (bind_call), the last error is raised. Once the caller has stopped waiting, CallAbandoned
+    is raised before any further request or wait. retry=False makes one attempt (the simulation poller has its own loop)."""
+    for n in range(len(RETRY_S) + 1):
+        _check_stopped()
+        try: return _send(method, path, body, params)
+        except (RuntimeError, OSError) as e:
+            if not retry or n == len(RETRY_S) or not _retryable(method, path, params, e): raise
+            _check_stopped()
+            deadline = getattr(_call, "deadline", None)
+            if deadline is not None and _now() + RETRY_S[n] >= deadline: raise
+            dup = method == "POST" and path == "/api/v2/workflow" and params.get("dryRun") != "true" and not _unhandled(e)
+            print(f"freya: {method} {path} -> {_status(e)}; retry {n + 1}/{len(RETRY_S)} in {RETRY_S[n]} s"
+                  + ("; the failed create may have made a duplicate workflow" if dup else ""), flush=True)
+            _wait(RETRY_S[n])
 
 _ws = None
 def workspace_id():
@@ -49,9 +130,11 @@ def save_workflow(slot, workflow, state_file=".freya-agents.json"):
     import pathlib
     f = pathlib.Path(state_file); state = json.loads(f.read_text()) if f.exists() else {}
     if slot in state:
-        state[slot]["version"] = update_workflow(state[slot]["workflow_id"], workflow); f.write_text(json.dumps(state, indent=1))
+        state[slot]["version"] = update_workflow(state[slot]["workflow_id"], workflow)
     else:
-        state[slot] = create_workflow(f"{slot} {time.strftime('%m%d-%H%M%S')}", workflow); f.write_text(json.dumps(state, indent=1))
+        state[slot] = create_workflow(f"{slot} {time.strftime('%m%d-%H%M%S')}", workflow)
+    _check_stopped()                 # an abandoned save must not overwrite the state file a later save wrote
+    f.write_text(json.dumps(state, indent=1))
     return state[slot]
 def validate_workflow(name, workflow): return api("POST", "/api/v2/workflow", {"name": name, "workflow": workflow}, dryRun="true")
 def update_workflow(workflow_id, workflow):
@@ -68,11 +151,17 @@ def update_workflow(workflow_id, workflow):
         ac["llmConfig"] = {**llm, **AGENT_LLM}; api("PUT", f"/api/v2/workflow/{workflow_id}", {"workflow": {**w, "agent_config": ac}, **_positions(w)})
     vs = api("GET", f"/api/v2/versions/workflow/{workflow_id}", workspaceId=workspace_id())["versions"]
     newest = max(vs, key=lambda v: v["versionNumber"])
-    if not newest.get("isPublished"): api("POST", f"/api/v2/versions/workflow/{workflow_id}/publish", {"versionId": newest["id"]})
+    if not newest.get("isPublished"):
+        try: api("POST", f"/api/v2/versions/workflow/{workflow_id}/publish", {"versionId": newest["id"]})
+        except RuntimeError:
+            # A publish whose answer was lost (502/504) and then retried can fail with a 4xx although it worked.
+            again = api("GET", f"/api/v2/versions/workflow/{workflow_id}", workspaceId=workspace_id())["versions"]
+            if not any(v.get("id") == newest["id"] and v.get("isPublished") for v in again): raise
     return newest["versionNumber"]
 def export_workflow(workflow_id, path):
     """Write the workflow as it is on the platform to a file. This file is part of what you submit."""
     w = api("GET", f"/api/v2/workflow/{workflow_id}", workspaceId=workspace_id())["workflow"]
+    _check_stopped()
     open(path, "w").write(json.dumps({"workflow_id": w["id"], "agent_id": w.get("agentId"), "updated_at": w.get("updatedAt"), "workflow": w["workflow"],
                                          **({"nodePositions": w["nodePositions"]} if w.get("nodePositions") else {})}, indent=1)); return path
 def create_personas(personas):        return api("POST", "/api/v2/personas", {"personas": personas})
@@ -122,7 +211,7 @@ def _poll_api(sim_id, t0, t_end, method, path, **params):
     """api() with retries on transient errors and short backoff, within the polling deadline."""
     n = 0
     while True:
-        try: return api(method, path, **params)
+        try: return api(method, path, retry=False, **params)
         except (RuntimeError, OSError) as e:
             if not _transient(e): raise
             wait = BACKOFF_S[min(n, len(BACKOFF_S) - 1)]; n += 1
