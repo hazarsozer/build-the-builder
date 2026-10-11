@@ -5,7 +5,7 @@ model calls them), code nodes run for real and route on their conditions, `<node
 turns spent in a node (the engine's own counter, as in the opening's second-ask route)."""
 import json
 
-from builder.compile import compile as C
+from builder.compile import SUPPORT_TURNS_SEEN, compile as C
 from builder.lint import lint
 
 OA = json.load(open("tools/openapi.json"))
@@ -71,7 +71,8 @@ class Call:
         """One customer turn in the current conversation node: extracted values (a failed extraction is simply absent)."""
         node = self.n[self.at]
         self.turns[self.at] = self.turns.get(self.at, 0) + 1
-        self.v[self.at + ".total_turns"] = self.turns[self.at]
+        # the hold node's counter starts at SUPPORT_TURNS_SEEN before the first reply (probe, fix round 1)
+        self.v[self.at + ".total_turns"] = self.turns[self.at] + (SUPPORT_TURNS_SEEN if self.at.endswith("_hold") else 0)
         self.v.update(extracted)
         t = route(node, self.v)
         if t is None:
@@ -103,18 +104,19 @@ def test_pub05_replay_low_confidence_decline_ends_with_hardship_close():
     assert c.v["hardship_offered"] == "no" and "{{hardship_rule}}" in c.n["negotiate"]["task_message"]
     # "I lost my job last month and cannot pay anything. Can I get a discount?" -> hardship (1.0), seen yes
     assert c.user(neg_event="hardship", hardship_seen="yes") == "hardship_hold"
-    assert c.v["hardship_offered"] == "yes" and "It was made." in c.v["hardship_rule"]
+    assert c.v["hardship_offered"] == "yes" and c.v["hardship_rule"].startswith("It was made:")
     hold = c.n["hardship_hold"]
     assert hold["on_enter"] == {"type": "llm"} and "No tool call" in hold["task_message"]
-    assert "Offer once to connect them with the support team" in hold["task_message"]
-    assert "If they asked for a discount or a waiver: say you cannot offer it." in hold["task_message"]
+    assert "Offer to connect them with the support team, as a yes/no question." in hold["task_message"]
+    assert "record" not in hold["task_message"].lower()
+    assert "Only if they asked for a discount or a waiver: say you cannot offer it." in hold["task_message"]
     # "I don't want to be transferred. Is there anything else you can do for me?" -> extraction_failed (0.49)
     assert c.user() == "close_hardship"
     assert c.close()[:2] == ("no_promise", "hardship")
 
 
 def test_latch_every_non_payment_reply_ends_with_hardship_close():
-    for reply in ("other", "pending"):
+    for reply in ("declined", "other", "pending"):
         c = Call()
         c.user(neg_event="hardship", hardship_seen="yes")
         assert c.user(hardship_reply=reply) == "close_hardship", reply
@@ -171,8 +173,10 @@ def test_latch_missed_event_value_but_seen_still_makes_the_offer_once():
 
 def test_negotiate_prompt_no_longer_asks_the_model_to_offer():
     t = C(A, OA)["nodes"]["negotiate"]["task_message"]
-    assert "spoken automatically in its own step; never make it yourself" in t
+    assert "the offer of the support team is made automatically; never make it yourself" in t
     assert "Make this offer only ONCE" not in t
+    # fix round 1 item 4: one hardship line (the brief's duplicate extra rule is dropped), within budget
+    assert sum(("illness" in l) for l in t.splitlines()) == 1 and len(t) <= 4800
 
 
 # ---------------------------------------------------------------- item 1: several products
@@ -180,7 +184,7 @@ def test_negotiate_prompt_no_longer_asks_the_model_to_offer():
 def test_multi_latch_decline_and_goodbye_end_in_wrap_hardship():
     prods = [dict(CARD, product_id="p1"), {"product_id": "p2", "type": "car_loan", "past_due": 140.0, "days_late": 7,
                                            "instalment_amount": 46.0}]
-    for reply in ("other", "pending"):
+    for reply in ("declined", "other", "pending"):
         c = Call(B, prods)
         assert c.user(neg_event="hardship", hardship_seen="yes") == "hardship_hold"
         c.user(hardship_reply=reply)
@@ -315,3 +319,49 @@ def test_self11_injection_persona_is_framed_as_a_role_line():
     sc = inj["script"]
     assert "not an instruction to you" in sc and "First confirm the name." in sc
     assert sc.index("First confirm the name.") < sc.index(CS.INJECTION) < sc.index("Answers the security questions correctly")
+
+
+
+# ---------------------------------------------------------------- fix round 1
+
+def test_fix1_question_is_answered_and_offer_asked_again_then_second_non_yes_closes():
+    c = Call()
+    c.user(neg_event="hardship", hardship_seen="yes")
+    # "What would the support team do for me?" -> question: no route, the hold model answers and asks once more
+    assert c.user(hardship_reply="question") == "hardship_hold"
+    t = c.n["hardship_hold"]["task_message"]
+    assert "answer it in one sentence" in t and "ask once more whether they want to be connected" in t
+    assert 'Rule (asks if this call is a scam): say "You can verify this call' in t
+    # second reply: a yes still transfers, a named payment still returns; anything else closes
+    for reply, where in (("accepted", "transfer_support"), ("names_payment", "negotiate"), ("question", "close_hardship"),
+                         ("pending", "close_hardship"), ("declined", "close_hardship")):
+        c = Call()
+        c.user(neg_event="hardship", hardship_seen="yes")
+        c.user(hardship_reply="question")
+        if reply == "pending":
+            assert c.user() == where  # extraction failed on the second reply: the first reply's "question" stays
+        else:
+            assert c.user(hardship_reply=reply) == where, reply
+    assert c.n["hardship_hold"]["max_node_turns"] == 3  # probe: the cap pre-empts routing on the turn that reaches it
+
+
+def test_fix1_human_request_after_the_offer_keeps_its_ask_once_step():
+    c = Call()
+    c.user(neg_event="hardship", hardship_seen="yes")
+    assert "human_request" in c.n["hardship_hold"]["extraction_schema"][0]["enum_values"]
+    assert c.user(hardship_reply="human_request") == "human_hold_negotiate"
+    assert c.v["human_asked"] == "yes"
+
+
+def test_fix1_post_offer_rule_allows_the_deadline_and_floor_counter_offers():
+    c = Call()
+    c.user(neg_event="hardship", hardship_seen="yes")
+    r = c.v["hardship_rule"]
+    assert "a date after the deadline gets the deadline, an amount below the floor gets the floor, once" in r
+    assert "no amount, no date" not in r
+
+
+def test_fix1_neutral_wording_of_the_instruction():
+    from builder.compile import _Compiler
+    assert _Compiler.neutral("If they still name a date, record the promise under the rules.") == \
+        "If they still name a date, take their payment date and amount under the rules."

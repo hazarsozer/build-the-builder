@@ -114,7 +114,15 @@ def join_or(items, word="or"):
 
 
 def with_article(s):
+    if re.match(r"(?:a|an|any|the|no)\s", s, re.I):
+        return s
     return ("an " if s[:1].lower() in "aeiou" else "a ") + s
+
+
+def bare_trigger(t):
+    """A trigger without its subject ("The customer asks X." -> "asks X")."""
+    t = re.sub(r"^(?:the customer|the person)\s+", "", (t or "").strip().rstrip(". "), flags=re.I)
+    return t[:1].lower() + t[1:]
 
 
 def team_words(queue):
@@ -745,6 +753,9 @@ except Exception:
     pass
 '''
 
+# A10: the support hold node's own turn counter before the customer's first reply is this value (probe, fix round 1).
+SUPPORT_TURNS_SEEN = 0
+
 # A10: identity's decline route. A message whose extracted answer parts are new (not the parts the last checked call
 # used, not the parts this gate already sent back) carries an answer: back to identity to check it, once per parts.
 ID_DECLINE_GATE = r'''
@@ -1247,19 +1258,25 @@ class _Compiler:
         """Text of the {{<id>_rule}} variable in the negotiate prompt: before and after the offer was made."""
         if not offered:
             return "Not made yet."
-        return ("It was made. Make no offer or persuasion of your own: no amount, no date. Only a date or an amount the "
-                "customer names themselves: check it under the rules and read it back. Anything else ends the call automatically.")
+        return ("It was made: make no offer or persuasion of your own. Only a date or an amount the customer names "
+                "themselves: check it under the rules (a date after the deadline gets the deadline, an amount below the floor "
+                "gets the floor, once) and read it back. Anything else ends the call automatically.")
 
     def support_init_code(self):
         """Set by prepare_account: every support offer starts as not made."""
         return "".join("vars[%r] = 'no'\nvars[%r] = %r\n" % (e["id"] + "_offered", e["id"] + "_rule", self.support_rule(e, False))
                        for e in self.support_events())
 
+    @staticmethod
+    def neutral(text):
+        """The brief's instruction without recording words (the hold step speaks before any promise)."""
+        return re.sub(r"\brecord(?:s|ed)? (?:the|a) promise\b", "take their payment date and amount", text or "", flags=re.I)
+
     def support_nodes(self, ev, transfer):
-        """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it once and reads the
-        reply: a yes transfers, a date or an amount the customer names returns to negotiate (<id>_back), anything else
-        (a refusal, a decline, a request, an unclear or unreadable reply) ends with the event's else-close. The routing
-        after the offer never depends on one extraction: the fallback is the else-close."""
+        """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it and reads the reply:
+        a yes transfers; a date or an amount the customer names returns to negotiate (<id>_back); a human request goes to
+        that event's ask-once step; a question is answered in one sentence and the offer asked once more (first reply
+        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close."""
         eid = ev["id"]
         offer, hold, back = eid + "_offer", eid + "_hold", eid + "_back"
         if offer in self.nodes:
@@ -1281,28 +1298,50 @@ class _Compiler:
         if ev.get("say"):
             steps.append("Say %s." % q(tpl(ev["say"])))
         if banned:
-            steps.append("If they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
-        steps.append("Offer once to connect them with %s, as a yes/no question." % team)
+            steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
+        steps.append("Offer to connect them with %s, as a yes/no question." % team)
+        answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
+                  "not have that information), then ask once more whether they want to be connected. Do this only once."]
+        answer += ["Rule (%s): say %s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])))
+                   for r in self.s.get("say_rules", []) if {"any", "negotiate"} & set(r.get("stages") or ["any"])]
+        # a request for a human keeps its own ask-once handling (brief rules apply after the offer too)
+        values, routes, hdesc = [], [], []
+        for h in self.stage_events("negotiate"):
+            if h["action"] == "insist_once_then_transfer":
+                v = h["id"] + "_request"
+                values.append(v)
+                hdesc.append("%s: they %s." % (v, h["trigger"].rstrip(". ")))
+                t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
+                routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
+        turns = hold + ".total_turns"
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
             "on_enter": {"type": "llm"},
-            "task_message": ("Situation: %s. Reply now in this order, and say nothing else:\n%s\n"
-                             "Make no payment request and no persuasion attempt: no amount, no date, no plan. "
+            "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
+                             "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
                              "The brief's rule for this situation: %s\nNo tool call is allowed in this step."
-                             % (subj("the customer", ev["trigger"]).rstrip(". "),
-                                "\n".join("%d. %s" % (i + 1, s) for i, s in enumerate(steps)),
-                                tpl(ev.get("instruction") or "Offer the team once."))),
+                             % ("the customer " + bare_trigger(ev["trigger"]),
+                                "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
+                                "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
             "extraction_schema": [{
-                "name": reply, "type": "string", "min_confidence": 0.6, "enum_values": ["pending", "accepted", "names_payment", "other"],
-                "description": ("The customer's LATEST message, a reply to the offer to connect them with %s. "
-                                "accepted: they say yes to being connected. "
-                                "names_payment: they name a payment date or an amount themselves (\"I can pay 100 on Friday\"). "
-                                "other: anything else (they refuse the offer, ask for something else, say they cannot pay, ask a question). "
-                                "pending: no reply yet." % team)}],
-            "max_node_turns": 2, "max_turn_transition": end,
+                "name": reply, "type": "string", "min_confidence": 0.6,
+                "enum_values": ["pending", "accepted", "names_payment", "declined", "question"] + values + ["other"],
+                "description": " ".join(["The customer's LATEST message, a reply to the offer to connect them with %s." % team,
+                                         "accepted: they say yes to being connected.",
+                                         "names_payment: they name a payment date or an amount themselves (\"I can pay 100 on Friday\").",
+                                         "declined: they refuse the offer (even if they also ask whether there is anything else).",
+                                         "question: they only ask a question (what the team does, whether this is a scam) and do not refuse."]
+                                        + hdesc + ["other: anything else (they say they cannot pay, ask for a discount or a plan).",
+                                                   "pending: no reply yet."])}],
+            # probe (fix round 1): the cap fires on the user turn that reaches it, before any route is evaluated, so 3
+            # lets the second reply route normally (a yes there still transfers); the counter is 0 before the first reply
+            "max_node_turns": 3, "max_turn_transition": end,
             "transitions": [go(transfer, eid + ": transfer accepted", cond_any(eq(reply, "accepted"))),
-                            go(back, eid + ": the customer names a payment", cond_any(eq(reply, "names_payment"))),
-                            go(end, eid + ": anything else ends the call", cond_any(gt(hold + ".total_turns", 0)))]}
+                            go(back, eid + ": the customer names a payment", cond_any(eq(reply, "names_payment")))] + routes + [
+                            go(end, eid + ": declined, anything else, unreadable, or a second non-yes reply", cond_any(
+                                eq(reply, "declined"), eq(reply, "other"),
+                                {"logic": "and", "conditions": [eq(reply, "pending"), gt(turns, SUPPORT_TURNS_SEEN)]},
+                                gt(turns, SUPPORT_TURNS_SEEN + 1)))]}
         return offer
 
     def latch_gate(self, target):
@@ -1340,9 +1379,9 @@ class _Compiler:
                 lines.append("If %s: the ask-once question is spoken automatically." % (
                     subj("the customer" if stage == "negotiate" else "the person", ev["trigger"])))
             elif ev["action"] == "offer_transfer_else_close" and stage == "negotiate":
-                lines.append("If %s: the offer of %s is spoken automatically in its own step; never make it yourself and make no "
-                             "persuasion attempt. The offer: {{%s_rule}}" % (subj("the customer", ev["trigger"]).rstrip(". "),
-                                                                            team_words(ev["queue"]).replace("our ", "the "), ev["id"]))
+                lines.append("If %s: the offer of %s is made automatically; never make it yourself and make no persuasion attempt. "
+                             "Offer status: {{%s_rule}}" % ("the customer " + bare_trigger(ev["trigger"]),
+                                                            team_words(ev["queue"]).replace("our ", "the "), ev["id"]))
             elif ev["action"] == "offer_transfer_else_close":
                 extra = (" This comes before persuasion: make no persuasion attempt."
                          if ev.get("overrides_persuasion") and "persuasion" not in ins else "")
@@ -1372,10 +1411,13 @@ class _Compiler:
         tools = {p.strip("/") for p in self.oa.get("paths", {})}
         mine = self.stage_tools(stage)
         out = []
+        support = [_words(e["trigger"]) for e in self.support_events()] if stage == "negotiate" else []
         for r in rules_for(self.s.get("extra_rules", []), stage):
             named = {t for t in tools if re.search(r"\b%s\b" % re.escape(t), r["text"])}
             if named - mine:
                 continue
+            if any(len(_words(r["text"]) & w) >= 3 for w in support):
+                continue  # A10: the support offer's own line and step cover it (one line for it in the prompt)
             out.append(tpl(r["text"]))
         return out
 
