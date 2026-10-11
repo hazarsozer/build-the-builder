@@ -2,7 +2,15 @@
 
 Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date while the successor session, dev-2d ("builder orchestrator 2"), works overnight.
 
-## 0. Check this first (Sun 11:30)
+## 0. Check this first (Sun 12:30)
+
+- **Orchestrator-3 (session dev-ab) took over from dev-2d at 11:55.** It merged A22 (polling retry and deadline) and the docs cleanup, putting `builder` at 7b1af54 with 1028 tests passing.
+- The g5 bench hung on a stuck Freya simulation, which was cancelled. **A re-run is under way:**
+  1. Ours on the 4 comparison briefs plus fields.
+  2. **The fallback on the same 4**, which is the input for the 16:00 decision.
+  3. Ours on the other 5.
+
+Earlier (11:30):
 
 - **Latest safe version: `builder` @ 1167f06, tag `gate-green-5`** (1019 tests). It adds A17–A21 and the fixes from the second whole-branch review. On the organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3.**
 - **Fallback builder:** built Brief A in 912 s and scored **10/10 over 3 runs**.
