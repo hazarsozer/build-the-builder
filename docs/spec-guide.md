@@ -12,6 +12,9 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 
 - `bank_name` (required): string. The organisation name as said to the customer (bank, insurer, ...).
 - `assistant_identity` (required): string. What the agent says it is, e.g. when asked whether it is a robot.
+- `language` (optional): object. Optional. The language of the brief documents, which the phone agent speaks with the customer.
+- `language.code` (required): string. ISO 639-1 code, e.g. en, tr.
+- `language.name` (optional): string. English name of the language, e.g. Turkish.
 - `address_as` (required): string. How to address the customer, as a template over call_variables, e.g. "{<honorific_var>} {<surname_var>}".
 - `call_variables` (required): list of string, pattern `^[A-Za-z_][A-Za-z0-9_]*$`. Names of the variables every call starts with (the brief's call-variable table).
 - `opening` (required): object. The first turns, before the person on the line is confirmed as the customer.

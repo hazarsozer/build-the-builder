@@ -40,6 +40,7 @@ Trace: traces/<UTC time>-<slot>.jsonl (every line through redact.scrub) plus a .
 Exit code: 0 when the workflow was exported, 1 when a spec existed but the final step failed, 2 with no spec or no openapi.
 """
 import argparse
+import copy
 import datetime
 import hashlib
 import json
@@ -61,12 +62,18 @@ from bank import server, tunnel  # noqa: E402
 from builder import cases, fix, sdk, selftest  # noqa: E402
 from builder import compile as comp  # noqa: E402
 from builder import extract as ex  # noqa: E402
+from builder import localise as l10n  # noqa: E402
 from builder.lint import lint, reconcile_banned  # noqa: E402
 from builder.redact import scrub  # noqa: E402
 from builder.trace import Trace  # noqa: E402
 from builder.validate import validate  # noqa: E402
 
 STATE_FILE = ROOT / ".freya-agents.json"
+
+
+def translate_factory(trace):
+    """The translator for the localisation pass: one batched Agent SDK call (tests replace this)."""
+    return l10n.model_translate(trace)
 SIMS_FILE = ROOT / ".freya-sims.json"     # simulations this builder started (only these are ever cancelled)
 FINISHED = ("completed", "failed", "paused", "cancelled", "canceled")
 EXTRACT_MAX_S = 360          # extraction budget (design §4: <= 6 min)
@@ -351,6 +358,7 @@ class Build:
         self.final = {}
         self.srv = self.tun = None
         self._bank_stopped = False   # set once the build ends: a background tunnel retry then gives up
+        self._lang = None            # the language the call is spoken in (spec, else detected from the briefs)
 
     # -- helpers
     def left(self):
@@ -542,12 +550,51 @@ class Build:
         return spec
 
     # -- self-test
+    def language(self, spec):
+        """spec.language, else detected from the brief text; English when unknown. Traced once."""
+        if self._lang is None or (spec or {}).get("language"):
+            text = ""
+            if not (spec or {}).get("language"):
+                try:
+                    text = "\n".join(Path(p).read_text(errors="replace") for p in sdk.expand_briefs(self.briefs))
+                except OSError:
+                    text = ""
+            lang = l10n.language_of(spec, text)
+            if lang != self._lang:
+                self.ev("language", code=lang["code"], name=lang["name"],
+                        source="spec" if (spec or {}).get("language") else "detected")
+            self._lang = lang
+        return self._lang
+
+    def _lint(self, wf, spec):
+        try:
+            return lint(wf, spec)
+        except Exception as e:
+            return ["lint crashed: " + _err(e)]
+
+    def _localise(self, wf, spec, problems, stage):
+        """Non-English brief: translate the fixed spoken strings (builder.localise). Any failure, or a lint error the
+        English workflow did not have, keeps the English workflow (traced); never raises."""
+        lang = self.language(spec)
+        if l10n.is_english(lang):
+            return wf, problems
+        try:
+            loc = copy.deepcopy(wf)
+            l10n.localise(loc, lang, translate_factory(self.trace), trace=self.trace)
+            p2 = self._lint(loc, spec)
+        except Exception as e:  # noqa: BLE001 - the build goes on in English
+            self.ev("localise_failed", stage=stage, errors=[_err(e)])
+            return wf, problems
+        new = sorted(set(x for x in p2 if not x.startswith("warning:")) - set(problems))
+        if new:
+            self.ev("localise_failed", stage=stage, errors=[scrub(x)[:300] for x in new[:5]], why="new lint errors")
+            return wf, problems
+        return loc, p2
+
     def _compile_lint(self, spec, base_url, stage):
         wf = comp.compile(spec, self.openapi, base_url)
-        try:
-            problems = lint(wf, spec)
-        except Exception as e:
-            problems = ["lint crashed: " + _err(e)]
+        problems = self._lint(wf, spec)
+        wf, problems = self._localise(wf, spec, problems, stage)
         errs = [p for p in problems if not p.startswith("warning:")]
         self.ev("lint", stage=stage, errors=len(errs), warnings=len(problems) - len(errs),
                 first=[scrub(p)[:300] for p in errs[:5]])
