@@ -845,8 +845,8 @@ class Multi:
             r = e.get("per_product_note")
             if r in outcomes and r not in say and e["action"] == "note_and_continue":
                 parts = []
-                if e.get("say"):
-                    parts.append('Say: "%s"' % e["say"])
+                if self.c.say_for(e, "negotiate"):
+                    parts.append('Say: "%s"' % self.c.say_for(e, "negotiate"))
                 if e.get("instruction"):
                     parts.append(e["instruction"])
                 say[r] = " ".join(parts)
@@ -917,8 +917,8 @@ class Multi:
             parts = []
             if eid not in ("promise_recorded", self.fail_ev):
                 parts.append(c.lead_in(eid))
-                if ev.get("say"):
-                    parts.append(ev["say"])
+                if self.c.say_for(ev, "negotiate"):
+                    parts.append(self.c.say_for(ev, "negotiate"))
             lead[t] = " ".join(parts)
         code = ("import json\n" + LOAD + embed.source(dates, money) + "\n" + "SLOTS = %d\n" % SLOTS +
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
@@ -927,7 +927,7 @@ class Multi:
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
                 _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
                 _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
-                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or FAIL_SAY_DEFAULT) +
+                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", self.c.say_for(fe, "negotiate") or FAIL_SAY_DEFAULT) +
                 (WRAP_CODE_REACH if self.close_unnoted() else WRAP_CODE))
         first = "note_1" if self.notes_on else "finish"
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []

@@ -152,6 +152,14 @@ def stages_of(ev):
     return out
 
 
+def say_for(ev, stage=None):
+    """The sentence an event speaks when it ends the call in `stage`: its stage_say for that stage, else its say.
+    No stage given: an event heard in one stage only uses that stage's sentence."""
+    st = stages_of(ev)
+    stage = stage or (st[0] if len(st) == 1 else None)
+    return ((ev.get("stage_say") or {}).get(stage) if stage else None) or ev.get("say")
+
+
 def _words(text):
     """Content words, singular, for overlap checks."""
     out = set()
@@ -1352,6 +1360,8 @@ class _Compiler:
     def stages_of(ev):
         return stages_of(ev)
 
+    say_for = staticmethod(say_for)   # for multi.py, which cannot import compile
+
     @staticmethod
     def lead_in(eid):
         return LEAD_IN.get(eid, "I understand.")
@@ -1360,7 +1370,7 @@ class _Compiler:
         """Where a closing event goes: its close node, or (several products, negotiate) its wrap node."""
         if self.multi and stage == "negotiate":
             return "wrap_" + eid
-        return self.close_key(eid)
+        return self.close_for(stage, eid)
 
     def stage_tools(self, stage):
         if self.multi and stage == "negotiate":
@@ -1369,6 +1379,25 @@ class _Compiler:
 
     def close_key(self, ev_id):
         return "close_" + ev_id
+
+    def close_for(self, stage, ev_id):
+        """The close an event ends the call with in `stage`: close_<id>, or close_<id>_<stage> when the event's
+        stage_say gives that stage a sentence of its own (final-review-2 I2: a negotiation failure spoke the identity
+        or default sentence). The variant is built on first use, like a transfer node."""
+        ev = self.events.get(ev_id) or {}
+        key = self.close_key(ev_id)
+        if not (stage and ev.get("outcome") and (ev.get("stage_say") or {}).get(stage)):
+            return key
+        kind = "else" if ev["action"] == "offer_transfer_else_close" else "close"
+        text = self.farewell(ev, kind, stage)
+        if text == self.farewell(ev, kind):
+            return key
+        var = "%s_%s" % (key, stage)
+        if var not in self.nodes:
+            outcome, reason = ((ev.get("else_outcome") or self.no_promise_outcome(), ev.get("else_reason")) if kind == "else"
+                               else (ev["outcome"], ev.get("reason")))
+            self.nodes[var] = close_node(var, outcome, reason or "", text)
+        return var
 
     def no_promise_outcome(self):
         """The brief's no-promise outcome: the refused event's outcome (as Multi and oracle read it), never a literal (A15)."""
@@ -1420,18 +1449,18 @@ class _Compiler:
     def fallback_close(self, stage, prefer):
         for p in prefer:
             if self.has(p):
-                return self.close_key(p)
+                return self.close_for(stage, p)
         for e in self.s["events"]:
             if stage in stages_of(e) and e["action"] in ("close", "note_and_continue"):
-                return self.close_key(e["id"])
+                return self.close_for(stage, e["id"])
         return self.close_key(self.s["events"][0]["id"])
 
     # ---- farewells
-    def farewell(self, ev, kind):
-        """kind: close | transfer | else."""
+    def farewell(self, ev, kind, stage=None):
+        """kind: close | transfer | else. stage: the stage the call ends in, for the event's stage_say."""
         parts = []
         eid = ev["id"]
-        say = ev.get("say") or (self.s["third_party"].get("fixed_sentences") or {}).get(eid)
+        say = say_for(ev, stage) or (self.s["third_party"].get("fixed_sentences") or {}).get(eid)
         if eid == "failed" and not say:
             say = self.s["identity"].get("failed_advice")
         if kind == "else":
@@ -1451,7 +1480,7 @@ class _Compiler:
                 parts.append(LEAD_IN[eid])
             if say and say not in parts:
                 parts.append(code_tpl(say))
-        named = set(stages_of(ev)) <= {"negotiate"} and kind != "transfer"
+        named = (stage == "negotiate" if stage else set(stages_of(ev)) <= {"negotiate"}) and kind != "transfer"
         parts.append(self.thanks(named))
         return " ".join(parts)
 
@@ -1459,7 +1488,7 @@ class _Compiler:
         """A17: the identity service-failure close speaks the failure event's own sentence for identity (stage_say),
         else its say, else its fixed sentence; the generic apology only when the spec stores none."""
         fe = self.events[self.fail_ev]
-        say = ((fe.get("stage_say") or {}).get("identity") or fe.get("say")
+        say = (say_for(fe, "identity")
                or (self.s["third_party"].get("fixed_sentences") or {}).get(self.fail_ev))
         return " ".join([code_tpl(say) if say else "I am sorry, there was a technical problem.", self.thanks(False)])
 
@@ -1507,7 +1536,7 @@ class _Compiler:
                 values += [eid + "_first_request", eid + "_insists"]
                 desc.append("%s_first_request: %s, and the agent has not yet answered such a request by asking whether it can help first." % (eid, subj(who, trig)))
                 desc.append("%s_insists: the agent already asked whether it can help first, and in this message %s again." % (eid, subj(who, trig)))
-                t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
+                t = self.transfer_to(ev["queue"], self.close_for(stage, eid), eid)
                 trans.append(go(t, "Insists: " + eid, all_of(eq(EXTRACT_VAR[stage], eid + "_insists"), eq(eid + "_asked", "yes"))))
                 trans.append(go(self.ask_once_nodes(stage, ev, t), "First request: " + eid,
                                 cond_any(eq(EXTRACT_VAR[stage], eid + "_first_request"), eq(EXTRACT_VAR[stage], eid + "_insists"))))
@@ -1545,7 +1574,7 @@ class _Compiler:
                 own, pred, _ = split_trigger(trig)
                 desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, pred, extra, not_it)) if not own and verb_led(pred)
                             else ("%s: %s.%s %s" % (eid, subj(who, trig), extra, not_it)))
-                t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
+                t = self.transfer_to(ev["queue"], self.close_for(stage, eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
             else:  # close, note_and_continue (single product: close)
                 values.append(eid)
@@ -1585,7 +1614,7 @@ class _Compiler:
         if self.multi and stage == "negotiate":
             reset += "if not vars.get('mp_msg'):\n    vars['mp_msg'] = 'none yet'\n"
         self.nodes[back] = code_node(back, reset, stage)
-        say = tpl(ev.get("say") or "Can I help you with that first?")
+        say = tpl(say_for(ev, stage) or "Can I help you with that first?")
         who = "the customer" if stage == "negotiate" else "the person"
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
@@ -1650,7 +1679,7 @@ class _Compiler:
             self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
-        say = ev.get("say") or ""
+        say = say_for(ev, "negotiate") or ""
         # the brief allows one sentence of sympathy per call: a fixed sentence that already says it is that one
         sympathy = bool(SYMPATHY.search(say))
         steps = [] if sympathy else ["Exactly one short sentence of sympathy."]
@@ -2116,7 +2145,7 @@ HOW TO GET A PROMISE
         summary = self.cb_summary()
         tr = []
         if self.has("callback"):
-            tr.append(go(self.close_key("callback"), "Callback booked",
+            tr.append(go(self.close_for("third_party", "callback"), "Callback booked",
                          cond_any(eq("cb_status", "booked"), *is_true(*self.resp_vars("schedule_callback", "ok"))["conditions"])))
         return {
             "name": "third_party", "node_type": "conversation",
@@ -2164,7 +2193,7 @@ HOW TO GET A PROMISE
             # identity once, so the answer is checked (a third wrong answer then closes as failed, not declined)
             gate = "id_decline_gate"
             asks = [[x["field"], code_tpl(x["ask"])] for x in qs]
-            self.nodes[gate] = code_node(gate, "import json, re\n" + _const("ASKS", asks) + FILL_CODE + ID_DECLINE_GATE, self.close_key("declined"),
+            self.nodes[gate] = code_node(gate, "import json, re\n" + _const("ASKS", asks) + FILL_CODE + ID_DECLINE_GATE, self.close_for("identity", "declined"),
                                          [go("identity", "The message carried an answer to check", cond_any(eq("id_gate", "answer"))),
                                           go(ID_EXPLAIN, "The one explanation was not given yet", cond_any(eq("id_gate", "explain")))])
             expl = tpl(idn["decline_explanation"])
@@ -2179,7 +2208,7 @@ HOW TO GET A PROMISE
                 "max_node_turns": 2, "max_turn_transition": "identity",
                 "transitions": [go("identity", "Back to the security questions", cond_any(eq("id_explain_reply", "replied")))]}
             for t in trans:
-                if t["target_node"] == self.close_key("declined") and not t.get("is_tool_call"):
+                if t["target_node"] == self.close_for("identity", "declined") and not t.get("is_tool_call"):
                     t["target_node"] = gate
         return {
             "name": "identity", "node_type": "conversation",
@@ -2275,10 +2304,10 @@ HOW TO GET A PROMISE
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         retries = conf.get("retries", 1)
-        fail = self.close_key(self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
+        fail = self.close_for("negotiate", self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
         tr = []
         if self.has("promise_recorded"):
-            tr.append(go(self.close_key("promise_recorded"), "Promise recorded",
+            tr.append(go(self.close_for("negotiate", "promise_recorded"), "Promise recorded",
                          cond_any(eq("promise_status", "recorded"), *is_true(*self.resp_vars("create_promise", "ok"))["conditions"])))
         if retries >= 1:
             tr.append(go("retry_promise", "First promise call failed with an HTTP error", all_of(
@@ -2288,7 +2317,7 @@ HOW TO GET A PROMISE
         tr += trans
         if self.has("refused"):
             ev = self.events["refused"]
-            tr.append({"target_node": self.latch_gate(self.close_key("refused")), "is_tool_call": True,
+            tr.append({"target_node": self.latch_gate(self.close_for("negotiate", "refused")), "is_tool_call": True,
                        "description": "Call this when every persuasion attempt in the plan has been made and the customer still refuses. The goodbye is spoken automatically.",
                        "condition": {"operator": "matches_intent",
                                      "description": sentence("the customer", ev["trigger"]) + "." + trigger_rest(ev["trigger"])}})
@@ -2459,8 +2488,8 @@ HOW TO RUN THE CALL
         }
 
     def retry_node(self):
-        fail = self.close_key(self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
-        ok = self.close_key("promise_recorded") if self.has("promise_recorded") else fail
+        fail = self.close_for("negotiate", self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
+        ok = self.close_for("negotiate", "promise_recorded") if self.has("promise_recorded") else fail
         rp = self.safe_route(self.tool("create_promise", {
             "product_id": {"default": "{{product_id}}"},
             "amount": {"default": "{{create_promise_args.promise_amount}}"},
