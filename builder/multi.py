@@ -640,6 +640,8 @@ except Exception:
 '''
 
 END_NODE = "negotiate_end"
+# A17: said for a confirmed promise that was not recorded when the failure event has no sentence of its own
+FAIL_SAY_DEFAULT = "I am sorry, I could not record your promise."
 NEG_END_CODE = r'''
 try:
     st = _load(vars)
@@ -720,6 +722,22 @@ vars['mp_said'] = ' '.join(x for x in said if x).strip()
 '''
 
 
+# A17: a brief whose notes do not cover every product reason (e.g. only one event is noted): the close also weighs a
+# product's own settled reason, or its failed promise, that the brief closes on but does not note; a product left open
+# takes the wrap's note only when it is noted, else the wrap's own close decides. Briefs that note every reason keep
+# WRAP_CODE as it was (the close then reads exactly the notes).
+_REACH_AT = "    if NOTES_ON and r in REASONS:\n        notes.append((q, r))\n"
+_REACH = _REACH_AT + """    if NOTES_ON and r in REASONS:
+        reach.append((q, r))
+    elif (stt not in ('pending', 'agreed') or (stt == 'agreed' and (RECORDING or q in confirmed))) and (
+            r == PAID_NOTE or (str(NO_PROMISE) + '|' + str(REASON_MAP.get(r, r))) in CLOSE_BY):
+        reach.append((q, r))
+"""
+assert WRAP_CODE.count(_REACH_AT) == 1
+WRAP_CODE_REACH = (WRAP_CODE.replace(_REACH_AT, _REACH).replace("notes = []\n", "notes = []\nreach = []\n", 1)
+                   .replace("close_reason(notes, ", "close_reason(reach, ", 1))
+
+
 # ---------------------------------------------------------------- builders
 
 def enabled(spec):
@@ -774,13 +792,36 @@ class Multi:
             out.setdefault(k, "close_" + o["event"])
         return out
 
+    def close_unnoted(self):
+        """True when a product can end with a reason the brief does not note (see WRAP_CODE_REACH)."""
+        possible = {self.refused_note, self.fail_note, self.paid_note} | set(self.note_outcomes)
+        return not (self.notes_on and possible <= set(self.reasons))
+
+    def wrap_fallbacks(self):
+        """{wrap node: (outcome, reason)} each wrap closes with when no note decides the close."""
+        c = self.c
+        refused = c.events.get("refused") or {}
+        out = {"wrap_recorded": (self.no_promise, self.reason_map.get(self.refused_note, self.refused_note)),
+               "wrap_done": (refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note)}
+        for ev in self.s["events"]:
+            if "negotiate" not in c.stages_of(ev):
+                continue
+            if ev["action"] == "offer_transfer_else_close":
+                out["wrap_" + ev["id"]] = (ev.get("else_outcome") or self.no_promise, ev.get("else_reason"))
+            elif ev["action"] == "close" and ev["id"] not in ("promise_recorded", self.fail_ev):
+                out["wrap_" + ev["id"]] = (ev.get("outcome"), ev.get("reason"))
+        return out
+
     def wrap_targets(self):
-        """Close nodes a wrap can route to."""
+        """Close nodes a wrap can route to: the promise, all paid, every note's close and every wrap's own fallback
+        close (A17: a brief whose notes cover only some closes, e.g. one event's note, still closes a refusal as refused)."""
         by = self.close_by()
         keys = ["%s|%s" % (self.promise_row[0], self.promise_row[1] or "")]
         if self.mp.get("all_paid_outcome"):
             keys.append("%s|" % self.mp["all_paid_outcome"])
         keys += ["%s|%s" % (self.no_promise, self.reason_map.get(r, r)) for r in self.reasons]
+        keys += ["%s|%s" % (o, r or "") for o, r in self.wrap_fallbacks().values()]
+        keys.append("%s|%s" % (self.no_promise, self.reason_map.get(self.fail_note, self.fail_note)))
         out = []
         for k in keys:
             if k in by and by[k] not in out:
@@ -883,7 +924,8 @@ class Multi:
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
                 _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
                 _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
-                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or "") + WRAP_CODE)
+                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or FAIL_SAY_DEFAULT) +
+                (WRAP_CODE_REACH if self.close_unnoted() else WRAP_CODE))
         first = "note_1" if self.notes_on else "finish"
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []
         return code_node(name, code, "finish", tr)
@@ -982,19 +1024,18 @@ class Multi:
                                     [go("readback", "Agreed products: read them back", cond_any(eq("mp_end", "readback")))])
         # wraps; a turn cap, goodbye or "nothing to confirm" after a support offer ends with that event's wrap (A10)
         c.latch_gate("wrap_done")
+        fbs = self.wrap_fallbacks()
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
-        refused = c.events.get("refused") or {}
-        nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
-                                       fallback=(refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note))
+        nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note, fallback=fbs["wrap_done"])
         for ev in self.s["events"]:
             if "negotiate" not in c.stages_of(ev):
                 continue
             if ev["action"] == "offer_transfer_else_close":
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, ev.get("else_reason") or "refused"),
-                                                      fallback=(ev.get("else_outcome") or self.no_promise, ev.get("else_reason")))
+                                                      fallback=fbs["wrap_" + ev["id"]])
             elif ev["action"] == "close" and ev["id"] not in ("promise_recorded",):
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, self.refused_note),
-                                                      fallback=(ev.get("outcome"), ev.get("reason")))
+                                                      fallback=fbs.get("wrap_" + ev["id"], (ev.get("outcome"), ev.get("reason"))))
         # notes
         if self.notes_on:
             for i in range(1, SLOTS + 1):
@@ -1009,7 +1050,8 @@ class Multi:
         targets = self.wrap_targets()
         # no close chosen (a wrap that did not run): the service-failure close when the wraps can reach it
         fail = c.close_key(self.fail_ev)
-        default = fail if fail in targets else (targets[-1] if targets else "close_account_error")
+        done = self.close_by().get("%s|%s" % (fbs["wrap_done"][0], fbs["wrap_done"][1] or ""))
+        default = fail if fail in targets else (done if done in targets else (targets[-1] if targets else "close_account_error"))
         nodes["finish"] = code_node("finish", "vars['mp_finished'] = 'yes'\n", default,
                                     [go(t, "Close: " + t, cond_any(eq("mp_close", t))) for t in targets])
         # close nodes reached from a wrap speak the computed summary

@@ -744,6 +744,12 @@
             "$ref": "#/$defs/nullable_str",
             "description": "A sentence said WORD FOR WORD when the event fires, or null. Only put exact brief wording here."
           },
+          "stage_say": {
+            "type": "object",
+            "propertyNames": {"enum": ["opening", "third_party", "identity", "negotiate"]},
+            "additionalProperties": {"type": "string", "minLength": 1},
+            "description": "Optional: the sentence said when the event ends the call in one stage, keyed by stage, when the brief words it differently there (e.g. a tool failure during identity versus during negotiation). Exact brief wording when it is quoted; otherwise one short plain sentence that says what the brief describes. Absent: say is used."
+          },
           "instruction": {
             "$ref": "#/$defs/nullable_str",
             "description": "Guidance for the dialogue model, NOT said verbatim (e.g. 'acknowledge briefly', 'stay neutral')."

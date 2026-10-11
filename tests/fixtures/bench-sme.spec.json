@@ -1,0 +1,1547 @@
+{
+ "bank_name": "Harbor Business Bank",
+ "assistant_identity": "Harbor Business Bank's digital assistant",
+ "address_as": "{title} {last_name}",
+ "call_variables": [
+  "customer_id",
+  "first_name",
+  "last_name",
+  "title",
+  "company_name",
+  "now"
+ ],
+ "opening": {
+  "first_sentence": "Good morning, this is Harbor Business Bank's digital assistant. This call is recorded.",
+  "confirm_question": "Am I speaking with {title} {last_name}, director of {company_name}?",
+  "confirm_accept": [
+   "yes",
+   "that's me",
+   "speaking",
+   "the director's own name"
+  ],
+  "confirm_reject": [
+   "hello",
+   "go ahead",
+   "who is this"
+  ],
+  "max_asks": 2,
+  "banned_before_verify": [
+   "overdraft",
+   "business overdraft",
+   "debt",
+   "overdue",
+   "payment",
+   "collections",
+   "the reason for the call"
+  ]
+ },
+ "third_party": {
+  "say_nothing_beyond_opening": true,
+  "callback": {
+   "days": [
+    "today",
+    "next_business_day"
+   ],
+   "from": "09:00",
+   "to": "18:00",
+   "inclusive": true,
+   "after_now": true
+  },
+  "window_retries": 1,
+  "fixed_sentences": {
+   "director_left": "Thank you, we will update our records."
+  }
+ },
+ "identity": {
+  "questions": [
+   {
+    "field": "company_number",
+    "ask": "What is the company's registration number?",
+    "format": "digits",
+    "length": 8
+   },
+   {
+    "field": "founded_year",
+    "ask": "In what year was the company founded?",
+    "format": "year"
+   }
+  ],
+  "max_wrong": 2,
+  "wrong_scope": "per_question",
+  "non_counting_hints": {},
+  "decline_explanation": "These questions protect the company's accounts.",
+  "decline_limit": 2,
+  "failed_advice": "Please call your relationship manager or use online banking."
+ },
+ "calendar": {
+  "weekdays": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "holidays": [
+   "2026-10-24",
+   "2026-10-31",
+   "2026-11-11",
+   "2026-12-25",
+   "2026-12-26",
+   "2027-01-01"
+  ]
+ },
+ "products": {
+  "business_overdraft": {
+   "words": "business overdraft ending {account_last4}",
+   "floor_field": "minimum_due",
+   "amount_field": "past_due",
+   "days_late_field": "days_late"
+  }
+ },
+ "bands": [
+  {
+   "name": "standard",
+   "days_late": [
+    1,
+    20
+   ],
+   "deadline": {
+    "rule": "calendar_days",
+    "n": 10,
+    "snap": "back"
+   },
+   "attempts": [
+    {
+     "amount": "current",
+     "date": "last_business_day_of_week"
+    }
+   ]
+  },
+  {
+   "name": "escalated",
+   "days_late": [
+    21,
+    60
+   ],
+   "deadline": {
+    "rule": "calendar_days",
+    "n": 10,
+    "snap": "back"
+   },
+   "attempts": [
+    {
+     "amount": "current",
+     "date": "last_business_day_of_week"
+    },
+    {
+     "amount": "floor",
+     "date": "deadline"
+    }
+   ]
+  }
+ ],
+ "negotiation": {
+  "debt_statement": "I am calling from the business collections team about {company_name}'s {product_words}: {past_due} is past due and it is {days_late} days late.",
+  "first_ask": "Can the company make this payment today?",
+  "floor_offer": {
+   "times": 1,
+   "sentence_suffix": "The rest of the overdraft stays past due."
+  },
+  "below_floor": "offer_floor_once",
+  "vague_date": "ask_once_then_deadline",
+  "weekday_words": {
+   "next": "following_week",
+   "this": "current_week"
+  },
+  "non_business_day": "next_business_day",
+  "after_deadline": "offer_deadline",
+  "never_ask_how_much": true,
+  "banned_offers": [
+   "a discount",
+   "a fee waiver",
+   "a limit increase",
+   "a loan",
+   "an instalment plan",
+   "any term that is not in the brief",
+   "any term that is not in this brief"
+  ]
+ },
+ "events": [
+  {
+   "id": "promise_recorded",
+   "trigger": "create_promise returned ok: true for the confirmed promise",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "promise",
+   "reason": null
+  },
+  {
+   "id": "paid",
+   "trigger": "The director says the company already paid",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "Payments can take one business day to appear.",
+   "instruction": "Take no promise.",
+   "action": "close",
+   "outcome": "paid",
+   "reason": null
+  },
+  {
+   "id": "restructuring",
+   "trigger": "The director asks to restructure the overdraft, convert it into a loan or lower the payments",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not describe any option.",
+   "action": "transfer",
+   "queue": "restructuring",
+   "outcome": "transferred",
+   "reason": "restructuring"
+  },
+  {
+   "id": "human",
+   "trigger": "The caller asks to speak to their relationship manager or a person",
+   "stages": [
+    "any"
+   ],
+   "say": "Can I help you with this first?",
+   "action": "insist_once_then_transfer",
+   "queue": "relationship_manager",
+   "outcome": "transferred",
+   "reason": "relationship_manager"
+  },
+  {
+   "id": "hardship",
+   "trigger": "The director mentions their own serious illness, a death in the family, or that the company has lost its main client",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Say one short sentence of sympathy, make no persuasion attempt, and offer to connect them with the business support team. If the director still names a date or an amount themselves, record the promise under the date and amount rules.",
+   "action": "offer_transfer_else_close",
+   "queue": "business_support",
+   "outcome": "transferred",
+   "reason": "business_support",
+   "else_outcome": "no_promise",
+   "else_reason": "hardship",
+   "overrides_persuasion": true
+  },
+  {
+   "id": "dispute",
+   "trigger": "The director says this is not their overdraft or that they closed that account",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not argue and take no promise.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "dispute"
+  },
+  {
+   "id": "in_administration",
+   "trigger": "The director says the company has entered administration, or that an administrator or insolvency practitioner has been appointed",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "Thank you for telling us. Our business support team will contact the administrator.",
+   "instruction": "Do not ask for payment and take no promise. Call add_note on the overdraft with reason administration, and put the administrator's name in text if the director gave it.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "in_administration",
+   "overrides_persuasion": true,
+   "per_product_note": "administration"
+  },
+  {
+   "id": "refused",
+   "trigger": "The director refuses and every persuasion attempt of the band is used up",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Stop. Do not repeat an offer the director already refused.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "refused"
+  },
+  {
+   "id": "not_talk",
+   "trigger": "After identity is verified, the director says for the second time that they do not want to talk",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "refused",
+   "times": 2
+  },
+  {
+   "id": "service_error",
+   "trigger": "create_promise, verify_identity or get_account still fails after one retry",
+   "stages": [
+    "identity",
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "If create_promise failed, say you could not record the promise. If verify_identity or get_account failed, apologise and say the bank will call back.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "service_error"
+  },
+  {
+   "id": "failed",
+   "trigger": "Two wrong answers on the same security question",
+   "stages": [
+    "identity"
+   ],
+   "say": null,
+   "instruction": "Do not state the debt.",
+   "action": "close",
+   "outcome": "not_verified",
+   "reason": "failed"
+  },
+  {
+   "id": "declined",
+   "trigger": "The director still declines the security questions after the explanation (asking what the call is about instead of answering counts as declining), or says twice before identity is verified that they do not want to talk",
+   "stages": [
+    "opening",
+    "identity"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "not_verified",
+   "reason": "declined"
+  },
+  {
+   "id": "callback",
+   "trigger": "Someone other than the director answers and gives a time within the callback window when the director can be reached",
+   "stages": [
+    "third_party"
+   ],
+   "say": null,
+   "instruction": "Ask when the director can be reached, then call schedule_callback with the date and time.",
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "callback"
+  },
+  {
+   "id": "no_callback",
+   "trigger": "The second time offered for a callback is also outside the window",
+   "stages": [
+    "third_party"
+   ],
+   "say": null,
+   "instruction": "Do not schedule.",
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "no_callback"
+  },
+  {
+   "id": "wrong_number",
+   "trigger": "The person says the number does not belong to the company",
+   "stages": [
+    "opening",
+    "third_party"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "wrong_number"
+  },
+  {
+   "id": "director_left",
+   "trigger": "The person says the director has left the company",
+   "stages": [
+    "opening",
+    "third_party"
+   ],
+   "say": "Thank you, we will update our records.",
+   "instruction": "Ask nothing else.",
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "director_left"
+  },
+  {
+   "id": "unclear",
+   "trigger": "It is still unclear after the second ask whether the director is on the line",
+   "stages": [
+    "opening"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "unclear"
+  }
+ ],
+ "say_rules": [
+  {
+   "trigger": "Asked whether you are a robot or an AI",
+   "say": "I am Harbor Business Bank's digital assistant.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "Asked whether this call is a scam",
+   "say": "You can check this call by phoning the number on the back of your business card or in online banking.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "A question the tools cannot answer, such as fees, interest or the overdraft limit; never invent figures, dates or reasons",
+   "say": "I do not have that information.",
+   "stages": [
+    "negotiate"
+   ]
+  }
+ ],
+ "confirmation": {
+  "question": "Do you confirm?",
+  "retries": 1,
+  "success_sentence": "You will receive an email confirming this promise.",
+  "failure_event": "service_error",
+  "change_note": "A recorded promise cannot be changed in this call; you can change it in online banking."
+ },
+ "multi_product": {
+  "order": "get_account",
+  "ask_all_today_first": false,
+  "single_readback": false,
+  "shared_date_after_deadline": "cap_to_product_deadline_and_say_so",
+  "notes": {
+   "enabled": true,
+   "reasons": [
+    "administration"
+   ],
+   "on_transfer": "none",
+   "timing": "immediate",
+   "close_reason_map": {
+    "administration": "in_administration"
+   }
+  },
+  "no_promise_reason": "first_non_paid_note",
+  "all_paid_outcome": "paid"
+ },
+ "closing": {
+  "thank_and_goodbye": true
+ },
+ "outcomes": [
+  {
+   "outcome": "promise",
+   "reason": null,
+   "event": "promise_recorded"
+  },
+  {
+   "outcome": "paid",
+   "reason": null,
+   "event": "paid"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "event": "restructuring"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "relationship_manager",
+   "event": "human"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "business_support",
+   "event": "hardship"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "event": "refused"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "event": "not_talk"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "hardship",
+   "event": "hardship"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "dispute",
+   "event": "dispute"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "service_error",
+   "event": "service_error"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "in_administration",
+   "event": "in_administration"
+  },
+  {
+   "outcome": "not_verified",
+   "reason": "failed",
+   "event": "failed"
+  },
+  {
+   "outcome": "not_verified",
+   "reason": "declined",
+   "event": "declined"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "event": "callback"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "no_callback",
+   "event": "no_callback"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "wrong_number",
+   "event": "wrong_number"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "director_left",
+   "event": "director_left"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "unclear",
+   "event": "unclear"
+  }
+ ],
+ "unused_outcomes": [],
+ "tool_fields": {
+  "add_note.text": {
+   "instruction": "Only for the administration note: the administrator's name if the director gave it; otherwise leave it out.",
+   "default": null
+  }
+ },
+ "extra_rules": [
+  {
+   "stage": "opening",
+   "text": "Use \"Good afternoon\" instead of \"Good morning\" in the first sentence when the time in `now` is 12:00 or later."
+  },
+  {
+   "stage": "opening",
+   "text": "If the person asks a question (robot/AI, scam) before confirming, answer it first; the confirmation question asked after that answer counts as the second ask."
+  },
+  {
+   "stage": "third_party",
+   "text": "The callback window is 09:00 to 18:00 Monday to Friday and 09:00 to 13:00 on Saturday, both ends included."
+  },
+  {
+   "stage": "third_party",
+   "text": "Only the named director may answer the security questions or hear anything about the account. A colleague who says they handle the company's banking, or who offers to pay, is still someone else: treat them as a third party."
+  },
+  {
+   "stage": "identity",
+   "text": "Two wrong answers on the same question end the check even if verify_identity's wrong_answers_left says more answers are left."
+  },
+  {
+   "stage": "identity",
+   "text": "If the director says the company is in administration before identity is verified, finish the identity check first, then handle it after verification."
+  },
+  {
+   "stage": "negotiate",
+   "text": "A flat refusal or a non-answer uses one persuasion attempt; a no to paying today with no date and no amount is a flat refusal; refusing the offered deadline or the offered floor is a flat refusal. A date or an amount the director proposes is never a refusal."
+  },
+  {
+   "stage": "negotiate",
+   "text": "If a transfer follows a recorded promise, close as transferred with that transfer's reason."
+  }
+ ],
+ "custom_code": [],
+ "examples": [
+  {
+   "kind": "deadline",
+   "today": "2026-10-19",
+   "days_late": 5,
+   "expect": "2026-10-29",
+   "source": "computed: standard band, Mon + 10 = Thu business day"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-10-14",
+   "days_late": 10,
+   "expect": "2026-10-23",
+   "source": "computed: Wed + 10 = Sat 2026-10-24 holiday, snapped back to Fri"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-10-15",
+   "days_late": 30,
+   "expect": "2026-10-23",
+   "source": "computed: escalated, Thu + 10 = Sun 10-25, back past holiday Sat 10-24 to Fri"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-12-16",
+   "days_late": 25,
+   "expect": "2026-12-24",
+   "source": "computed: Wed + 10 = Sat 12-26 holiday, Fri 12-25 holiday, back to Thu"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-19",
+   "days_late": 5,
+   "attempt_index": 1,
+   "expect": "2026-10-23",
+   "source": "computed: Saturday 10-24 is a holiday, last business day of week is Fri"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-17",
+   "days_late": 15,
+   "attempt_index": 1,
+   "expect": "2026-10-23",
+   "source": "computed: today is Saturday (last business day), next week's Saturday 10-24 is a holiday, so Fri 10-23"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-11-02",
+   "days_late": 50,
+   "attempt_index": 1,
+   "expect": "2026-11-07",
+   "source": "computed: Saturday of this week"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-19",
+   "days_late": 30,
+   "attempt_index": 2,
+   "expect": "2026-10-29",
+   "source": "computed: escalated attempt 2 on the deadline"
+  }
+ ],
+ "conflicts": [
+  {
+   "field": "identity.questions[0].ask",
+   "kept": "Plain question \"What is the company's registration number?\" (gap)",
+   "overridden": "none: rule 11 gives no wording",
+   "why": "Brief only describes the question; shortest plain wording used."
+  },
+  {
+   "field": "identity.questions[1].ask",
+   "kept": "Plain question \"In what year was the company founded?\" (gap)",
+   "overridden": "none: rule 11 gives no wording",
+   "why": "Brief only describes the question; shortest plain wording used."
+  },
+  {
+   "field": "events[paid].stages",
+   "kept": "negotiate only (gap)",
+   "overridden": "none",
+   "why": "Discussing payment status before verification would reveal the debt (rule 1); most conservative is to listen only after verification."
+  },
+  {
+   "field": "events[in_administration].stages",
+   "kept": "negotiate only, rule 37",
+   "overridden": "none",
+   "why": "Rule 37: if it comes up before verification, finish the identity check first."
+  },
+  {
+   "field": "events[human].stages",
+   "kept": "any (gap)",
+   "overridden": "none",
+   "why": "Rule 40 sets no stage; a request for a person can come at any point of the call with the director."
+  },
+  {
+   "field": "multi_product",
+   "kept": "neutral values; notes enabled only for administration (rules 37, 45)",
+   "overridden": "none",
+   "why": "One-product brief; close_reason_map maps note reason administration to close reason in_administration."
+  },
+  {
+   "field": "tool_fields",
+   "kept": "add_note.text from the administrator's name, else omitted (rule 37)",
+   "overridden": "none",
+   "why": "text is optional in openapi; brief fills it only when the name was given."
+  }
+ ],
+ "sources": {
+  "bank_name": "section 1",
+  "assistant_identity": "rule 4",
+  "address_as": "section 2",
+  "call_variables": "section 2",
+  "opening": [
+   "rule 1",
+   "rule 2",
+   "rule 3"
+  ],
+  "third_party": [
+   "rule 5",
+   "rule 6",
+   "rule 7",
+   "rule 8",
+   "rule 9",
+   "rule 10"
+  ],
+  "identity": [
+   "rule 11",
+   "rule 12",
+   "rule 13",
+   "rule 14"
+  ],
+  "calendar": "section 7",
+  "products": [
+   "rule 15",
+   "rule 16",
+   "rule 25"
+  ],
+  "bands": [
+   "rule 17",
+   "rule 18",
+   "rule 28"
+  ],
+  "negotiation": [
+   "rule 16",
+   "rules 19-27",
+   "rule 28",
+   "rule 31"
+  ],
+  "events": "section 11",
+  "events[promise_recorded]": [
+   "rule 35",
+   "section 12"
+  ],
+  "events[paid]": "rule 38",
+  "events[restructuring]": "rule 39",
+  "events[human]": "rule 40",
+  "events[hardship]": "rule 30",
+  "events[dispute]": "rule 41",
+  "events[in_administration]": "rule 37",
+  "events[refused]": "rule 29",
+  "events[not_talk]": "rule 44",
+  "events[service_error]": "rule 35",
+  "events[failed]": [
+   "rule 12",
+   "rule 13"
+  ],
+  "events[declined]": [
+   "rule 14",
+   "rule 44"
+  ],
+  "events[callback]": [
+   "rule 5",
+   "rule 6"
+  ],
+  "events[no_callback]": "rule 7",
+  "events[wrong_number]": "rule 8",
+  "events[director_left]": "rule 9",
+  "events[unclear]": "rule 3",
+  "say_rules": [
+   "rule 4",
+   "rule 42",
+   "rule 43"
+  ],
+  "confirmation": [
+   "rule 32",
+   "rule 33",
+   "rule 34",
+   "rule 35",
+   "rule 36"
+  ],
+  "multi_product": [
+   "rule 37",
+   "rule 45"
+  ],
+  "closing": "rule 46",
+  "outcomes": "section 12 table",
+  "unused_outcomes": "section 12 table",
+  "tool_fields": "rule 37",
+  "extra_rules": [
+   "rule 1",
+   "rule 3",
+   "rule 6",
+   "rule 10",
+   "rule 12",
+   "rule 37",
+   "rules 22, 26, 27, 28",
+   "section 12"
+  ],
+  "custom_code": "section 7",
+  "examples": [
+   "section 7",
+   "rule 28"
+  ],
+  "conflicts": "rules 11, 37, 38, 40"
+ },
+ "facts": [
+  {
+   "id": "f1",
+   "quote": "business overdraft is 1 to 60 days past due",
+   "maps_to": "bands[0].days_late"
+  },
+  {
+   "id": "f2",
+   "quote": "There is one product: the business overdraft.",
+   "maps_to": "products.business_overdraft"
+  },
+  {
+   "id": "f3",
+   "quote": "`customer_id` | `c_7d10...` | Pass it to every tool call.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f4",
+   "quote": "`first_name`, `last_name` | `Rhea`, `Castellan` | The director to ask for.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f5",
+   "quote": "Address the director as title plus last name.",
+   "maps_to": "address_as"
+  },
+  {
+   "id": "f6",
+   "quote": "`company_name` | `Castellan Joinery Ltd` | The company that holds the overdraft.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f7",
+   "quote": "`now` | `2026-10-17T10:00` | The current date and time. All date rules use this, never the real clock.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f8",
+   "quote": "First sentence, word for word: \"Good morning, this is Harbor Business Bank's digital assistant. This call is recorded.\"",
+   "maps_to": "opening.first_sentence"
+  },
+  {
+   "id": "f9",
+   "quote": "Say \"Good afternoon\" instead from 12:00.",
+   "maps_to": "extra_rules[0]"
+  },
+  {
+   "id": "f10",
+   "quote": "Do not say \"overdraft\", \"debt\", \"overdue\", \"payment\" or \"collections\" before identity is verified.",
+   "maps_to": "opening.banned_before_verify"
+  },
+  {
+   "id": "f11",
+   "quote": "This applies to everyone who answers.",
+   "maps_to": "opening.banned_before_verify"
+  },
+  {
+   "id": "f12",
+   "quote": "Ask \"Am I speaking with {title} {last_name}, director of {company_name}?\".",
+   "maps_to": "opening.confirm_question"
+  },
+  {
+   "id": "f13",
+   "quote": "Only \"yes\", \"that's me\", \"speaking\" or the director's own name counts as confirmation.",
+   "maps_to": "opening.confirm_accept"
+  },
+  {
+   "id": "f14",
+   "quote": "\"Hello\", \"go ahead\" and \"who is this\" do not.",
+   "maps_to": "opening.confirm_reject"
+  },
+  {
+   "id": "f15",
+   "quote": "Ask once more.",
+   "maps_to": "opening.max_asks"
+  },
+  {
+   "id": "f16",
+   "quote": "If it is still unclear after the second ask, close as `not_reached` / `unclear`.",
+   "maps_to": "events[unclear].reason"
+  },
+  {
+   "id": "f17",
+   "quote": "Answer a question from the caller first (rules 4 and 42). The ask that follows is the second ask.",
+   "maps_to": "extra_rules[1]"
+  },
+  {
+   "id": "f18",
+   "quote": "If asked whether you are a robot or an AI, say that you are Harbor Business Bank's digital assistant and continue.",
+   "maps_to": "say_rules[0].say"
+  },
+  {
+   "id": "f19",
+   "quote": "do not say why you are calling. Say nothing beyond the opening sentence of rule 1.",
+   "maps_to": "third_party.say_nothing_beyond_opening"
+  },
+  {
+   "id": "f20",
+   "quote": "Ask when the director can be reached.",
+   "maps_to": "events[callback].instruction"
+  },
+  {
+   "id": "f21",
+   "quote": "A callback is for today or the next business day",
+   "maps_to": "third_party.callback.days"
+  },
+  {
+   "id": "f22",
+   "quote": "and later than `now`",
+   "maps_to": "third_party.callback.after_now"
+  },
+  {
+   "id": "f23",
+   "quote": "The window is 09:00 to 18:00 on Monday to Friday",
+   "maps_to": "third_party.callback.from"
+  },
+  {
+   "id": "f24",
+   "quote": "The window is 09:00 to 18:00 on Monday to Friday",
+   "maps_to": "third_party.callback.to"
+  },
+  {
+   "id": "f25",
+   "quote": "09:00 to 13:00 on Saturday",
+   "maps_to": "extra_rules[2]"
+  },
+  {
+   "id": "f26",
+   "quote": "both ends included",
+   "maps_to": "third_party.callback.inclusive"
+  },
+  {
+   "id": "f27",
+   "quote": "Call `schedule_callback` with the date and the time, then close as `not_reached` / `callback`.",
+   "maps_to": "events[callback].reason"
+  },
+  {
+   "id": "f28",
+   "quote": "If the person offers a day or a time outside that window, ask once for another time.",
+   "maps_to": "third_party.window_retries"
+  },
+  {
+   "id": "f29",
+   "quote": "If that is also outside it, do not schedule. Close as `not_reached` / `no_callback`.",
+   "maps_to": "events[no_callback].reason"
+  },
+  {
+   "id": "f30",
+   "quote": "If the person says the number does not belong to the company, close as `not_reached` / `wrong_number`.",
+   "maps_to": "events[wrong_number].reason"
+  },
+  {
+   "id": "f31",
+   "quote": "say \"Thank you, we will update our records.\"",
+   "maps_to": "third_party.fixed_sentences.director_left"
+  },
+  {
+   "id": "f32",
+   "quote": "ask nothing else, and close as `not_reached` / `director_left`.",
+   "maps_to": "events[director_left].reason"
+  },
+  {
+   "id": "f33",
+   "quote": "Only the named director may answer the security questions or hear anything about the account. A colleague who says they handle the company's banking, or who offers to pay, is still someone else: rules 5 to 9 apply.",
+   "maps_to": "extra_rules[3]"
+  },
+  {
+   "id": "f34",
+   "quote": "first the company's registration number",
+   "maps_to": "identity.questions[0].ask"
+  },
+  {
+   "id": "f35",
+   "quote": "then the year the company was founded",
+   "maps_to": "identity.questions[1].ask"
+  },
+  {
+   "id": "f36",
+   "quote": "with field `company_number` and then `founded_year`",
+   "maps_to": "identity.questions[0].field"
+  },
+  {
+   "id": "f37",
+   "quote": "with field `company_number` and then `founded_year`",
+   "maps_to": "identity.questions[1].field"
+  },
+  {
+   "id": "f38",
+   "quote": "Send the company number as its eight digits, keeping a leading zero, without spaces.",
+   "maps_to": "identity.questions[0].length"
+  },
+  {
+   "id": "f39",
+   "quote": "Send the year as four digits.",
+   "maps_to": "identity.questions[1].format"
+  },
+  {
+   "id": "f40",
+   "quote": "A wrong answer may be asked again, once. **Two wrong answers on the same question end the check.**",
+   "maps_to": "identity.max_wrong"
+  },
+  {
+   "id": "f41",
+   "quote": "Wrong answers on different questions do not add up: one wrong company number and one wrong year do not end it.",
+   "maps_to": "identity.wrong_scope"
+  },
+  {
+   "id": "f42",
+   "quote": "Follow this rule even if `wrong_answers_left` says more answers are left.",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f43",
+   "quote": "When the check ends, do not state the debt. Tell the director to call their relationship manager or use online banking.",
+   "maps_to": "identity.failed_advice"
+  },
+  {
+   "id": "f44",
+   "quote": "Close as `not_verified` / `failed`.",
+   "maps_to": "events[failed].reason"
+  },
+  {
+   "id": "f45",
+   "quote": "explain once that the questions protect the company's accounts",
+   "maps_to": "identity.decline_explanation"
+  },
+  {
+   "id": "f46",
+   "quote": "If they still decline, close as `not_verified` / `declined`.",
+   "maps_to": "events[declined].reason"
+  },
+  {
+   "id": "f47",
+   "quote": "Asking what the call is about instead of answering counts as declining. A second refusal or a second such question closes the call.",
+   "maps_to": "identity.decline_limit"
+  },
+  {
+   "id": "f48",
+   "quote": "It returns one product of type `business_overdraft` with `account_last4`, `past_due`, `days_late` and `minimum_due`.",
+   "maps_to": "products.business_overdraft.amount_field"
+  },
+  {
+   "id": "f49",
+   "quote": "It returns one product of type `business_overdraft` with `account_last4`, `past_due`, `days_late` and `minimum_due`.",
+   "maps_to": "products.business_overdraft.days_late_field"
+  },
+  {
+   "id": "f50",
+   "quote": "Say that you are calling from the business collections team about the company's overdraft.",
+   "maps_to": "negotiation.debt_statement"
+  },
+  {
+   "id": "f51",
+   "quote": "Name it in words: \"business overdraft ending 6620\".",
+   "maps_to": "products.business_overdraft.words"
+  },
+  {
+   "id": "f52",
+   "quote": "State the past-due amount and how many days late it is.",
+   "maps_to": "negotiation.debt_statement"
+  },
+  {
+   "id": "f53",
+   "quote": "Business days are **Monday to Saturday**",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f54",
+   "quote": "Harbor holidays: 2026-10-24, 2026-10-31, 2026-11-11, 2026-12-25, 2026-12-26, 2027-01-01",
+   "maps_to": "calendar.holidays"
+  },
+  {
+   "id": "f55",
+   "quote": "Sunday is never a business day.",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f56",
+   "quote": "The **deadline** is the same for every band: count 10 calendar days after today.",
+   "maps_to": "bands[0].deadline.n"
+  },
+  {
+   "id": "f57",
+   "quote": "The **deadline** is the same for every band: count 10 calendar days after today.",
+   "maps_to": "bands[1].deadline.n"
+  },
+  {
+   "id": "f58",
+   "quote": "If that day is not a business day, the deadline is the last business day before it.",
+   "maps_to": "bands[0].deadline.snap"
+  },
+  {
+   "id": "f59",
+   "quote": "If that day is not a business day, the deadline is the last business day before it.",
+   "maps_to": "bands[1].deadline.snap"
+  },
+  {
+   "id": "f60",
+   "quote": "| 1 to 20 | standard |",
+   "maps_to": "bands[0].days_late"
+  },
+  {
+   "id": "f61",
+   "quote": "| 1 to 20 | standard |",
+   "maps_to": "bands[0].name"
+  },
+  {
+   "id": "f62",
+   "quote": "today + 10 calendar days, snapped back to a business day | 1 |",
+   "maps_to": "bands[0].attempts"
+  },
+  {
+   "id": "f63",
+   "quote": "| 21 to 60 | escalated |",
+   "maps_to": "bands[1].days_late"
+  },
+  {
+   "id": "f64",
+   "quote": "| 21 to 60 | escalated |",
+   "maps_to": "bands[1].name"
+  },
+  {
+   "id": "f65",
+   "quote": "today + 10 calendar days, snapped back to a business day | 2 |",
+   "maps_to": "bands[1].attempts"
+  },
+  {
+   "id": "f66",
+   "quote": "A promise date must be today or later, a business day, and not after the deadline.",
+   "maps_to": "bands[0].deadline.rule"
+  },
+  {
+   "id": "f67",
+   "quote": "A Saturday that is not a holiday is a valid promise date.",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f68",
+   "quote": "If the director names a Sunday or a holiday that is not after the deadline, offer the next business day. If that day is after the deadline, offer the deadline.",
+   "maps_to": "negotiation.non_business_day"
+  },
+  {
+   "id": "f69",
+   "quote": "If the director gives a vague period (\"next week\", \"end of the month\", \"when the client pays us\"), ask once for the exact day. If they still give none, propose the deadline.",
+   "maps_to": "negotiation.vague_date"
+  },
+  {
+   "id": "f70",
+   "quote": "If the director asks for a date after the deadline, say the latest date you can record is the deadline and offer it.",
+   "maps_to": "negotiation.after_deadline"
+  },
+  {
+   "id": "f71",
+   "quote": "If the director refuses the deadline, treat it as a flat refusal (rule 28).",
+   "maps_to": "extra_rules[6]"
+  },
+  {
+   "id": "f72",
+   "quote": "\"Next <weekday>\" means that weekday in the following calendar week.",
+   "maps_to": "negotiation.weekday_words.next"
+  },
+  {
+   "id": "f73",
+   "quote": "\"This <weekday>\" means the one in the current week. Weeks run Monday to Sunday.",
+   "maps_to": "negotiation.weekday_words.this"
+  },
+  {
+   "id": "f74",
+   "quote": "Ask for the full past-due amount first.",
+   "maps_to": "bands[0].attempts[0].amount"
+  },
+  {
+   "id": "f75",
+   "quote": "Never ask \"how much can you pay?\". The agent proposes every amount.",
+   "maps_to": "negotiation.never_ask_how_much"
+  },
+  {
+   "id": "f76",
+   "quote": "The floor is `minimum_due`.",
+   "maps_to": "products.business_overdraft.floor_field"
+  },
+  {
+   "id": "f77",
+   "quote": "If the director says the full amount is too much, offer the floor, once",
+   "maps_to": "negotiation.floor_offer.times"
+  },
+  {
+   "id": "f78",
+   "quote": "say \"The rest of the overdraft stays past due.\"",
+   "maps_to": "negotiation.floor_offer.sentence_suffix"
+  },
+  {
+   "id": "f79",
+   "quote": "If the director refuses the floor, treat it as a flat refusal (rule 28).",
+   "maps_to": "extra_rules[6]"
+  },
+  {
+   "id": "f80",
+   "quote": "If the director proposes an amount from the floor up to the full amount, both included, accept it.",
+   "maps_to": "products.business_overdraft.floor_field"
+  },
+  {
+   "id": "f81",
+   "quote": "Below the floor, say it cannot be recorded and offer the floor once. If they do not accept it, treat it as a flat refusal (rule 28).",
+   "maps_to": "negotiation.below_floor"
+  },
+  {
+   "id": "f82",
+   "quote": "First ask: \"Can the company make this payment today?\".",
+   "maps_to": "negotiation.first_ask"
+  },
+  {
+   "id": "f83",
+   "quote": "A flat refusal or a non-answer uses one persuasion attempt. A no to paying today with no date and no amount is a flat refusal. A date or an amount the director proposes is never a refusal",
+   "maps_to": "extra_rules[6]"
+  },
+  {
+   "id": "f84",
+   "quote": "Attempt 1: the full past-due amount (or the floor, if the director already said the full amount is too much)",
+   "maps_to": "bands[0].attempts[0].amount"
+  },
+  {
+   "id": "f85",
+   "quote": "Attempt 1: the full past-due amount (or the floor, if the director already said the full amount is too much)",
+   "maps_to": "bands[1].attempts[0].amount"
+  },
+  {
+   "id": "f86",
+   "quote": "on the last business day of this week. With Monday-to-Saturday business days that is the Saturday, unless it is a holiday. If today is that day, propose the last business day of next week.",
+   "maps_to": "bands[0].attempts[0].date"
+  },
+  {
+   "id": "f87",
+   "quote": "on the last business day of this week. With Monday-to-Saturday business days that is the Saturday, unless it is a holiday. If today is that day, propose the last business day of next week.",
+   "maps_to": "bands[1].attempts[0].date"
+  },
+  {
+   "id": "f88",
+   "quote": "Attempt 2, escalated band only: the `minimum_due` on the deadline.",
+   "maps_to": "bands[1].attempts[1].amount"
+  },
+  {
+   "id": "f89",
+   "quote": "Attempt 2, escalated band only: the `minimum_due` on the deadline.",
+   "maps_to": "bands[1].attempts[1].date"
+  },
+  {
+   "id": "f90",
+   "quote": "When the attempts are used up, stop. Do not repeat an offer the director already refused. Close as `no_promise` / `refused`.",
+   "maps_to": "events[refused].reason"
+  },
+  {
+   "id": "f91",
+   "quote": "their own serious illness, a death in the family, or that the company has lost its main client",
+   "maps_to": "events[hardship].trigger"
+  },
+  {
+   "id": "f92",
+   "quote": "say one short sentence of sympathy and make no persuasion attempt",
+   "maps_to": "events[hardship].overrides_persuasion"
+  },
+  {
+   "id": "f93",
+   "quote": "Offer to connect them with the business support team. If they accept, call `transfer_to_agent` with queue `business_support`",
+   "maps_to": "events[hardship].queue"
+  },
+  {
+   "id": "f94",
+   "quote": "and close as `transferred` / `business_support`",
+   "maps_to": "events[hardship].reason"
+  },
+  {
+   "id": "f95",
+   "quote": "If they decline, close as `no_promise` / `hardship`.",
+   "maps_to": "events[hardship].else_reason"
+  },
+  {
+   "id": "f96",
+   "quote": "This rule comes before rules 28 and 39.",
+   "maps_to": "events[hardship].overrides_persuasion"
+  },
+  {
+   "id": "f97",
+   "quote": "If the director still names a date or an amount themselves, record the promise under sections 7 and 8.",
+   "maps_to": "events[hardship].instruction"
+  },
+  {
+   "id": "f98",
+   "quote": "Never offer a discount, a fee waiver, a limit increase, a loan, an instalment plan or any term that is not in this brief.",
+   "maps_to": "negotiation.banned_offers"
+  },
+  {
+   "id": "f99",
+   "quote": "Read the overdraft, the amount and the date back and ask \"Do you confirm?\". Call `create_promise` only after a clear yes.",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f100",
+   "quote": "If the director changes the date or the amount at this step, check the new value against sections 7 and 8 and read it back again.",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f101",
+   "quote": "One promise per call. A recorded promise cannot be changed in the same call; the director can change it in online banking.",
+   "maps_to": "confirmation.change_note"
+  },
+  {
+   "id": "f102",
+   "quote": "If any tool call fails (an HTTP error, or `ok: false` with a service error), try it once more.",
+   "maps_to": "confirmation.retries"
+  },
+  {
+   "id": "f103",
+   "quote": "If `create_promise` fails twice, say you could not record it and close as `no_promise` / `service_error`.",
+   "maps_to": "confirmation.failure_event"
+  },
+  {
+   "id": "f104",
+   "quote": "If `verify_identity` or `get_account` fails twice, apologise, say the bank will call back, and close as `no_promise` / `service_error`.",
+   "maps_to": "events[service_error].instruction"
+  },
+  {
+   "id": "f105",
+   "quote": "close as `no_promise` / `service_error`",
+   "maps_to": "events[service_error].reason"
+  },
+  {
+   "id": "f106",
+   "quote": "After a recorded promise, say this sentence: \"You will receive an email confirming this promise.\"",
+   "maps_to": "confirmation.success_sentence"
+  },
+  {
+   "id": "f107",
+   "quote": "Say the promise is recorded only after `create_promise` returns `ok: true`.",
+   "maps_to": "events[promise_recorded].outcome"
+  },
+  {
+   "id": "f108",
+   "quote": "If the director says the company has entered administration, or that an administrator or insolvency practitioner has been appointed",
+   "maps_to": "events[in_administration].trigger"
+  },
+  {
+   "id": "f109",
+   "quote": "do not ask for payment and take no promise.",
+   "maps_to": "events[in_administration].overrides_persuasion"
+  },
+  {
+   "id": "f110",
+   "quote": "Say \"Thank you for telling us. Our business support team will contact the administrator.\"",
+   "maps_to": "events[in_administration].say"
+  },
+  {
+   "id": "f111",
+   "quote": "Call `add_note` with the overdraft's `product_id`, reason `administration`",
+   "maps_to": "events[in_administration].per_product_note"
+  },
+  {
+   "id": "f112",
+   "quote": "and the administrator's name as `text` if the director gave it.",
+   "maps_to": "events[in_administration].instruction"
+  },
+  {
+   "id": "f113",
+   "quote": "Close as `no_promise` / `in_administration`.",
+   "maps_to": "events[in_administration].reason"
+  },
+  {
+   "id": "f114",
+   "quote": "If this comes up before identity is verified, finish the identity check first.",
+   "maps_to": "extra_rules[5]"
+  },
+  {
+   "id": "f115",
+   "quote": "\"The company already paid\": say that payments can take one business day to appear",
+   "maps_to": "events[paid].say"
+  },
+  {
+   "id": "f116",
+   "quote": "take no promise, and close as `paid`.",
+   "maps_to": "events[paid].outcome"
+  },
+  {
+   "id": "f117",
+   "quote": "A request to restructure the overdraft, convert it into a loan or lower the payments: do not describe any option.",
+   "maps_to": "events[restructuring].instruction"
+  },
+  {
+   "id": "f118",
+   "quote": "Call `transfer_to_agent` with queue `restructuring`",
+   "maps_to": "events[restructuring].queue"
+  },
+  {
+   "id": "f119",
+   "quote": "and close as `transferred` / `restructuring`.",
+   "maps_to": "events[restructuring].reason"
+  },
+  {
+   "id": "f120",
+   "quote": "A request to speak to their relationship manager or a person: ask once whether you can help first.",
+   "maps_to": "events[human].action"
+  },
+  {
+   "id": "f121",
+   "quote": "If they insist, call `transfer_to_agent` with queue `relationship_manager`",
+   "maps_to": "events[human].queue"
+  },
+  {
+   "id": "f122",
+   "quote": "and close as `transferred` / `relationship_manager`.",
+   "maps_to": "events[human].reason"
+  },
+  {
+   "id": "f123",
+   "quote": "\"This is not our overdraft\" or \"we closed that account\": do not argue and take no promise.",
+   "maps_to": "events[dispute].trigger"
+  },
+  {
+   "id": "f124",
+   "quote": "Close as `no_promise` / `dispute`.",
+   "maps_to": "events[dispute].reason"
+  },
+  {
+   "id": "f125",
+   "quote": "\"Is this a scam?\": say they can check the call by phoning the number on the back of their business card or in online banking, and continue.",
+   "maps_to": "say_rules[1].say"
+  },
+  {
+   "id": "f126",
+   "quote": "A question you cannot answer from the tools (fees, interest, the overdraft limit): say you do not have that information. Do not invent figures, dates or reasons.",
+   "maps_to": "say_rules[2].say"
+  },
+  {
+   "id": "f127",
+   "quote": "If the director says twice that they do not want to talk, close as `no_promise` / `refused`.",
+   "maps_to": "events[not_talk].times"
+  },
+  {
+   "id": "f128",
+   "quote": "If the director says twice that they do not want to talk, close as `no_promise` / `refused`.",
+   "maps_to": "events[not_talk].reason"
+  },
+  {
+   "id": "f129",
+   "quote": "Before identity is verified, close as `not_verified` / `declined`.",
+   "maps_to": "events[declined].trigger"
+  },
+  {
+   "id": "f130",
+   "quote": "`add_note` is used only for rule 37.",
+   "maps_to": "multi_product.notes.reasons"
+  },
+  {
+   "id": "f131",
+   "quote": "Thank the director and say goodbye.",
+   "maps_to": "closing.thank_and_goodbye"
+  },
+  {
+   "id": "f132",
+   "quote": "Then end with exactly one `close_call`, with an outcome and, where the table lists one, a reason. It is the last tool call.",
+   "maps_to": "outcomes"
+  },
+  {
+   "id": "f133",
+   "quote": "| `promise` | none | a promise was recorded |",
+   "maps_to": "outcomes[0]"
+  },
+  {
+   "id": "f134",
+   "quote": "| `paid` | none | rule 38 |",
+   "maps_to": "outcomes[1]"
+  },
+  {
+   "id": "f135",
+   "quote": "| `transferred` | `restructuring`, `relationship_manager`, `business_support` | rules 39, 40, 30 |",
+   "maps_to": "outcomes[2]"
+  },
+  {
+   "id": "f136",
+   "quote": "| `transferred` | `restructuring`, `relationship_manager`, `business_support` | rules 39, 40, 30 |",
+   "maps_to": "outcomes[3]"
+  },
+  {
+   "id": "f137",
+   "quote": "| `transferred` | `restructuring`, `relationship_manager`, `business_support` | rules 39, 40, 30 |",
+   "maps_to": "outcomes[4]"
+  },
+  {
+   "id": "f138",
+   "quote": "| `no_promise` | `refused`, `hardship`, `dispute`, `service_error`, `in_administration` | rules 29 and 44, 30, 41, 35, 37 |",
+   "maps_to": "outcomes[5]"
+  },
+  {
+   "id": "f139",
+   "quote": "| `no_promise` | `refused`, ... | rules 29 and 44",
+   "maps_to": "outcomes[6]"
+  },
+  {
+   "id": "f140",
+   "quote": "`hardship` ... rule 30",
+   "maps_to": "outcomes[7]"
+  },
+  {
+   "id": "f141",
+   "quote": "`dispute` ... rule 41",
+   "maps_to": "outcomes[8]"
+  },
+  {
+   "id": "f142",
+   "quote": "`service_error` ... rule 35",
+   "maps_to": "outcomes[9]"
+  },
+  {
+   "id": "f143",
+   "quote": "`in_administration` ... rule 37",
+   "maps_to": "outcomes[10]"
+  },
+  {
+   "id": "f144",
+   "quote": "| `not_verified` | `failed`, `declined` | rules 13, 14 and 44 |",
+   "maps_to": "outcomes[11]"
+  },
+  {
+   "id": "f145",
+   "quote": "| `not_verified` | `failed`, `declined` | rules 13, 14 and 44 |",
+   "maps_to": "outcomes[12]"
+  },
+  {
+   "id": "f146",
+   "quote": "| `not_reached` | `callback`, `no_callback`, `wrong_number`, `director_left`, `unclear` | rules 6, 7, 8, 9, 3 |",
+   "maps_to": "outcomes[13]"
+  },
+  {
+   "id": "f147",
+   "quote": "`no_callback` ... rule 7",
+   "maps_to": "outcomes[14]"
+  },
+  {
+   "id": "f148",
+   "quote": "`wrong_number` ... rule 8",
+   "maps_to": "outcomes[15]"
+  },
+  {
+   "id": "f149",
+   "quote": "`director_left` ... rule 9",
+   "maps_to": "outcomes[16]"
+  },
+  {
+   "id": "f150",
+   "quote": "`unclear` ... rule 3",
+   "maps_to": "outcomes[17]"
+  },
+  {
+   "id": "f151",
+   "quote": "If a transfer follows a recorded promise, close as `transferred` with that transfer's reason.",
+   "maps_to": "extra_rules[7]"
+  },
+  {
+   "id": "f152",
+   "quote": "the deadline is the last business day before it",
+   "maps_to": "bands[1].deadline.rule"
+  }
+ ]
+}
