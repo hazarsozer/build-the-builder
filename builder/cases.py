@@ -514,7 +514,8 @@ def _trigger_script(e, first):
 def s_event(c, eid, **o):
     e = _event(c.spec, eid)
     if not e or (e["outcome"] is None and e["action"] != "offer_transfer_else_close"): return None
-    p = c.products(_ladder(c.spec) if eid == "hardship" else _early(c.spec))[0]   # hardship: no attempt even with a ladder
+    acct = next((b for b in c.spec["bands"] if b.get("event") == eid), None)   # A15: the account data fires it
+    p = c.products(acct or (_ladder(c.spec) if eid == "hardship" else _early(c.spec)))[0]   # hardship: no attempt even with a ladder
     first = c.variables["first_name"]
     relative = "flatmate"
     fmt = {"he": c.p["he"], "his": c.p["his"], "theirs": c.p["theirs"], "name": c.name, "first": first, "relative": relative, "product": _words(c.spec, p)}
@@ -528,6 +529,7 @@ def s_event(c, eid, **o):
         if len(outside) < 2: return None
         fmt.update(when=_when(c, d), t1=_clock(outside[0]), t2=_clock(outside[1]))
     script = TEMPLATES[eid].format(**fmt) if eid in TEMPLATES else _trigger_script(e, first)
+    if acct: script = "Verified. Raises nothing of their own; listens to what the agent says about the account."
     transfers, alt = [], False
     if e["action"] == "transfer": transfers = [{"queue": e["queue"]}]
     elif e["action"] == "insist_once_then_transfer":

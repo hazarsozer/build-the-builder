@@ -213,3 +213,89 @@ def test_in03_attempt_2_offers_the_5th_business_day():
     st = json.loads(v["mp_state"])
     assert "2026-10-28" in json.dumps(st["p"]["p1"]) and "Wednesday 28 October 2026" in json.dumps(st["p"]["p1"]), st["p"]["p1"]
     assert [p for p in lint(w, s) if not p.startswith("warning:")] == []
+
+
+# ---------------------------------------------------------------- 4. an event the account data fires (lapsed policy)
+
+def _ins_lapsed():
+    s = copy.deepcopy(INS)
+    s["bands"][2]["event"] = "policy_lapsed"
+    return s
+
+
+def _prepare(w, prods, now="2026-10-29T10:00"):
+    v = {"now": now, "acct_products_json": json.dumps(prods)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    return v
+
+
+def _route(node, v):
+    """The first transition of a code node whose condition holds (equals / and / or only)."""
+    def ok(c):
+        if "logic" in c:
+            r = [ok(x) for x in c["conditions"]]
+            return all(r) if c["logic"] == "and" else any(r)
+        return c["operator"] == "equals" and str(v.get(c["variable"])) == c["operand"]
+    for t in node["transitions"]:
+        if ok(t["condition"]):
+            return t["target_node"]
+    return node.get("passthrough_default_transition")
+
+
+def test_band_event_validates():
+    from builder.validate import validate
+    assert validate(_ins_lapsed(), INS_OA) == []
+    bad = _ins_lapsed()
+    bad["bands"][2]["event"] = "nope"
+    assert any("nope" in e for e in validate(bad, INS_OA))
+
+
+def test_in06_lapsed_policy_fires_before_the_debt_is_stated():
+    """IN-06: life policy 74 days overdue. Expected transferred/policy_lapsed to retention; the agent stated the premium,
+    asked for payment and later transferred to customer_care as human_request."""
+    s = _ins_lapsed()
+    w = C(s, INS_OA, base_url="https://bank.example/v1")
+    assert [p for p in lint(w, s) if not p.startswith("warning:")] == []
+    v = _prepare(w, [_ins_product("p1", "life_insurance", 74, 96, 32)])
+    assert v["account_event"] == "policy_lapsed" and v["product_words"] == "life insurance policy ending 3307"
+    first = _route(w["nodes"]["prepare_account"], v)
+    assert first == "policy_lapsed_offer"
+    hold = w["nodes"]["policy_lapsed_hold"]
+    assert "sympathy" not in hold["task_message"] and "Thank you, you are verified." in hold["task_message"]
+    assert "has lapsed, so its cover has stopped" in hold["task_message"]
+    tr = {t["description"]: t["target_node"] for t in hold["transitions"]}
+    acc = [t for d, t in tr.items() if "transfer accepted" in d][0]
+    assert w["nodes"][acc]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]["properties"]["queue"]["default"] == "retention"
+    close_t = w["nodes"][acc]["passthrough_default_transition"] if w["nodes"][acc].get("passthrough_default_transition") else \
+        w["nodes"][acc]["transitions"][-1]["target_node"]
+    assert _close_of(w["nodes"][close_t]) == ("transferred", "policy_lapsed")
+    # declined, or a payment named: the else-close straight away, no wrap and so no notes
+    assert tr["policy_lapsed: the customer names a payment, none is taken"] == "close_policy_lapsed"
+    assert _close_of(w["nodes"]["close_policy_lapsed"]) == ("no_promise", "policy_lapsed")
+    assert "policy_lapsed_back" not in w["nodes"]
+    # never listened for in speech
+    neg = w["nodes"]["negotiate"]["extraction_schema"][0]["enum_values"]
+    assert not any(x.startswith("policy_lapsed") for x in neg)
+
+
+def test_lapsed_second_policy_names_that_policy():
+    s = _ins_lapsed()
+    w = C(s, INS_OA, base_url="https://bank.example/v1")
+    v = _prepare(w, [_ins_product("p1", "car_insurance", 9), dict(_ins_product("p2", "home_insurance", 70, 615, 205), policy_number_last4="5073")])
+    assert v["account_event"] == "policy_lapsed" and v["product_words"] == "home insurance policy ending 5073"
+
+
+def test_self_test_case_for_an_account_event_uses_that_band():
+    from builder import cases
+    c = cases.build(_ins_lapsed(), INS_OA, "event:policy_lapsed", "2026-10-29T10:00")
+    assert c["products"][0]["days_overdue"] > 60
+    assert c["expected"]["outcome"] == "no_promise" and c["expected"]["reason"] == "policy_lapsed" and c["expected"]["notes"] == []
+    assert "Declines the offer of a transfer" in c["script"]
+
+
+def test_no_lapsed_policy_negotiates_as_before():
+    s = _ins_lapsed()
+    w = C(s, INS_OA, base_url="https://bank.example/v1")
+    v = _prepare(w, [_ins_product("p1", "car_insurance", 9)])
+    assert v["account_event"] == "none" and _route(w["nodes"]["prepare_account"], v) == "negotiate"

@@ -562,6 +562,10 @@
               "$ref": "#/$defs/attempt"
             },
             "description": "Persuasion attempts in order; their count is the number of attempts allowed."
+          },
+          "event": {
+            "$ref": "#/$defs/str",
+            "description": "An events[].id that fires by itself as soon as get_account returns a product in this band, before the debt is stated or any payment is asked (e.g. a lapsed, written-off or closed product the brief handles with a fixed sentence and a transfer). The customer does not have to say anything. Such a band usually has no attempts. Leave it out for an ordinary band."
           }
         }
       },

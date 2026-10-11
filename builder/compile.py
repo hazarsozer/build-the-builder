@@ -400,6 +400,20 @@ except Exception as e:
     vars['account_error'] = str(e)[:200]
 '''
 
+# A15: the first product (get_account order) in a band with an event: that event fires; product_words names it
+ACCOUNT_EVENT_CODE = r'''
+try:
+    vars['account_event'] = 'none'
+    if vars.get('account_state') == 'ok':
+        for f in facts:
+            if f['band'].get('event'):
+                vars['account_event'] = f['band']['event']
+                vars['product_words'] = f['words']
+                break
+except Exception:
+    pass
+'''
+
 GET_ACCOUNT_POST = r'''
 try:
     import json
@@ -1158,6 +1172,8 @@ class _Compiler:
         self.base = (base_url or openapi["servers"][0]["url"]).rstrip("/")
         self.addr = tpl(spec["address_as"])
         self.events = {e["id"]: e for e in spec["events"]}
+        # A15: events a band fires by itself as get_account returns (a lapsed policy): never listened for in speech
+        self.account_events = list(dict.fromkeys(b["event"] for b in spec["bands"] if b.get("event") in self.events))
         self.fail_ev = spec["confirmation"].get("failure_event") or ""
         self.nodes = {}
         self.transfers = {}   # (queue, close) -> node key
@@ -1295,6 +1311,7 @@ class _Compiler:
         skip = set(STRUCTURAL.get(stage, set()))
         if stage == "negotiate":
             skip.add(self.fail_ev)
+        skip |= set(self.account_events)
         return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip
                 and not (self.multi and stage == "negotiate" and e["action"] == "note_and_continue")]
 
@@ -1502,7 +1519,7 @@ class _Compiler:
         """The brief's instruction without recording words (the hold step speaks before any promise)."""
         return re.sub(r"\brecord(?:s|ed)? (?:the|a) promise\b", "take their payment date and amount", text or "", flags=re.I)
 
-    def support_nodes(self, ev, transfer):
+    def support_nodes(self, ev, transfer, account=False):
         """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it and reads the reply:
         a yes transfers; a date or an amount the customer names returns to negotiate (<id>_back); a human request goes to
         that event's ask-once step; a question is answered in one sentence and the offer asked once more (first reply
@@ -1511,7 +1528,7 @@ class _Compiler:
         offer, hold, back = eid + "_offer", eid + "_hold", eid + "_back"
         if offer in self.nodes:
             return offer
-        end = self.end_target("negotiate", eid)
+        end = self.account_end(ev) if account else self.end_target("negotiate", eid)
         reply = eid + "_reply"
         code = "vars[%r] = 'yes'\nvars[%r] = 'pending'\nvars[%r] = %r\n" % (eid + "_offered", reply, eid + "_rule", self.support_rule(ev, True))
         if self.multi:  # reached from the read-back as well: negotiation is open again
@@ -1521,13 +1538,17 @@ class _Compiler:
         if self.multi:
             reset += ("vars['mp_msg'] = 'The customer named a date or an amount after the support offer. Make no offer of your own; "
                       "check what they named and call %s for that product.'\n" % multi_mod.SET_TOOL)
-        self.nodes[back] = code_node(back, reset, "negotiate")
+        if not account:
+            self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
         steps = ["Exactly one short sentence of sympathy."]
+        if account:
+            # nothing about the debt was said yet: the verification thanks, then the event's own sentence
+            steps = ["Say %s." % q(self.verified_lead().strip())]
         if ev.get("say"):
             steps.append("Say %s." % q(tpl(ev["say"])))
-        if banned:
+        if banned and not account:
             steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
         steps.append("Offer to connect them with %s, as a yes/no question." % team)
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
@@ -1536,7 +1557,7 @@ class _Compiler:
                    for r in self.s.get("say_rules", []) if {"any", "negotiate"} & set(r.get("stages") or ["any"])]
         # a request for a human keeps its own ask-once handling (brief rules apply after the offer too)
         values, routes, hdesc = [], [], []
-        for h in self.stage_events("negotiate"):
+        for h in ([] if account else self.stage_events("negotiate")):
             if h["action"] == "insist_once_then_transfer":
                 v = h["id"] + "_request"
                 values.append(v)
@@ -1544,20 +1565,25 @@ class _Compiler:
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
                 routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
+        situation = ("the customer " + bare_trigger(ev["trigger"])) if not account else (
+            "the account shows: " + bare_trigger(ev["trigger"]) + ". The product concerned: {{product_words}}")
+        pay = go(end if account else back, eid + (": the customer names a payment, none is taken" if account else ": the customer names a payment"),
+                 cond_any(eq(reply, "names_payment")))
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
             "on_enter": {"type": "llm"},
             "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
                              "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
                              "The brief's rule for this situation: %s\nNo tool call is allowed in this step."
-                             % ("the customer " + bare_trigger(ev["trigger"]),
+                             % (situation,
                                 "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
                                 "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
             "extraction_schema": [{
                 "name": reply, "type": "string", "min_confidence": 0.6,
                 "enum_values": ["pending", "accepted", "names_payment", "declined", "question"] + values + ["other"],
                 "description": " ".join(["The customer's LATEST message, a reply to the offer to connect them with %s." % team,
-                                         "accepted: they say yes to being connected.",
+                                         "accepted: they say yes to being connected." +
+                                         (" Asking to speak to a person counts as yes." if account else ""),
                                          "names_payment: they name a payment date or an amount themselves (\"I can pay 100 on Friday\").",
                                          "declined: they refuse the offer (even if they also ask whether there is anything else).",
                                          "question: they only ask a question (what the team does, whether this is a scam) and do not refuse."]
@@ -1566,8 +1592,7 @@ class _Compiler:
             # probe (fix round 1): the cap fires on the user turn that reaches it, before any route is evaluated, so 3
             # lets the second reply route normally (a yes there still transfers); the counter is 0 before the first reply
             "max_node_turns": 3, "max_turn_transition": end,
-            "transitions": [go(transfer, eid + ": transfer accepted", cond_any(eq(reply, "accepted"))),
-                            go(back, eid + ": the customer names a payment", cond_any(eq(reply, "names_payment")))] + routes + [
+            "transitions": [go(transfer, eid + ": transfer accepted", cond_any(eq(reply, "accepted"))), pay] + routes + [
                             go(end, eid + ": declined, anything else, unreadable, or a second non-yes reply", cond_any(
                                 eq(reply, "declined"), eq(reply, "other"),
                                 {"logic": "and", "conditions": [eq(reply, "pending"), gt(turns, SUPPORT_TURNS_SEEN)]},
@@ -2011,11 +2036,31 @@ HOW TO GET A PROMISE
                 _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
                 _const("NEG", {k: neg.get(k) for k in ("debt_statement", "debt_statement_per_product", "weekday_words", "non_business_day", "first_ask", "first_ask_all") if neg.get(k) is not None}) +
                 _const("NUMS", {str(k): v for k, v in NUM.items()}) + ACCOUNT_CODE +
-                (self.multi.account_code() if self.multi else ""))
+                (self.multi.account_code() if self.multi else "") + (ACCOUNT_EVENT_CODE if self.account_events else ""))
+        # A15: a product in a band with an event fires it before the debt is stated
+        tr = [go(self.account_event_entry(self.events[eid]), "Account event: " + eid,
+                 all_of(eq("account_state", "ok"), eq("account_event", eid))) for eid in self.account_events]
         # negotiate only on facts the snippet confirmed (account_state is its last write); anything else, including a
         # snippet that did not run, closes as an account error rather than speaking empty amounts and dates
         self.nodes["prepare_account"] = code_node("prepare_account", code, "close_account_error",
-                                                  [go("negotiate", "Account facts ready", cond_any(eq("account_state", "ok")))])
+                                                  tr + [go("negotiate", "Account facts ready", cond_any(eq("account_state", "ok")))])
+
+    def account_event_entry(self, ev):
+        """A15: where an account event starts. offer_transfer_else_close: the offer step (no sympathy, no way back to a
+        payment); a transfer: the transfer; a close: its close node. No wrap, so no notes, unless the event names a
+        per-product note on a several-product call."""
+        eid, act = ev["id"], ev["action"]
+        if act == "offer_transfer_else_close":
+            t = self.transfer_to(ev["queue"], self.close_key(eid) + "_transfer", eid)
+            return self.support_nodes(ev, t, account=True)
+        if act in ("transfer", "insist_once_then_transfer"):
+            return self.transfer_to(ev["queue"], self.close_key(eid), eid)
+        return self.account_end(ev)
+
+    def account_end(self, ev):
+        if self.multi and ev.get("per_product_note"):
+            return self.end_target("negotiate", ev["id"])
+        return self.close_key(ev["id"])
 
     def negotiate_node(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
