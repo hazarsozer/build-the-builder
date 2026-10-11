@@ -267,3 +267,31 @@ def test_no_sme_corpus_words_in_generic_text():
         glob.glob("builder/*.py") + glob.glob("builder/lib/*.py")
     hits = ["%s: %s" % (f, x) for f in files for x in words if x in open(f).read().lower()]
     assert hits == []
+
+
+# ---------------------------------------------------------------- fix round 1: the identity failure close's sentence
+
+def _id_fail_said(spec):
+    w = C(spec, SME_OA, base_url=URL)
+    v = {"title": "Ms", "last_name": "Novak"}
+    exec(_code(w["nodes"][ID_FAIL_CLOSE]), {"vars": v})
+    return v["farewell"]
+
+
+def test_identity_failure_close_speaks_the_events_identity_sentence():
+    s = copy.deepcopy(SME)
+    fe = next(e for e in s["events"] if e["id"] == "service_error")
+    fe["stage_say"] = {"identity": "I am sorry, I cannot check your answers right now. We will call you back."}
+    said = _id_fail_said(s)
+    assert said.startswith("I am sorry, I cannot check your answers right now. We will call you back. ")
+    assert "technical problem" not in said
+    from builder.validate import validate
+    assert validate(s, SME_OA) == []
+
+
+def test_identity_failure_close_falls_back_to_say_then_generic():
+    s = copy.deepcopy(SME)
+    assert _id_fail_said(s).startswith("I am sorry, there was a technical problem. ")  # the fixture: no say, no stage_say
+    fe = next(e for e in s["events"] if e["id"] == "service_error")
+    fe["say"] = "Sorry, our service is down."
+    assert _id_fail_said(s).startswith("Sorry, our service is down. ")

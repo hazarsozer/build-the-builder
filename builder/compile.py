@@ -1385,6 +1385,14 @@ class _Compiler:
         parts.append(self.thanks(named))
         return " ".join(parts)
 
+    def id_fail_farewell(self):
+        """A17: the identity service-failure close speaks the failure event's own sentence for identity (stage_say),
+        else its say, else its fixed sentence; the generic apology only when the spec stores none."""
+        fe = self.events[self.fail_ev]
+        say = ((fe.get("stage_say") or {}).get("identity") or fe.get("say")
+               or (self.s["third_party"].get("fixed_sentences") or {}).get(self.fail_ev))
+        return " ".join([code_tpl(say) if say else "I am sorry, there was a technical problem.", self.thanks(False)])
+
     def thanks(self, named):
         if self.s.get("closing", {}).get("thank_and_goodbye", True) is not False:
             return "Thank you for your time, " + self.s["address_as"] + ". Goodbye." if named else "Thank you for your time. Goodbye."
@@ -2327,8 +2335,7 @@ HOW TO RUN THE CALL
             self.build_closes()
         if self.id_fail:
             # its own node: a several-product call rewrites the event's close to speak the wrap's summary
-            fe = self.events[self.fail_ev]
-            n[ID_FAIL_CLOSE] = close_node(ID_FAIL_CLOSE, *self.fail_close(), self.farewell(fe, "close"))
+            n[ID_FAIL_CLOSE] = close_node(ID_FAIL_CLOSE, *self.fail_close(), self.id_fail_farewell())
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")

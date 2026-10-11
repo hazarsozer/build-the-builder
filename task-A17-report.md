@@ -69,3 +69,23 @@ reference specs lint clean; verbatim opening exact; no sme corpus words in gener
   changed ..." trips the "recorded before a promise is recorded" check in negotiate.
 - The identity service-error farewell is the generic "I am sorry, there was a technical problem."; the brief also
   wants "the bank will call back" (that is in the event's conditional instruction, not its `say`).
+
+## Fix round 1
+
+Important: `close_identity_service_error` now speaks the failure event's own identity sentence. `id_fail_farewell()`
+takes, in order: the event's new optional `stage_say.identity`, its `say`, `third_party.fixed_sentences[<event id>]`,
+else the generic "I am sorry, there was a technical problem."; then the unnamed thanks. The SME failure event covers
+two tools with different wording (create_promise: "could not record"; verify_identity: "bank will call back"), so one
+`say` cannot hold both: the schema gains `events[].stage_say` (stage -> sentence, neutral description), the
+extractor's Sentences clause tells it to fill `stage_say` when an event is worded differently per stage, and
+docs/spec-guide.md is regenerated. The bench fixture predates this, so it has no `stage_say` and falls back to the
+generic sentence until it is re-extracted (a fresh extraction is expected to write one; not run, no live calls).
+
+Tests (+2): with `stage_say.identity` set, the close speaks it (no generic sentence) and the spec validates; the fixture
+as is speaks the generic sentence; with only `say`, `say` is spoken. tests/test_a17.py + test_a15.py: 37 passed. Full
+suite: 773 passed, 6 skipped. spec-a, spec-b, ids still byte-identical to base.
+
+Optional minor (per-question counting): left as is. The HTTP-error route reads the platform's per-call
+`verify_identity_failure_count`; counting per question would need the pre-hook to mark a call in flight and
+the next pre-hook to see it, and whether pre-hook writes persist on a call that then fails with an HTTP error is
+unverified (no probe allowed). One failure on each question therefore still closes as service_error.
