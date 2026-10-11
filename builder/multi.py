@@ -26,6 +26,7 @@ amount and date reach config['body']; the pre-hook rejected a date after the dea
 on its deadline in mp_state; the model spoke both answers (the deadline, then the next product's attempt 1).
 """
 from builder.lib import dates, embed, money
+from builder.triggers import subj
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
 
 SLOTS = 3          # products per call the engine can record / note (the brief allows up to three)
@@ -260,7 +261,7 @@ def _told(st, q):
 def _next(st, cur=None, clock=None, again=False):
     """The next step. A product whose current attempt was named in an earlier turn is not named again (its offer was
     made; the customer's answer to it is still to come): "continue, do not repeat it", unless again (a review).
-    mp_o<num> (st['_offer']) is written only when a product is named for the first time (A14 fix round 1)."""
+    mp_o<num> (st['_offer']) is written only when a product is named for the first time."""
     pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
     if cur is not None and cur in pend:
         return 'open', ''
@@ -367,7 +368,7 @@ def _agree(st, b, today):
 
 
 def _refuse(st, b, clock):
-    """A refusal counts (uses an attempt) only for the product the code named last (the first open one, A14) and only
+    """A refusal counts (uses an attempt) only for the product the code named last (the first open one) and only
     when the customer spoke after that instruction; an agreed product withdrawn counts as before. Any other refusal is
     not counted: a no before any offer is remembered (P['no']) so the product's attempt 1 is made with an acknowledgement.
     Returns (st, ack) or, for ALL, (st, {product: ack})."""
@@ -430,10 +431,10 @@ _seq = 0
 try:
     import json, re
     _seq = int(str(vars.get('mp_seq') or '0').strip() or 0) + 1
-    # parallel set_product calls each read the same snapshot of vars and their writes merge per variable (A11 probe):
+    # parallel set_product calls each read the same snapshot of vars and their writes merge per variable:
     # a call writes only its own products' mp_p<num> and the shared counter, never a shared JSON
     vars['mp_seq'] = str(_seq)
-    # the clock as the pre-hook read it; the post-hook uses this copy (probe 4c48412b read the turn in a pre-hook only)
+    # the clock as the pre-hook read it; the post-hook uses this copy (the turn is readable in a pre-hook only)
     vars['mp_clock'] = str(_clock(vars))
     b = ARGS()
     if not isinstance(b, dict):
@@ -519,7 +520,7 @@ try:
         nxt = ''
         st.pop('_offer', None)
     if st.get('_offer'):
-        # the clock at which the code named this product's offer: a refusal of it counts from the next turn on (A14)
+        # the clock at which the code named this product's offer: a refusal of it counts from the next turn on
         vars['mp_o' + str(st['p'][st['_offer']]['num'])] = str(clk)
     open_ = [st['p'][q]['words'] for q in st['order'] if st['p'][q]['status'] == 'pending']
     if phase == 'open':
@@ -586,7 +587,7 @@ try:
     ags = [q for q in st['order'] if st['p'][q]['status'] == 'agreed']
 except Exception:
     st, ags = dict(order=[], p=dict()), []
-# the customer confirmed these at the read-back: no wrap ever notes them as refused (A11)
+# the customer confirmed these at the read-back: no wrap ever notes them as refused
 vars['mp_confirmed'] = json.dumps(ags)
 for i in range(1, SLOTS + 1):
     if i <= len(ags):
@@ -685,7 +686,7 @@ for q in (st.get('ga') or order):
     stt = P.get('status')
     if stt == 'agreed':
         # every product without a promise gets a note; negotiate_end reads agreed products back before any wrap.
-        # Confirmed at the read-back but not recorded: the service-failure note, never the refused note (A11)
+        # Confirmed at the read-back but not recorded: the service-failure note, never the refused note
         r = FAIL_NOTE if (RECORDING or q in confirmed) else END_NOTE
         if RECORDING or q in confirmed:
             failed.append(P['words'])
@@ -829,6 +830,9 @@ class Multi:
         props.update(xprops)
         desc = ("Report a product's answer. CALL it after EVERY refusal of an offer (refused, before you speak), and when a product "
                 "is agreed or settled (agreed, " + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
+        # one neutral sentence for a reviewer: the api mode goes through the read-only get_account route
+        desc += (" The answer is kept in the call; the call only reads the account and changes no bank record." if mode == "api"
+                 else " The answer is kept in the call and changes no bank record.")
         if mode == "api":
             # api_call body leaves are model-filled only through a {{var}} default naming a variable that is never set
             # (docs/tools-and-code.md "One key decides"); a leaf without default never reached the request (regate-a9-B)
@@ -847,7 +851,7 @@ class Multi:
     def outcome_words(self, o):
         for e in self.s["events"]:
             if e.get("per_product_note") == o and e["action"] == "note_and_continue":
-                return "the customer " + e["trigger"]
+                return subj("the customer", e["trigger"])
         return o
 
     def account_code(self):
@@ -892,20 +896,20 @@ class Multi:
             eid, act, trig = ev["id"], ev["action"], ev["trigger"]
             if act == "transfer":
                 values.append(eid)
-                desc.append("%s: the customer %s." % (eid, trig))
+                desc.append("%s: %s." % (eid, subj("the customer", trig)))
                 t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq("rb_answer", eid))))
             elif act == "insist_once_then_transfer":
                 values += [eid + "_first_request", eid + "_insists"]
-                desc.append("%s_first_request: the customer %s (the first time)." % (eid, trig))
-                desc.append("%s_insists: the agent already asked whether it can help first and the customer %s again." % (eid, trig))
+                desc.append("%s_first_request: %s (the first time)." % (eid, subj("the customer", trig)))
+                desc.append("%s_insists: the agent already asked whether it can help first and %s again." % (eid, subj("the customer", trig)))
                 t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
                 trans.append(go(t, "Insists: " + eid, all_of(eq("rb_answer", eid + "_insists"), eq(eid + "_asked", "yes"))))
                 trans.append(go(c.ask_once_nodes("readback", ev, t), "First request: " + eid,
                                 cond_any(eq("rb_answer", eid + "_first_request"), eq("rb_answer", eid + "_insists"))))
             elif act == "offer_transfer_else_close":
                 values.append(eid)
-                desc.append("%s: the customer %s." % (eid, trig))
+                desc.append("%s: %s." % (eid, subj("the customer", trig)))
                 # A10: the support offer step (spoken once, reply routed in code), as from negotiate
                 t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
                 trans.append(go(c.support_nodes(ev, t), "Support offer: " + eid, cond_any(eq("rb_answer", eid))))
