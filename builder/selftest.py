@@ -85,7 +85,7 @@ def _personas(styled, store):
     return {c["id"]: ids[key[c["id"]]] for c, _ in styled}
 
 
-def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy=None):
+def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy=None, deadline_s=None):
     """on_created(simulation_id) / on_busy(waited_s): passed to freya.run_simulation (see there)."""
     base = bank.rstrip("/")
     styled = [(c, styles[i % len(styles)] if styles else None) for i, c in enumerate(cases)]
@@ -96,7 +96,8 @@ def run(agent_id, cases, bank, styles=None, store=None, on_created=None, on_busy
         sessions[c["id"]] = r["variables"]
     pids = _personas(styled, store or ROOT / ".personas.json")
     sim_id, it_id, status = freya.run_simulation(agent_id, f"selftest {time.strftime('%H:%M:%S')}", {pids[c["id"]]: sessions[c["id"]] for c in cases},
-                                                 on_created=on_created, on_busy=on_busy)
+                                                 on_created=on_created, on_busy=on_busy,
+                                                 **({"deadline_s": deadline_s} if deadline_s else {}))
     judge = {r["personaId"]: r for r in freya.get_iteration(sim_id, it_id)["runs"]}
     rows = []
     for c, style in styled:

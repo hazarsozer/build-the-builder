@@ -3,7 +3,7 @@
     export FREYA_API_KEY=fak_...            # your workspace key
     export FREYA_API_URL=https://staging-app.freyavoice.ai   # default
 """
-import json, os, time, urllib.request, urllib.error, urllib.parse
+import json, os, re, time, urllib.request, urllib.error, urllib.parse
 
 URL = os.environ.get("FREYA_API_URL", "https://staging-app.freyavoice.ai")
 # Cloudflare rejects requests without a browser-like User-Agent (error 1010).
@@ -100,12 +100,44 @@ def get_call(call_id):
 AGENT_LLM = {"provider": os.environ.get("FREYA_AGENT_PROVIDER", "experimental-5"), "model": os.environ.get("FREYA_AGENT_MODEL", "experimental-5")}
 SIM_LLM = {"provider": "google", "model": "gemini-3-flash-preview"}        # plays the customer and judges
 
-def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concurrency=int(os.environ.get("FREYA_SIM_CONCURRENCY", "5")), on_created=None, on_busy=None):
+BACKOFF_S = (2, 4, 8, 15, 30)      # waits between retries of a transient error while polling; the last one repeats
+SIM_DEADLINE_S = 40 * 60
+
+def _now(): return time.monotonic()
+
+class SimulationTimeout(TimeoutError):
+    """Polling a simulation outlived its deadline. `.simulation_id` lets the caller cancel it."""
+    def __init__(self, simulation_id, waited):
+        super().__init__(f"simulation {simulation_id} still not finished after {waited:.0f} s")
+        self.simulation_id = simulation_id
+
+def _transient(e):
+    """HTTP 429/5xx (api() raises RuntimeError 'METHOD path -> code: ...') or a network error."""
+    if isinstance(e, RuntimeError):
+        m = re.search(r" -> (\d{3}):", str(e))
+        return bool(m) and (m.group(1) == "429" or m.group(1).startswith("5"))
+    return isinstance(e, OSError)      # URLError, timeouts and connection resets are all OSErrors
+
+def _poll_api(sim_id, t0, t_end, method, path, **params):
+    """api() with retries on transient errors and short backoff, within the polling deadline."""
+    n = 0
+    while True:
+        try: return api(method, path, **params)
+        except (RuntimeError, OSError) as e:
+            if not _transient(e): raise
+            wait = BACKOFF_S[min(n, len(BACKOFF_S) - 1)]; n += 1
+            if _now() + wait >= t_end: raise SimulationTimeout(sim_id, _now() - t0) from e
+            print(f"transient error on {path} ({e}); retrying in {wait} s", flush=True); time.sleep(wait)
+
+def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concurrency=int(os.environ.get("FREYA_SIM_CONCURRENCY", "5")), on_created=None, on_busy=None, deadline_s=SIM_DEADLINE_S):
     """Start a text simulation, wait for it, return (simulation_id, iteration_id).
 
     Optional (builder additions, default behaviour unchanged): on_created(simulation_id) is called as soon as the
     simulation exists; on_busy(waited_seconds) is called each time the workspace is busy, before the 30 s wait (it may
-    raise to stop waiting)."""
+    raise to stop waiting).
+
+    Polling retries transient errors (429/5xx, network) with backoff, treats cancelled as finished, and gives up after
+    deadline_s seconds with SimulationTimeout (a TimeoutError carrying .simulation_id)."""
     waited = 0
     while True:                      # a workspace runs one simulation at a time: wait for the running one instead of failing
         try:
@@ -121,9 +153,11 @@ def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concur
             print("another simulation is running in this workspace, waiting 30 s", flush=True); time.sleep(30); waited += 30
     sim_id = (sim.get("simulation") or sim)["id"]
     if on_created: on_created(sim_id)
+    t0 = _now(); t_end = t0 + deadline_s
     while True:
         time.sleep(10)
-        s = api("GET", f"/api/v2/simulations/{sim_id}"); s = s.get("simulation") or s
-        if s.get("status") in ("completed", "failed", "paused"): break
-    its = api("GET", f"/api/v2/simulations/{sim_id}/iterations"); its = its.get("iterations") or its.get("items") or its
+        s = _poll_api(sim_id, t0, t_end, "GET", f"/api/v2/simulations/{sim_id}"); s = s.get("simulation") or s
+        if s.get("status") in ("completed", "failed", "paused", "cancelled", "canceled"): break
+        if _now() >= t_end: raise SimulationTimeout(sim_id, _now() - t0)
+    its = _poll_api(sim_id, t0, t_end + 120, "GET", f"/api/v2/simulations/{sim_id}/iterations"); its = its.get("iterations") or its.get("items") or its
     return sim_id, its[0]["id"], s.get("status")

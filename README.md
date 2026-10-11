@@ -1,3 +1,145 @@
+# Our builder
+
+A builder reads one or more bank briefs and creates a phone agent on Freya. This one turns the brief into a
+validated policy spec with LLM sessions, then compiles the spec into a workflow with plain code. It tests the
+agent against a mock bank we run ourselves, and exports the workflow.
+
+## What it does
+
+1. **Extract.** Two independent LLM extractions write a policy spec (JSON, checked against `builder/spec_schema.json`
+   and the bank's OpenAPI file). A third session, the oracle, writes test scenarios from the brief without seeing
+   any spec. Code diffs the two specs; a settle session resolves the remaining disagreements and must quote the
+   brief for each change.
+2. **Compile.** `builder/compile.py` turns the spec and the OpenAPI file into a workflow. No LLM is involved.
+3. **Lint.** `builder/lint.py` checks the workflow against the spec.
+4. **Self-test.** Our copy of the mock bank (`bank/`) is exposed through a Cloudflare quick tunnel. Code writes
+   test customers from the spec, and one Freya simulation runs them against the agent.
+5. **Fix round (optional).** If cases fail and time is left, one short LLM session proposes spec changes, each with a
+   brief quote. Code validates them, the workflow is recompiled and tested again, and the spec with more passes is
+   kept.
+6. **Export.** The final workflow is compiled with the OpenAPI file's own server URL (never the tunnel), saved to
+   Freya and written to `submission/<slot>.workflow.json` with `<slot>.spec.json` next to it.
+
+Once a spec exists, a crash in any later step still ends in a saved and exported agent. A hard time limit
+(`--budget-min`, default 27) stops whatever is running and exports the best spec so far.
+
+## Why this design
+
+Rules that must always hold live in code, not in prompts. The LLM only reads the brief and fills in a spec. Dates,
+amounts, which tool to call, what the records must contain and which sentences are fixed are decided by the
+compiler and by routes in the workflow graph. A prompt is advice the agent may not follow; a route in the graph is not. Every
+LLM change to the spec has to carry a quote from the brief, and the validator and lint reject specs and workflows
+that break the schema or the platform's rules.
+
+## Module map
+
+`builder/`
+
+| File | Role |
+|---|---|
+| `main.py` | The unattended run: extract, compile, self-test, fix round, export, trace. |
+| `extract.py` | Dual extraction, diff, settle session and validation of the merged spec. |
+| `oracle.py` | Scenarios written from the brief alone, and the check of a spec against them. |
+| `specdiff.py` | Field-level diff and merge of two specs. |
+| `sdk.py` | Locked-down Agent SDK sessions shared by extract, oracle, settle and fix. |
+| `validate.py` | Spec validation: JSON Schema, the OpenAPI file, and consistency inside the spec. |
+| `spec_schema.json`, `spec_guide.py` | The spec schema, and the generator of `docs/spec-guide.md` from it. |
+| `compile.py` | Spec plus OpenAPI to workflow. |
+| `nodes.py` | Workflow building blocks: tools, code nodes, conditions, transfer and close nodes. |
+| `multi.py` | The parts of the graph that differ when a call covers several products. |
+| `triggers.py` | Normalises event triggers into clauses. |
+| `labels.py`, `layout.py` | Dashboard presentation only (readable labels, node positions, sample call variables). |
+| `lint.py` | Lints a compiled workflow against its spec. |
+| `cases.py` | Writes self-test cases from a spec. |
+| `selftest.py` | Runs cases on Freya against our bank and scores them from our ledger and the judge verdict. |
+| `fix.py` | The quote-backed fix round. |
+| `trace.py`, `redact.py` | The run trace, and scrubbing of secrets from everything logged or written. |
+| `lib/` | Date, money and embedding helpers whose source is embedded into workflow code nodes. |
+| `prompts/` | Prompts for the LLM sessions. |
+
+Other directories: `bank/` (our mock bank and the tunnel helper), `fallback/`, `bench/`, `tools/` (kit scripts plus
+`conformance.py` and `selftest_live.py`), `tests/`, `docs/`.
+
+## Running it
+
+Needs Python 3.12 or newer, [uv](https://docs.astral.sh/uv/), `cloudflared` at `/usr/bin/cloudflared` (for the
+self-test tunnel), a Freya API key, and a Claude login or `ANTHROPIC_API_KEY` for the Agent SDK.
+
+```bash
+cp env.example env.sh        # fill in your own values; env.sh is gitignored
+set -a; source env.sh; set +a
+uv run python -m builder.main <brief files or dirs> --slot NAME --openapi PATH
+```
+
+- `--openapi` is the bank's OpenAPI file. If omitted, the builder uses `openapi.json` next to the briefs, or the
+  single OpenAPI `.json` among them. It never falls back to the kit's own file; with none found it exits.
+- `--slot` names the Freya workflow and agent. Pass it explicitly.
+- When one brief builds on another, pass both.
+- Other options: `--no-selftest`, `--budget-min`, `--now`, `--out-dir`.
+- Exit code: 0 exported, 1 a spec existed but the final step failed, 2 no spec or no OpenAPI file.
+
+No secrets are in the repository. Keys come from the environment (`env.example` lists the names and holds only
+placeholders), and `builder/redact.py` scrubs the values of `FREYA_*` and `*_KEY`, `*_TOKEN`, `*_SECRET`,
+`*_PASSWORD` variables from every trace and console line.
+
+## Trace
+
+Each run writes `traces/<UTC time>-<slot>.jsonl` (one JSON event per line, flushed as written, so a crash leaves a
+usable file) and a readable `traces/<UTC time>-<slot>.md` from the same events. `traces/` is gitignored. The summary
+records:
+
+- start and end time, duration, result, briefs, slot, git commit, model and OpenAPI file;
+- every model call, with its purpose;
+- the workflows and agents created on Freya, and which bank each was tested against;
+- spec validation, conflicts the extractor recorded, and lint results;
+- each self-test round: passed over total, simulation id and failing cases;
+- each fix round: the changed spec paths with their brief quotes, before and after;
+- skipped steps, budget stops and simulations left running.
+
+## Tests
+
+```bash
+uv run pytest -q
+```
+
+Tests marked `live` call real services and run only on request (for example `RUN_LIVE=1`; see
+`tests/test_extract_live.py`).
+
+## Fallback builder
+
+`fallback/agent_builder.py` is the kit's example agentic builder, hardened: no MCP servers, reads of `env.sh` and
+`.env*` denied, and output scrubbed. It uses the skill `.claude/skills/build-phone-agent-v2` and our tested parts.
+`fallback/lint_cli.py` lints a workflow file without a spec, and `fallback/selftest_cli.py` runs a case file against a workflow file on our bank.
+
+```bash
+uv run python fallback/agent_builder.py <brief files> [--dry]
+```
+
+## Bench
+
+`bench/` holds a corpus of briefs, each with its own OpenAPI file and, for most, hand-checked cases.
+`bench/run.py` builds every brief with one builder (`ours` or `fallback`) and then runs the cases on our bank:
+
+```bash
+uv run python bench/run.py <ours|fallback> [names...] [--no-sim] [--reps N]
+```
+
+Results go to `results/` (gitignored).
+
+## Runbook
+
+`RUNBOOK.md` is the checklist for the timed final run: preparation, the command per brief, the secret scan of
+traces and exports, and what to do when something breaks.
+
+## More documents
+
+`docs/build-log/` holds the implementer reports from development, `docs/spec-guide.md` the spec field guide, and
+`HANDOFF.md` and `REPORT.md` the status notes from development.
+
+---
+
+# Kit README (unchanged)
+
 # Build the Builder
 
 **Kit version 3** (10 October 2026). The file `VERSION` holds the number. When we update the kit, the number goes up and the changes are listed here.
