@@ -61,8 +61,9 @@ def farewell_of(node):
 
 
 def _assigned(code, var):
-    m = re.search(r"^vars\['%s'\] = ('[^'\n]*'|\"[^\"\n]*\")$" % var, code, re.M)
-    return ast.literal_eval(m.group(1)) if m else None
+    """A constant a close node assigns: `vars['outcome'] = 'x'` or `OUTCOME = 'x'`; "" counts as unset."""
+    m = re.search(r"^(?:vars\['%s'\]|%s) = ('[^'\n]*'|\"[^\"\n]*\")$" % (var, var.upper()), code, re.M)
+    return (ast.literal_eval(m.group(1)) or None) if m else None
 
 
 def _tools(workflow):

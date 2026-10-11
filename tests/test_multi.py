@@ -4,6 +4,7 @@ import datetime as dt
 import json
 
 from builder.compile import compile as C
+from builder.multi import load_state
 from builder.lib import dates as D
 from builder.lint import lint
 
@@ -89,7 +90,8 @@ def test_spec_b_negotiate_has_set_product_not_create_promise():
     names = [t["function"]["name"] for t in n["tools"]]
     assert names == ["set_product"]
     body = n["tools"][0]["function"]["parameters"]["properties"]
-    assert n["tools"][0]["function"]["handler"] == "__function__:code_exec"
+    assert n["tools"][0]["function"]["handler"] == "__function__:api_call"
+    body = body["body"]["properties"]
     assert set(body["outcome"]["enum"]) == {"agreed", "refused", "dispute", "paid", "review"}
     for i in (1, 2, 3):
         assert _tool(wf()["nodes"]["record_%d" % i], "create_promise")
@@ -98,7 +100,7 @@ def test_spec_b_negotiate_has_set_product_not_create_promise():
 def test_spec_a_node_set_unchanged():
     w = C(A, OA)
     assert set(w["nodes"]) == {
-        "setup", "opening", "third_party", "identity", "load_account", "prepare_account", "negotiate",
+        "setup", "setup_retry", "opening", "third_party", "identity", "load_account", "prepare_account", "negotiate",
         "retry_promise", "goodbye", "transfer_restructuring", "transfer_general", "transfer_support",
         "close_promise_recorded", "close_paid", "close_dispute", "close_restructuring", "close_human",
         "close_hardship", "close_hardship_transfer", "close_refused", "close_not_talk", "close_service_error",
@@ -106,7 +108,9 @@ def test_spec_a_node_set_unchanged():
         "close_deceased", "close_unclear", "close_account_error",
         "human_ask_opening", "human_hold_opening", "human_ask_identity", "human_hold_identity",
         "human_ask_negotiate", "human_hold_negotiate",
-        "human_back_opening", "human_back_identity", "human_back_negotiate"}
+        "human_back_opening", "human_back_identity", "human_back_negotiate",
+        "hardship_offer", "hardship_hold", "hardship_back",  # A10 support offer latch
+        "id_decline_gate"}  # A10 SELF-06: a decline with an answer in it is checked first
     assert [t["function"]["name"] for t in w["nodes"]["negotiate"]["tools"]] == ["create_promise"]
 
 
@@ -152,10 +156,54 @@ class Sim:
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
 
     def say(self, **body):
+        """One set_product call as the platform runs it: api mode = pre-hook, request, post-hook, response mapping."""
+        if self.t["function"]["handler"] == "__function__:api_call":
+            cfg = {"url": "x", "body": dict(body)}
+            exec(self.t["pre_process_code"], {"vars": self.v, "config": cfg})
+            r = {"status": "success", "data": {"ok": True, "products": []}, "header": {}}
+            exec(self.t["post_process_code"], {"vars": self.v, "result": r})
+            assert r["data"]["what_to_do_next"] == self.v["mp_msg"] and "header" not in r
+            for m in self.t.get("response_mapping", []):
+                self.v[m["variable"]] = r["data"][m["path"].split(".", 1)[1]]
+            self.last_result = r
+            return self.v["mp_msg"]
         g = {"vars": self.v, "params": dict(body)}
         exec(self.t["function"]["parameters"]["properties"]["code"]["default"], g)
         assert g["_result"]["what_to_do_next"] == self.v["mp_msg"]
         return self.v["mp_msg"]
+
+    def batch(self, *bodies):
+        """Parallel set_product calls as the platform ran them (A11 probe f58d6ed0): every pre-hook reads the same
+        snapshot of vars, their writes merge per variable (the last writer wins a variable), then the post-hooks run
+        on the merged variables, each followed by its response mapping. Returns every result's what_to_do_next."""
+        snap = copy.deepcopy(self.v)
+        writes = []
+        for body in bodies:
+            v = copy.deepcopy(snap)
+            exec(self.t["pre_process_code"], {"vars": v, "config": {"url": "x", "body": dict(body)}})
+            writes.append({k: x for k, x in v.items() if k not in snap or snap[k] != x})
+        for w in writes:
+            self.v.update(w)
+        self.batch_writes = writes
+        out = []
+        for _ in bodies:
+            r = {"status": "success", "data": {"ok": True, "products": []}, "header": {}}
+            exec(self.t["post_process_code"], {"vars": self.v, "result": r})
+            for m in self.t.get("response_mapping", []):
+                self.v[m["variable"]] = r["data"][m["path"].split(".", 1)[1]]
+            out.append(r["data"]["what_to_do_next"])
+        return out
+
+    def refuse(self, pid, n):
+        """The customer refuses up to n attempts of the product: one set_product refused call per refusal."""
+        msg = None
+        for _ in range(n):
+            msg = self.say(product_id=pid, outcome="refused")
+            if "Not counted yet." in msg:  # no offer noted yet: the offer is made, then refused
+                msg = self.say(product_id=pid, outcome="refused")
+            if "last attempt" in msg:
+                break
+        return msg
 
     def confirm(self):
         """The readback node: the engine speaks mp_readback, the customer says yes."""
@@ -201,7 +249,8 @@ class Sim:
                     self.notes_order = list(notes)
             node = self.route(n)
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
-        return sorted(promises), sorted(notes), node, self.v["outcome"], self.v.get("reason")
+        # close_call drops an empty reason (CLOSE_PRE), so "" and unset both mean no reason
+        return sorted(promises), sorted(notes), node, self.v["outcome"], self.v.get("reason") or None
 
     def route(self, n):
         for t in n["transitions"]:
@@ -264,10 +313,13 @@ def test_pub12_one_promise_two_refusals_with_attempt_gate():
     s = Sim("PUB-12")
     s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
     assert s.v["mp_phase"] == "open"
-    msg = s.say(product_id="p2", outcome="refused", attempts_made=1)
+    msg = s.refuse("p2", 1)
     assert "attempt 2" in msg.lower() and s.v["mp_phase"] == "open"
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
-    s.say(product_id="p3", outcome="refused", attempts_made=1)
+    assert "Next is" not in msg  # the same product goes on; no second instruction
+    msg = s.refuse("p2", 1)
+    assert "no more offers" in msg and "car loan" in msg  # then the next product
+    msg = s.refuse("p3", 1)
+    assert "no more offers" in msg
     assert s.v["mp_phase"] == "readback" and "credit card ending 9015" in s.v["mp_readback"]
     s.confirm()
     promises, notes, close, outcome, reason = s.chain()
@@ -286,17 +338,40 @@ def test_pub13_shared_date_capped_and_said():
     assert promises == [("p1", 300.0, "2026-10-30"), ("p2", 900.0, "2026-10-23")]
 
 
+def test_a9_shared_date_capped_when_reported_one_product_at_a_time():
+    """A9 item 1 (PUB-13 r3): "both on the 30th" sent as two single-product calls is capped like ALL."""
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
+    msg = s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-30")
+    assert "NOT accepted" not in msg and s.v["mp_phase"] == "readback"
+    rb = s.v["mp_readback"]
+    assert "300.00 for your credit card ending 6604 on Friday 30 October 2026" in rb
+    assert "Friday 23 October 2026, because that is the latest date I can accept for it" in rb
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 300.0, "2026-10-30"), ("p2", 900.0, "2026-10-23")]
+
+
+def test_a9_per_product_cap_respects_reject_policy():
+    spec = copy.deepcopy(B)
+    spec["multi_product"]["shared_date_after_deadline"] = "reject"
+    s = Sim("PUB-13", spec)
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
+    msg = s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-30")
+    assert "NOT accepted" in msg and "Friday 23 October 2026" in msg
+
+
 def test_single_product_date_after_deadline_is_refused_with_deadline():
     s = Sim("PUB-13")
     msg = s.say(product_id="p2", outcome="agreed", amount="900", date="2026-10-30")
     assert "Friday 23 October 2026" in msg and s.v["mp_phase"] == "open"
-    assert json.loads(s.v["mp_state"])["p"]["p2"]["status"] == "pending"
+    assert load_state(s.v)["p"]["p2"]["status"] == "pending"
 
 
 def test_below_floor_and_weekend_rejected():
     s = Sim("PUB-13")
     msg = s.say(product_id="p1", outcome="agreed", amount="10", date="2026-10-16")
-    assert "90.00" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert "90.00" in msg and load_state(s.v)["p"]["p1"]["status"] == "pending"
     msg = s.say(product_id="p1", outcome="agreed", amount="300", date="2026-10-17")
     assert "Monday 19 October 2026" in msg
 
@@ -314,7 +389,7 @@ def test_all_paid_closes_paid_with_notes():
 def test_paid_then_refused_closes_refused():
     s = Sim("PUB-13")
     s.say(product_id="p1", outcome="paid")
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
+    s.refuse("p2", 2)
     s.end = "wrap_done"
     promises, notes, close, outcome, reason = s.chain()
     assert notes == [("p1", "paid"), ("p2", "refused")] and (outcome, reason) == ("no_promise", "refused")
@@ -350,7 +425,7 @@ def test_create_promise_fails_once_is_retried():
 def test_only_failures_close_service_error():
     s = Sim("PUB-13")
     s.say(product_id="p1", outcome="agreed", amount="300", date="2026-10-20")
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
+    s.refuse("p2", 2)
     s.confirm()
     promises, notes, close, outcome, reason = s.chain(fail=(1, 2))
     assert promises == [] and notes == [("p1", "service_error"), ("p2", "refused")]
@@ -359,7 +434,7 @@ def test_only_failures_close_service_error():
 
 def test_hardship_declined_notes_open_products():
     s = Sim("PUB-12")
-    s.say(product_id="p1", outcome="refused", attempts_made=2)
+    s.refuse("p1", 2)
     s.end = "wrap_hardship"
     promises, notes, close, outcome, reason = s.chain()
     assert notes == [("p1", "refused"), ("p2", "hardship"), ("p3", "hardship")]
@@ -388,17 +463,20 @@ def test_change_at_readback_rereads():
 def test_product_reference_by_number_or_words():
     s = Sim("PUB-12")
     s.say(product_id="1", outcome="agreed", amount="510", date="2026-10-15")
-    s.say(product_id="personal loan", outcome="refused", attempts_made=2)
-    st = json.loads(s.v["mp_state"])["p"]
+    s.refuse("personal loan", 2)
+    st = load_state(s.v)["p"]
     assert st["p1"]["status"] == "agreed" and st["p2"]["status"] == "refused"
 
 
 def test_hooks_never_raise():
     s = Sim("PUB-11")
-    code = s.t["function"]["parameters"]["properties"]["code"]["default"]
+    code = s.t["pre_process_code"]
     for body in [{}, {"product_id": None}, {"outcome": "agreed"}, {"product_id": "zz", "outcome": "agreed", "amount": "x", "date": "y"}]:
-        exec(code, {"vars": s.v, "params": body})
-    exec(code, {"vars": {}})
+        exec(code, {"vars": s.v, "config": {"body": body}})
+    exec(code, {"vars": {}, "config": {}})
+    exec(code, {"vars": {}, "config": None})
+    for r in [None, {}, {"data": None}, "x"]:
+        exec(s.t["post_process_code"], {"vars": {}, "result": r})
 
 
 def test_counted_close_tool_name_matches_its_wrap():
@@ -409,11 +487,71 @@ def test_counted_close_tool_name_matches_its_wrap():
 
 def test_set_product_code_needs_no_datetime_and_no_braces():
     t = _tool(wf()["nodes"]["negotiate"], "set_product")
-    code = t["function"]["parameters"]["properties"]["code"]["default"]
+    code = t["pre_process_code"] + t["post_process_code"]
     assert "datetime" not in code and "{{" not in code and "}}" not in code
-    props = t["function"]["parameters"]["properties"]
-    for k in ("product_id", "outcome", "amount", "date", "attempts_made"):
-        assert "default" not in props[k], k
+    props = t["function"]["parameters"]["properties"]["body"]["properties"]
+    for k in ("product_id", "outcome", "amount", "date"):
+        # fix round 3: a body leaf reaches the model only through a {{var}} default whose variable is never set
+        assert props[k]["default"] == "{{sp_%s}}" % k, k
+
+
+def test_fix3_multi_prompt_noted_only_after_a_noted_result():
+    """regate-a9-B: after "Unknown outcome" the model said the promises were noted and read them back itself."""
+    w = wf()
+    t = w["nodes"]["negotiate"]["task_message"]
+    assert 'Say a product is noted only after a result that says "Noted" for it' in t
+    assert '"NOT accepted", "Not counted yet" or any other result, nothing is noted' in t
+    assert "Never read promises back or ask for confirmation yourself." in t
+    assert "unless the tool result says so" in w["system_prompt"]
+    s = Sim("PUB-13")
+    assert s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-20").startswith("The personal loan: Noted")
+    assert s.say(product_id="p2", outcome="bogus").startswith("Unknown outcome")
+
+
+def test_fix3_no_sp_variable_is_ever_set():
+    """A set sp_* variable would be baked at node entry and the model would never fill that field."""
+    w = wf()
+    for name, n in w["nodes"].items():
+        for e in n.get("extraction_schema") or []:
+            assert not e["name"].startswith("sp_"), name
+        for t in (n.get("tools") or []) + (n.get("pre_actions") or []):
+            for m in t.get("response_mapping") or []:
+                assert not m["variable"].startswith("sp_"), name
+            for h in ("pre_process_code", "post_process_code"):
+                assert "vars['sp_" not in (t.get(h) or ""), name
+            code = t["function"]["parameters"]["properties"].get("code", {}).get("default", "")
+            assert "vars['sp_" not in code, name
+        for m in n.get("response_mapping") or []:
+            assert not m["variable"].startswith("sp_"), name
+    assert not any(k.startswith("sp_") for k in Sim("PUB-11").v)
+
+
+def test_a9_set_product_is_api_mode_and_model_reads_the_answer():
+    """A9 item 1: the model must read set_product's answer. The 11 Oct chat-API probe showed a post-hook's
+    result['data'] rewrite reaches the model and a code_exec result is data null, so the default is api."""
+    from builder import multi
+    assert multi.SET_MODE == "api"
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
+    s.say(product_id="p2", outcome="agreed", amount="900", date="2026-10-30")  # same date given product by product
+    msg = s.say(product_id="p2", outcome="agreed", amount="900", date="2026-11-30")
+    assert msg.startswith("The personal loan: NOT accepted") and s.last_result["data"]["what_to_do_next"] == msg
+    assert s.last_result["data"]["phase"] == s.v["mp_phase"]
+
+
+def test_a9_unfilled_template_args_are_ignored():
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="{{sp_amount}}", date="2026-10-20")
+    assert load_state(s.v)["p"]["p1"]["amount"] == 300.0
+
+
+def test_code_mode_still_works(monkeypatch):
+    from builder import multi
+    monkeypatch.setattr(multi, "SET_MODE", "code")
+    s = Sim("PUB-13")
+    assert s.t["function"]["handler"] == "__function__:code_exec"
+    s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-20")
+    assert s.v["mp_phase"] == "readback"
 
 
 def test_api_mode_still_works(monkeypatch):
@@ -436,33 +574,191 @@ def test_api_mode_still_works(monkeypatch):
 def test_r1_non_calendar_date_rejected():
     s = Sim("PUB-13")
     msg = s.say(product_id="p1", outcome="agreed", amount="300", date="2026-10-32")
-    assert "NOT accepted" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert "NOT accepted" in msg and load_state(s.v)["p"]["p1"]["status"] == "pending"
 
 
 def test_r2_nan_amount_rejected():
     s = Sim("PUB-13")
     msg = s.say(product_id="p1", outcome="agreed", amount="nan", date="2026-10-20")
-    assert "NOT accepted" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert "NOT accepted" in msg and load_state(s.v)["p"]["p1"]["status"] == "pending"
 
 
-def test_r3_missing_attempts_counts_as_zero():
-    s = Sim("PUB-13")
+def test_a9_attempts_counted_in_code_per_refusal():
+    """A9 item 2: each refused call is one used attempt, counted in mp_state; the band's count is the limit."""
+    s = Sim("PUB-13")  # p1 early band: one attempt; p2 late band: two
+    msg = s.say(product_id="p1", outcome="refused")  # first call: no offer noted yet (fix round 1, item 3)
+    assert msg.startswith("The credit card ending 6604: Not counted yet.") and "is not a refusal" in msg
+    assert load_state(s.v)["p"]["p1"]["status"] == "pending"
     msg = s.say(product_id="p1", outcome="refused")
-    assert "Not yet" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    st = load_state(s.v)["p"]
+    assert st["p1"]["status"] == "refused" and st["p1"]["tried"] == 1
+    assert "no more offers" in msg and "no other amount, no other date" in msg
+    assert "attempt 1 of its plan" in msg  # p2 starts at its attempt 1
+    msg = s.say(product_id="p2", outcome="refused")
+    st = load_state(s.v)["p"]
+    assert st["p2"]["status"] == "pending" and st["p2"]["tried"] == 1 and "Make attempt 2 now" in msg
+    msg = s.say(product_id="p2", outcome="refused")
+    assert load_state(s.v)["p"]["p2"]["status"] == "refused" and s.v["mp_phase"] == "done"
+
+
+def test_a9_next_names_the_attempt_after_the_used_ones():
+    s = Sim("PUB-12")
+    s.refuse("p2", 1)  # p2 out of order: attempt 1 used
+    msg = s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
+    assert "personal loan" in msg and "attempt 2 of its plan" in msg
+
+
+def test_fix1_refusal_before_any_offer_is_not_counted():
+    """Fix round 1, item 3: "I can't pay all today" at step 1 must not use a one-attempt product's only attempt."""
+    s = Sim("PUB-12")  # p3 car loan: early band, one attempt
+    msg = s.say(product_id="p3", outcome="refused")
+    p3 = load_state(s.v)["p"]["p3"]
+    assert p3["status"] == "pending" and not p3.get("tried") and "Make attempt" not in msg
+    assert msg.startswith("The car loan: Not counted yet. If you already made attempt 1 for the car loan and the customer refused it, call set_product")
+    assert "before you speak" in msg and "make attempt 1 of its plan" in msg and s.v["mp_phase"] == "open"
+    # fix round 2: no offer text, so the model is not invited to read the offer out a second time
+    import re
+    assert re.findall(r"\d+", msg.replace("attempt 1", "")) == [], msg  # no amount, no date figure
+    assert "140" not in msg and "2026" not in msg
+    for word in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "October", "November", "propose", "lower amount", "full amount"):
+        assert word not in msg, word
+    assert 'A "no" to the today question uses no attempt' in s.w["nodes"]["negotiate"]["task_message"]
+    # once the offer is noted (here: the Not-yet answer told the model to make it), a refusal counts
+    msg = s.say(product_id="p3", outcome="refused")
+    assert load_state(s.v)["p"]["p3"]["status"] == "refused" and "no more offers" in msg
+
+
+def test_fix1_offer_named_by_a_result_counts_without_not_yet():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")  # result names p2's attempt 1
+    msg = s.say(product_id="p2", outcome="refused")
+    assert "Make attempt 2 now" in msg
+
+
+def test_fix1_band_with_no_attempts():
+    """Fix round 1, item 4: a band with 0 attempts never indexes att[-1]; the product is noted per the brief."""
+    spec = copy.deepcopy(B)
+    for b in spec["bands"]:
+        if b["name"] == "early":
+            b["attempts"] = []
+    s = Sim("PUB-12", spec)  # p3 car loan (7 days late) is the early band
+    assert "Make no offer for it." in s.v["products_text"].split("car loan")[1]
+    s.refuse("p1", 2)
+    msg = s.refuse("p2", 2)
+    assert "has no offers: make no offer" in msg  # _next names p3
+    msg = s.say(product_id="ALL", outcome="review")
+    assert "has no offers: make no offer" in msg
+    msg = s.say(product_id="p3", outcome="refused")
+    assert "has no offers" in msg and load_state(s.v)["p"]["p3"]["status"] == "refused"
+    assert s.v["mp_phase"] == "done"
+    s.end = "wrap_done"
+    promises, notes, close, outcome, reason = s.chain()
+    assert notes == [("p1", "refused"), ("p2", "refused"), ("p3", "refused")]
+
+
+def test_a9_one_attempt_plans_say_no_further_offer():
+    s = Sim("PUB-12")
+    lines = s.v["products_text"].split("\nProduct ")
+    one = [l for l in lines if "One persuasion attempt" in l]
+    two = [l for l in lines if "Two persuasion attempts" in l]
+    assert one and two
+    assert all("make no other offer" in l for l in one) and not any("make no other offer" in l for l in two)
+    t = _tool(s.w["nodes"]["negotiate"], "set_product")
+    assert "attempts_made" not in json.dumps(t["function"]["parameters"])
+    assert "after EVERY refusal" in s.w["nodes"]["negotiate"]["task_message"]
+
+
+def test_a9_tool_description_matches_per_refusal_calls():
+    d = _tool(wf()["nodes"]["negotiate"], "set_product")["function"]["description"]
+    assert "after EVERY refusal" in d and "agreed or settled" in d
+    assert "every time a product is settled" not in d
 
 
 def test_r4_model_cannot_confirm():
     t = _tool(wf()["nodes"]["negotiate"], "set_product")
-    assert "confirmed" not in t["function"]["parameters"]["properties"]["outcome"]["enum"]
+    assert "confirmed" not in t["function"]["parameters"]["properties"]["body"]["properties"]["outcome"]["enum"]
     s = Sim("PUB-13")
     s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-20")
     s.say(product_id="ALL", outcome="confirmed")
     assert s.v["mp_phase"] == "readback"  # unknown outcome: nothing changes, recording only via the readback node
 
 
-def test_max_turns_go_to_wrap():
+def test_max_turns_go_to_negotiate_end():
     n = wf()["nodes"]["negotiate"]
-    assert n["max_node_turns"] == 30 and n["max_turn_transition"] == "wrap_done"
+    assert n["max_node_turns"] == 30 and n["max_turn_transition"] == "negotiate_end"
+    by = {t["target_node"]: t for t in n["transitions"]}
+    assert '"goodbye"' in json.dumps(by["negotiate_end"]["condition"])
+    assert "goodbye" in n["extraction_schema"][0]["enum_values"]
+
+
+def _pub12_r3(s):
+    """B PUB-12 r3: p1 agreed, p2 refused once (attempt 2 not made), p3 refused; then the goodbye loop."""
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.say(product_id="p2", outcome="refused")
+    s.say(product_id="p3", outcome="refused")
+    assert s.v["mp_phase"] == "open"
+
+
+def test_a9_timeout_with_agreed_product_reads_back_and_records():
+    s = Sim("PUB-12")
+    _pub12_r3(s)
+    s.run("negotiate_end")
+    assert s.route(s.w["nodes"]["negotiate_end"]) == "readback"
+    assert "510.00 for your credit card ending 9015" in s.v["mp_readback"]
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")] and notes == [("p2", "refused"), ("p3", "refused")]
+    assert outcome == "promise"
+
+
+def test_a9_timeout_unconfirmed_agreed_product_still_gets_a_note():
+    """Fix round 1: brief B rule 8, every product without a promise gets a note (the refused note at wrap_done);
+    the false refusal of diag-t5r5 is prevented by the read-back at negotiate_end, not by dropping the note."""
+    s = Sim("PUB-12")
+    _pub12_r3(s)
+    s.run("negotiate_end")
+    s.v["rb_answer"] = "change"  # no confirmation at the read-back after the timeout
+    nxt = s.route(s.w["nodes"]["readback"])
+    assert nxt == "readback_reset"
+    s.run("readback_reset")
+    s.end = s.route(s.w["nodes"]["readback_reset"])
+    assert s.end == "wrap_done"  # no second negotiation
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [] and notes == [("p1", "refused"), ("p2", "refused"), ("p3", "refused")]
+
+
+def test_a9_goodbye_with_nothing_agreed_goes_to_wrap_done():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="refused")
+    s.run("negotiate_end")
+    assert s.route(s.w["nodes"]["negotiate_end"]) == "wrap_done"
+    s.v["neg_event"] = "goodbye"
+    assert s.route(s.w["nodes"]["negotiate"]) == "negotiate_end"
+
+
+def test_a9_negotiate_end_reads_back_only_once():
+    s = Sim("PUB-13")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-20")
+    s.run("negotiate_end")
+    assert s.v["mp_end"] == "readback"
+    s.run("negotiate_end")
+    assert s.v["mp_end"] == "wrap" and s.route(s.w["nodes"]["negotiate_end"]) == "wrap_done"
+
+
+def test_a9_normal_readback_change_still_goes_back_to_negotiate():
+    s = Sim("PUB-13")
+    s.say(product_id="ALL", outcome="agreed", amount="full", date="2026-10-20")
+    s.run("readback_reset")
+    assert s.route(s.w["nodes"]["readback_reset"]) == "negotiate"
+
+
+def test_a9_every_wrap_notes_every_product_without_a_promise():
+    for end, want in (("wrap_hardship", "hardship"), ("wrap_not_talk", "refused"), ("wrap_done", "refused")):
+        s = Sim("PUB-12")
+        s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+        s.end = end
+        promises, notes, close, outcome, reason = s.chain()
+        assert promises == [] and {p for p, _ in notes} == {"p1", "p2", "p3"} and ("p1", want) in notes, end
 
 
 def test_weekend_after_deadline_offers_deadline():
@@ -478,9 +774,9 @@ def test_notes_in_get_account_order():
     spec = copy.deepcopy(B)
     spec["multi_product"]["order"] = "highest_past_due"
     s = Sim("PUB-12", spec)
-    st = json.loads(s.v["mp_state"])
+    st = load_state(s.v)
     assert st["order"][0] == "p2" and st["ga"] == ["p1", "p2", "p3"]
-    s.say(product_id="p2", outcome="refused", attempts_made=2)
+    s.refuse("p2", 2)
     s.say(product_id="p1", outcome="dispute")
     s.say(product_id="p3", outcome="paid")
     s.end = "wrap_done"
@@ -491,7 +787,8 @@ def test_notes_in_get_account_order():
 
 def test_multi_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4600
+    # A9 raised it from 4600 for the per-refusal set_product call and the day-number and cut-off rules.
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 5500
 
 
 def test_spec_b_hardship_conflict_matches_code():
@@ -513,7 +810,7 @@ def test_validate_spec_b_against_freya_dry_run():  # live; skipped without FREYA
 def test_l1_mentioned_amount_rule_in_both_templates():
     for w in (wf(), C(A, OA)):
         t = w["nodes"]["negotiate"]["task_message"]
-        assert "the <amount> I mentioned" in t and "in the same sentence as the date" in t
+        assert "<minimum payment / amount> I mentioned" in t and "in the same sentence as the date" in t
         assert 'never "The rest stays overdue." again' in t
 
 
@@ -528,7 +825,7 @@ def test_l3_readback_hears_transfers_and_support():
         by.setdefault(t["target_node"], []).append(json.dumps(t["condition"]))
     assert any('"restructuring"' in c for c in by["transfer_restructuring"])
     assert any('"human_first_request"' in c for c in by["human_ask_readback"])
-    assert any('"hardship"' in c for c in by["readback_reset"])
+    assert any('"hardship"' in c for c in by["hardship_offer"])  # A10: the support offer step, as from negotiate
     hold = w["nodes"]["human_hold_readback"]
     assert [t["target_node"] for t in hold["transitions"]] == ["transfer_general", "human_back_readback"]
     v = {"rb_answer": "human_first_request"}
@@ -544,3 +841,100 @@ def test_l4_mp_msg_sentinel():
     assert s.v["mp_msg"] == "none yet" and s.v["neg_event"] == "continue"
     s.run("readback_reset")
     assert "did not confirm" in s.v["mp_msg"]
+
+
+# ---------------------------------------------------------------- A11: parallel set_product calls
+
+PUB12_BATCH = ({"product_id": "p2", "outcome": "refused"},
+               {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-15"},
+               {"product_id": "p3", "outcome": "refused"})
+
+
+def test_a11_pre_hook_writes_only_its_own_product_variable():
+    """No pre-hook rewrites a variable another product's call also writes, except the batch counter (same value)."""
+    s = Sim("PUB-12")
+    s.batch(*PUB12_BATCH)
+    w2, w1, w3 = s.batch_writes
+    assert set(w1) == {"mp_p1", "mp_seq"} and set(w2) == {"mp_p2", "mp_seq"} and set(w3) == {"mp_p3", "mp_seq"}
+    assert w1["mp_seq"] == w2["mp_seq"] == w3["mp_seq"]
+    for w in (w1, w2, w3):
+        assert "mp_state" not in w and "mp_msg" not in w and "mp_phase" not in w
+
+
+def test_a11_pub12_replay_parallel_calls_keep_the_agreed_product():
+    """Live call 922f2517 (gate a9c): three parallel calls, p1's agreement was lost to the shared-JSON rewrite."""
+    s = Sim("PUB-12")
+    res = s.batch(*PUB12_BATCH)
+    st = load_state(s.v)["p"]
+    assert st["p1"]["status"] == "agreed" and st["p1"]["date"] == "2026-10-15" and st["p1"]["amount"] == 510.0
+    assert st["p2"]["status"] == "pending" and st["p3"]["status"] == "pending"
+    for msg in res:  # every result of the batch carries every answer of it and what is still open
+        assert "The credit card ending 9015: Noted for now" in msg
+        assert "The personal loan: Not counted yet." in msg and "The car loan: Not counted yet." in msg
+        assert "Still open: the personal loan and the car loan." in msg
+        assert "Next is" not in msg  # the Not-counted answers already say what to do
+    assert s.v["mp_phase"] == "open"
+    # the model re-reports both refusals (again in parallel), then the second personal-loan attempt is refused
+    res = s.batch({"product_id": "p2", "outcome": "refused"}, {"product_id": "p3", "outcome": "refused"})
+    assert all("attempt 1 of 2 for the personal loan" in m and "last attempt for the car loan" in m for m in res)
+    s.say(product_id="p2", outcome="refused")
+    assert s.v["mp_phase"] == "readback"
+    assert s.v["mp_readback"].startswith("To confirm, you will pay 510.00 for your credit card ending 9015 on Thursday 15 October 2026.")
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert promises == [("p1", 510.0, "2026-10-15")] and notes == [("p2", "refused"), ("p3", "refused")]
+    assert outcome == "promise"
+
+
+def test_a11_parallel_agreements_all_kept_and_read_back():
+    """A customer settling every product in one message: three parallel agreed calls, none lost."""
+    s = Sim("PUB-11")
+    s.batch(*({"product_id": p, "outcome": "agreed", "amount": "full", "date": "2026-10-16"} for p in ("p1", "p2", "p3")))
+    assert [load_state(s.v)["p"][p]["status"] for p in ("p1", "p2", "p3")] == ["agreed"] * 3
+    assert s.v["mp_phase"] == "readback" and s.v["mp_readback"].count("Friday 16 October 2026") == 3
+    s.confirm()
+    promises, notes, close, outcome, reason = s.chain()
+    assert len(promises) == 3 and notes == [] and outcome == "promise"
+
+
+def test_a11_goodbye_after_a_parallel_batch_reads_the_agreed_product_back():
+    """The live call's end: goodbye with p1 agreed in a batch -> negotiate_end reads it back (never wrap_done/refused)."""
+    s = Sim("PUB-12")
+    s.batch(*PUB12_BATCH)
+    s.v["mp_readback"] = ""  # a result spoken before the batch had landed may have built no read-back
+    s.run("negotiate_end")
+    assert s.route(s.w["nodes"]["negotiate_end"]) == "readback"
+    assert "510.00 for your credit card ending 9015" in s.v["mp_readback"]
+
+
+def test_a11_review_with_open_products_forbids_noted_and_goodbye():
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    msg = s.say(product_id="ALL", outcome="review")
+    assert msg.startswith("NOT every product is settled: the personal loan and the car loan are still open. "
+                          "Nothing is noted or recorded for them and the call is not over: never say noted, recorded or goodbye now.")
+    assert "Next is the personal loan" in msg and s.v["mp_phase"] == "open"
+    s.refuse("p2", 2)
+    msg = s.say(product_id="ALL", outcome="review")
+    assert msg.startswith("NOT every product is settled: the car loan is still open. Nothing is noted or recorded for it")
+    t = wf()["nodes"]["negotiate"]["task_message"]
+    assert ('A result that says a product is still open ("NOT every product is settled", "Still open"): nothing is noted for it '
+            "and the call is not over; never say noted, recorded or goodbye, continue with that product.") in t
+
+
+def test_a11_confirmed_product_is_never_noted_refused_by_any_wrap():
+    """A product agreed and confirmed at the read-back but not recorded gets the service-failure note in every wrap."""
+    s = Sim("PUB-12")
+    s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-15")
+    s.refuse("p2", 2)
+    s.refuse("p3", 1)
+    s.confirm()
+    s.run("record_plan")
+    assert json.loads(s.v["mp_confirmed"]) == ["p1"]
+    wraps = [k for k in s.w["nodes"] if k.startswith("wrap_")]
+    assert "wrap_done" in wraps and "wrap_recorded" in wraps and len(wraps) > 3
+    for k in wraps:
+        v = copy.deepcopy(s.v)
+        exec(_code(s.w["nodes"][k]), {"vars": v})
+        notes = {v["note%d_pid" % i]: v["note%d_reason" % i] for i in range(1, 4) if v.get("note_has_%d" % i) == "yes"}
+        assert notes.get("p1") not in (None, "refused"), (k, notes)

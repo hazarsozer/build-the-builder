@@ -3,7 +3,7 @@ import json
 import re
 from pathlib import Path
 
-from builder.validate import validate, resolve_path
+from builder.validate import validate, resolve_path, reasonless_outcomes
 
 ROOT = Path(__file__).resolve().parent.parent
 OA = json.load(open(ROOT / "tools/openapi.json"))
@@ -82,6 +82,27 @@ def test_reason_required_except_promise_paid():
     row = next(o for o in s["outcomes"] if o["outcome"] == "no_promise")
     row["reason"] = None
     assert any("reason" in e for e in validate(s, OA))
+
+
+def _reason_desc(oa, text):
+    oa = copy.deepcopy(oa)
+    oa["paths"]["/close_call"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["reason"]["description"] = text
+    return oa
+
+
+def test_reasonless_outcomes_read_from_openapi():
+    assert reasonless_outcomes(OA) == {"promise", "paid"}
+    ins = json.load(open(ROOT / "bench/insurance/openapi.json"))
+    assert reasonless_outcomes(ins) == {"promise_to_pay", "already_paid"}
+    s = copy.deepcopy(A)
+    next(o for o in s["outcomes"] if o["outcome"] == "no_promise")["reason"] = None
+    three = _reason_desc(OA, "Required for every outcome except promise, paid or `no_promise`. See the table.")
+    assert reasonless_outcomes(three) == {"promise", "paid", "no_promise"}
+    assert not any("needs a reason" in e for e in validate(s, three))
+    vague = _reason_desc(OA, "See the table in the brief.")
+    assert reasonless_outcomes(vague) is None
+    assert not any("needs a reason" in e for e in validate(s, vague))
+    assert validate(A, three) == [] and validate(B, vague) == []
 
 
 def test_outcome_row_unknown_event():

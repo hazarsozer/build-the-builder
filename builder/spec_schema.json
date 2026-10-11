@@ -997,7 +997,7 @@
           },
           "reason": {
             "$ref": "#/$defs/nullable_str",
-            "description": "close_call reason; null only for promise and paid."
+            "description": "close_call reason; null only for the outcomes the openapi close_call reason description exempts (for example promise and paid)."
           },
           "event": {
             "$ref": "#/$defs/str",

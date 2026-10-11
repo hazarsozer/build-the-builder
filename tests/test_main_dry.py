@@ -42,7 +42,9 @@ def env(tmp_path, monkeypatch):
     briefs = tmp_path / "in"
     briefs.mkdir()
     shutil.copy(ROOT / "briefs/brief-a.md", briefs / "brief-a.md")
+    shutil.copy(ROOT / "tools/openapi.json", briefs / "openapi.json")
     f.brief = briefs / "brief-a.md"
+    f.slot = M.slug_for([str(f.brief)])
     f.spec = A
 
     def fake_extract(brief_paths, openapi, trace=None, **kw):
@@ -83,6 +85,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(tunnel, "stop", tstop)
     f.cancelled, f.sim_list = [], []
     monkeypatch.setattr(M, "SIMS_FILE", tmp_path / ".freya-sims.json")
+    monkeypatch.setattr(M, "TUNNEL_BACKOFF_S", 0.01)
     monkeypatch.setattr(freya, "cancel_simulation", lambda sid: f.cancelled.append(sid) or
                         {"success": True, "cancelledJobs": 3, "cancelledIterations": 1})
     monkeypatch.setattr(freya, "list_simulations", lambda: f.sim_list)
@@ -121,21 +124,21 @@ def test_no_selftest_run(env):
     assert ks[0] == "start" and ks[-1] == "end"
     assert env.tunnel_started == 0
     [(slot, wf)] = env.saved
-    assert slot == "brief-a"
+    assert slot == env.slot
     assert "trycloudflare" not in wf and HOST in wf
-    out = env.out / "brief-a.workflow.json"
+    out = env.out / (env.slot + ".workflow.json")
     assert env.exported == [str(out)] and out.exists()
-    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+    assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == A["bank_name"]
     rows = trace_rows(env)
     start = rows[0]
     assert start["briefs"] and start["model"] and "git_commit" in start
     saved = [r for r in rows if r["kind"] == "saved"][0]
-    assert saved["workflow_id"] == "wf-brief-a" and saved["agent_id"] == "ag-brief-a" and saved["url_kind"] == "official"
+    assert saved["workflow_id"] == "wf-" + env.slot and saved["agent_id"] == "ag-" + env.slot and saved["url_kind"] == "official"
     assert [r for r in rows if r["kind"] == "export"][0]["path"] == str(out)
     end = rows[-1]
-    assert end["ok"] is True and end["duration_s"] >= 0 and end["workflow_id"] == "wf-brief-a"
+    assert end["ok"] is True and end["duration_s"] >= 0 and end["workflow_id"] == "wf-" + env.slot
     md = list(env.traces.glob("*.md"))
-    assert md and "wf-brief-a" in md[0].read_text()
+    assert md and "wf-" + env.slot in md[0].read_text()
 
 
 def test_slot_flag_and_budget_passed_to_extract(env):
@@ -155,12 +158,12 @@ def test_selftest_all_pass_skips_round_two(env, monkeypatch):
     assert run_main(env) == 0
     assert len(env.selftest_calls) == 1 and not called
     agent, cases, bank = env.selftest_calls[0]
-    assert agent == "ag-brief-a-selftest" and bank == TUNNEL
+    assert agent == "ag-" + env.slot + "-selftest" and bank == TUNNEL
     assert len(cases) == 11          # n=10 plus the injection case (notes off in spec A)
     assert env.tunnel_started == 1 and env.tunnel_stopped == 1
     (s1, wf1), (s2, wf2) = env.saved
-    assert s1 == "brief-a-selftest" and TUNNEL + "/v1" in wf1
-    assert s2 == "brief-a" and "trycloudflare" not in wf2 and HOST in wf2
+    assert s1 == env.slot + "-selftest" and TUNNEL + "/v1" in wf1
+    assert s2 == env.slot and "trycloudflare" not in wf2 and HOST in wf2
     rows = trace_rows(env)
     [r1] = [r for r in rows if r["kind"] == "selftest_round"]
     assert r1["passed"] == 11 and r1["total"] == 11 and r1["failing"] == []
@@ -205,8 +208,8 @@ def test_failures_run_fix_round_and_keep_best(env, monkeypatch):
     assert rounds[0]["failing"] == ["SELF-01", "SELF-02"] and rounds[1]["failing"] == []
     [fr] = [r for r in rows if r["kind"] == "fix_round"]
     assert fr["changes"] == [{"path": "bank_name", "quote": "q", "why": "SELF-01"}]
-    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == "Fixed Bank"
-    assert [s for s, _ in env.saved] == ["brief-a-selftest", "brief-a-selftest", "brief-a"]
+    assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == "Fixed Bank"
+    assert [s for s, _ in env.saved] == [env.slot + "-selftest", env.slot + "-selftest", env.slot]
     assert env.selftest_calls[1] == env.selftest_calls[0]          # round 2 reruns round 1's cases (no extra here)
     best = [r for r in rows if r["kind"] == "best_spec"][0]
     assert best["comparable"] == 11 and best["round1_passed"] == 9 and best["round2_passed"] == 11
@@ -223,7 +226,7 @@ def test_worse_round_two_keeps_round_one_spec(env, monkeypatch):
     monkeypatch.setattr(M, "run_fix", lambda *a, **k: (fixed, {"changes": [{"path": "bank_name", "quote": "q"}],
                                                               "discarded": [], "errors": 0}))
     assert run_main(env) == 0
-    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+    assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == A["bank_name"]
 
 
 def _fix_to(monkeypatch, fixed, path="x.y"):
@@ -237,7 +240,7 @@ def test_tie_keeps_round_one(env, monkeypatch):
     fixed["bank_name"] = "Tie Bank"
     _fix_to(monkeypatch, fixed)
     assert run_main(env) == 0
-    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+    assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == A["bank_name"]
 
 
 def test_round2_cases_compare_only_identical_expectations():
@@ -289,7 +292,7 @@ def test_budget_stop_marks_orphan_simulation(env, monkeypatch):
     [oc] = [r for r in rows if r["kind"] == "orphan_cancelled"]
     assert oc["id"] == "sim-orphan" and oc["success"] is True and oc["cancelled_jobs"] == 3
     assert M.own_sims() == {"sim-orphan"}
-    assert (env.out / "brief-a.workflow.json").exists()
+    assert (env.out / (env.slot + ".workflow.json")).exists()
 
 
 def test_late_created_orphan_is_cancelled(env, monkeypatch):
@@ -351,7 +354,7 @@ def test_busy_workspace_skips_selftest(env, monkeypatch):
     assert run_main(env) == 0
     ks = kinds(env)
     assert ks.count("workspace_busy") == 1 and "selftest_skipped" in ks
-    assert (env.out / "brief-a.workflow.json").exists()
+    assert (env.out / (env.slot + ".workflow.json")).exists()
 
 
 def test_lint_errors_in_best_spec_fall_back_to_extracted(env, monkeypatch):
@@ -370,7 +373,7 @@ def test_lint_errors_in_best_spec_fall_back_to_extracted(env, monkeypatch):
     rows = trace_rows(env)
     assert [r["label"] for r in rows if r["kind"] == "best_spec"] == ["fix1"]
     assert any(r["kind"] == "final_spec_switch" for r in rows)
-    assert json.loads((env.out / "brief-a.spec.json").read_text())["bank_name"] == A["bank_name"]
+    assert json.loads((env.out / (env.slot + ".spec.json")).read_text())["bank_name"] == A["bank_name"]
 
 
 def test_hanging_save_is_bounded(env, monkeypatch):
@@ -387,7 +390,7 @@ def test_selftest_crash_still_exports(env, monkeypatch):
         raise RuntimeError("simulated selftest crash")
     monkeypatch.setattr(selftest, "run", boom)
     assert run_main(env) == 0
-    assert (env.out / "brief-a.workflow.json").exists()
+    assert (env.out / (env.slot + ".workflow.json")).exists()
     rows = trace_rows(env)
     assert any(r["kind"] == "phase_failed" and r["phase"] == "selftest" for r in rows)
     assert rows[-1]["kind"] == "end" and rows[-1]["ok"] is True
@@ -395,12 +398,16 @@ def test_selftest_crash_still_exports(env, monkeypatch):
 
 
 def test_tunnel_failure_still_exports(env, monkeypatch):
+    tries = []
+
     def bad(port):
+        tries.append(port)
         raise RuntimeError("no cloudflared")
     monkeypatch.setattr(tunnel, "start", bad)
     assert run_main(env) == 0
-    assert (env.out / "brief-a.workflow.json").exists()
+    assert (env.out / (env.slot + ".workflow.json")).exists()
     assert any(r["kind"] == "phase_failed" for r in trace_rows(env))
+    assert len(tries) == 3 and [r["retry"] for r in trace_rows(env) if r["kind"] == "tunnel_failed"] == [True, True, False]
 
 
 def test_budget_hard_stop_during_selftest(env, monkeypatch):
@@ -413,7 +420,7 @@ def test_budget_hard_stop_during_selftest(env, monkeypatch):
     t0 = time.monotonic()
     assert run_main(env, "--budget-min", "0.05") == 0      # 3 s
     assert time.monotonic() - t0 < 6
-    assert (env.out / "brief-a.workflow.json").exists()
+    assert (env.out / (env.slot + ".workflow.json")).exists()
     assert "budget_stop" in kinds(env)
 
 
@@ -424,6 +431,72 @@ def test_no_spec_exits_nonzero(env):
     assert any(r["kind"] == "no_spec" for r in rows)
     assert rows[-1]["kind"] == "end" and rows[-1]["ok"] is False
     assert not env.saved and not env.exported
+
+
+def test_crashing_case_builder_still_runs_selftest(env, monkeypatch):
+    def boom(c, **o):
+        raise KeyError("bands")
+    monkeypatch.setattr(M.cases, "s_late_refusal", boom)
+    monkeypatch.setattr(selftest, "run", lambda a, cases, b, **k: selftest_result(cases))
+    assert run_main(env) == 0
+    [ev] = [r for r in trace_rows(env) if r["kind"] == "cases"]
+    assert "late_refusal" in ev["skipped"] and "KeyError" in ev["errors"]["late_refusal"]
+    assert any(r["kind"] == "selftest_round" for r in trace_rows(env))
+
+
+def _counting_extract(monkeypatch, results):
+    calls = []
+
+    def fake(brief_paths, openapi, trace=None, **kw):
+        calls.append(kw)
+        r = results[min(len(calls), len(results)) - 1]
+        return (copy.deepcopy(r), [], {"seconds": 1.0}) if r is not None else (None, ["no candidate"], {})
+    monkeypatch.setattr(ex, "extract", fake)
+    return calls
+
+
+def test_extraction_without_spec_is_retried_once(env, monkeypatch):
+    calls = _counting_extract(monkeypatch, [None, A])
+    assert run_main(env, "--no-selftest") == 0
+    assert len(calls) == 2 and "dual" not in calls[0]
+    assert calls[1]["dual"] is False and calls[1]["use_oracle"] is False and calls[1]["deadline_s"] <= 360
+    ks = kinds(env)
+    assert "extract_retry" in ks and "no_spec" not in ks and "export" in ks
+
+
+def test_extraction_retry_needs_budget(env, monkeypatch):
+    calls = _counting_extract(monkeypatch, [None, A])
+    assert run_main(env, "--no-selftest", "--budget-min", "10") == 2       # 600 s - reserve < 10 min: no retry
+    assert len(calls) == 1 and "extract_retry" not in kinds(env) and "no_spec" in kinds(env)
+
+
+def test_tunnel_retried_with_backoff(env, monkeypatch):
+    tries = []
+
+    def flaky(port):
+        tries.append(port)
+        if len(tries) < 3:
+            raise RuntimeError("cloudflared printed no URL")
+        return TUNNEL, "proc"
+    monkeypatch.setattr(tunnel, "start", flaky)
+    monkeypatch.setattr(selftest, "run", lambda a, cases, b, **k: selftest_result(cases))
+    assert run_main(env) == 0
+    assert len(tries) == 3
+    rows = trace_rows(env)
+    assert [(r["attempt"], r["retry"]) for r in rows if r["kind"] == "tunnel_failed"] == [(1, True), (2, True)]
+    assert any(r["kind"] == "selftest_round" for r in rows)
+
+
+def test_empty_weekdays_spec_does_not_hang(env, monkeypatch):
+    spec = copy.deepcopy(A)
+    spec["calendar"]["weekdays"] = []
+    env.spec = spec
+    t0 = time.monotonic()
+    run_main(env, "--budget-min", "0.2")
+    assert time.monotonic() - t0 < 20
+    rows = trace_rows(env)
+    assert rows[-1]["kind"] == "end"
+    assert any("calendar.weekdays" in json.dumps(r) for r in rows)
 
 
 def test_official_url_assertion_blocks_save(env, monkeypatch):
@@ -448,18 +521,77 @@ def test_trace_has_no_secret(env, monkeypatch):
 
 # ------------------------------------------------------------------------------------------------ helpers
 
-def test_openapi_order_flag_then_brief_dir_then_tools(tmp_path):
+def test_openapi_order_flag_then_brief_dir_then_single_doc(tmp_path):
     (tmp_path / "b.md").write_text("x")
-    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == ROOT / "tools/openapi.json"
-    (tmp_path / "openapi.json").write_text("{}")
-    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == tmp_path / "openapi.json"
-    assert M.resolve_openapi([str(tmp_path)], None) == tmp_path / "openapi.json"
+    (tmp_path / "cases.json").write_text(json.dumps([{"id": 1}]))              # JSON, not OpenAPI: ignored
+    with pytest.raises(M.OpenapiNotFound, match="no OpenAPI"):
+        M.resolve_openapi([str(tmp_path / "b.md")], None)                     # never a silent tools/openapi.json
+    (tmp_path / "bank-api.json").write_text(json.dumps(OA))
+    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == (tmp_path / "bank-api.json").resolve()
+    assert M.resolve_openapi([str(tmp_path)], None) == (tmp_path / "bank-api.json").resolve()
+    (tmp_path / "other-api.json").write_text(json.dumps(OA))
+    with pytest.raises(M.OpenapiNotFound, match="several"):
+        M.resolve_openapi([str(tmp_path / "b.md")], None)
+    (tmp_path / "openapi.json").write_text(json.dumps(OA))
+    assert M.resolve_openapi([str(tmp_path / "b.md")], None) == (tmp_path / "openapi.json").resolve()
+    assert M.resolve_openapi([str(tmp_path)], None) == (tmp_path / "openapi.json").resolve()
     assert M.resolve_openapi([str(tmp_path / "b.md")], "/x/other.json") == Path("/x/other.json")
+    assert M.resolve_openapi([str(ROOT / "briefs/brief-a.md")], None).resolve() == (ROOT / "tools/openapi.json").resolve()
 
 
-def test_slug():
-    assert M.slug_for(["briefs/Brief A (v2).md"]) == "brief-a-v2"
-    assert M.slug_for(["/x/hidden-1/"]) == "hidden-1"
+def test_openapi_doc_is_never_a_brief(tmp_path):
+    from builder import sdk
+    (tmp_path / "b.md").write_text("x")
+    (tmp_path / "bank-api.json").write_text(json.dumps(OA))
+    (tmp_path / "cases.json").write_text("[]")
+    assert [p.name for p in sdk.expand_briefs([str(tmp_path)])] == ["b.md", "cases.json"]
+    assert [p.name for p in sdk.expand_briefs([str(tmp_path / "b.md"), str(tmp_path / "bank-api.json")])] == ["b.md"]
+
+
+def test_no_openapi_exits_2_with_trace_event(env):
+    (env.brief.parent / "openapi.json").unlink()
+    assert run_main(env, "--no-selftest") == 2
+    rows = trace_rows(env)
+    assert rows[0]["kind"] == "start" and rows[0]["openapi"] is None
+    assert any(r["kind"] == "no_openapi" and "--openapi" in r["error"] for r in rows)
+    assert rows[-1]["kind"] == "end" and rows[-1]["exit_code"] == 2
+    assert not env.saved and not env.exported
+
+
+def test_openapi_flag_wins_and_odd_name_is_found(env):
+    (env.brief.parent / "openapi.json").rename(env.brief.parent / "bank.openapi.json")
+    assert run_main(env, "--no-selftest") == 0
+    assert trace_rows(env)[0]["openapi"].endswith("bank.openapi.json")
+    shutil.rmtree(env.traces)
+    assert run_main(env, "--no-selftest", "--openapi", str(ROOT / "tools/openapi.json")) == 0
+    assert trace_rows(env)[0]["openapi"] == str(ROOT / "tools/openapi.json")
+
+
+def test_slug(tmp_path):
+    import re
+    assert re.fullmatch(r"briefs-brief-a-v2-[0-9a-f]{6}", M.slug_for(["briefs/Brief A (v2).md"]))
+    (tmp_path / "hidden-1").mkdir()
+    assert re.fullmatch(r"hidden-1-[0-9a-f]{6}", M.slug_for([str(tmp_path / "hidden-1") + "/"]))
+    # same file name in two folders: two slots (and two export files); the same brief set: the same slot
+    x, y = M.slug_for(["/r/x/brief.md"]), M.slug_for(["/r/y/brief.md"])
+    assert x != y and x.startswith("x-brief-") and y.startswith("y-brief-")
+    assert M.slug_for(["/r/x/brief.md"]) == x
+    assert M.slug_for(["/r/x/brief.md", "/r/x/memo.md"]) != x
+    assert M.slug_for(["/r/x/" + "z" * 80 + ".md"]).count("z") <= 40
+
+
+def test_two_folders_same_brief_name_do_not_overwrite(env, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    shutil.copy(env.brief, other / env.brief.name)
+    shutil.copy(env.brief.parent / "openapi.json", other / "openapi.json")
+    assert run_main(env, "--no-selftest") == 0
+    assert M.main([str(other / env.brief.name), "--no-selftest", "--out-dir", str(env.out), "--trace-dir", str(env.traces)]) == 0
+    slots = [s for s, _ in env.saved]
+    assert len(set(slots)) == 2 and len(list(env.out.glob("*.workflow.json"))) == 2
+    assert M.main([str(env.brief), "--no-selftest", "--slot", "final-1", "--out-dir", str(env.out),
+                   "--trace-dir", str(env.traces)]) == 0
+    assert env.saved[-1][0] == "final-1" and (env.out / "final-1.workflow.json").exists()
 
 
 def test_now_resolution(tmp_path):

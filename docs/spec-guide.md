@@ -131,7 +131,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `closing.thank_and_goodbye` (required): boolean. True: thank the customer and say goodbye before close_call.
 - `outcomes` (required): list of object. The brief's outcome table: each (outcome, reason) pair and the event that produces it.
 - `outcomes[].outcome` (required): string. close_call outcome enum value.
-- `outcomes[].reason` (required): string or null. close_call reason; null only for promise and paid.
+- `outcomes[].reason` (required): string or null. close_call reason; null only for the outcomes the openapi close_call reason description exempts (for example promise and paid).
 - `outcomes[].event` (required): string. events[].id that produces this row.
 - `unused_outcomes` (optional): list of string. Optional: openapi close_call outcomes the brief never uses.
 - `tool_fields` (optional): map of name -> object. Optional: request fields of an openapi tool that the compiler has no slot for, keyed "<tool>.<field>" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it.

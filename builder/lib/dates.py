@@ -11,31 +11,66 @@ MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
        'September', 'October', 'November', 'December']
 
 
+# A business-day search that meets no business day in this many days in a row stops with an error.
+MAX_SCAN_DAYS = 800
+
+
+def check_weekdays(cal):
+    """calendar.weekdays must be a non-empty list of whole numbers 0 (Monday) to 6; else ValueError."""
+    wd = cal.get("weekdays") if isinstance(cal, dict) else None
+    if not isinstance(wd, list) or not wd or not all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 6 for x in wd):
+        raise ValueError("calendar.weekdays must be a non-empty list of integers 0-6, got " + str(wd))
+
+
 def is_bd(d, cal):
     return d.weekday() in cal["weekdays"] and d.isoformat() not in cal["holidays"]
 
 
+def _no_bd(start, cal):
+    raise ValueError("no business day within " + str(MAX_SCAN_DAYS) + " days of " + start.isoformat() +
+                     "; check calendar.weekdays and calendar.holidays")
+
+
 def next_bd(d, cal):
+    check_weekdays(cal)
+    start = d
     d = d + datetime.timedelta(days=1)
+    k = 1
     while not is_bd(d, cal):
         d = d + datetime.timedelta(days=1)
+        k += 1
+        if k > MAX_SCAN_DAYS:
+            _no_bd(start, cal)
     return d
 
 
 def prev_bd(d, cal):
+    check_weekdays(cal)
+    start = d
     d = d - datetime.timedelta(days=1)
+    k = 1
     while not is_bd(d, cal):
         d = d - datetime.timedelta(days=1)
+        k += 1
+        if k > MAX_SCAN_DAYS:
+            _no_bd(start, cal)
     return d
 
 
 def nth_bd(start, n, cal):
+    check_weekdays(cal)
     d = start
     c = 0
+    miss = 0
     while c < n:
         d = d + datetime.timedelta(days=1)
         if is_bd(d, cal):
             c += 1
+            miss = 0
+        else:
+            miss += 1
+            if miss > MAX_SCAN_DAYS:
+                _no_bd(start, cal)
     return d
 
 
@@ -132,6 +167,23 @@ def pfield(p, cfg, key, default):
     return v
 
 
+def product_cfg_of(p, product_cfg):
+    """A product's products.<type> config: by its `type` field; else by any of its string values that is a config key;
+    else the first config whose amount_field holds a value in the product; else an empty dict."""
+    pc = product_cfg or dict()
+    cfg = pc.get(str(p.get('type') or ''))
+    if cfg:
+        return cfg
+    for v in p.values():
+        if isinstance(v, str) and isinstance(pc.get(v), dict):
+            return pc[v]
+    for c in pc.values():
+        f = (c or dict()).get('amount_field') if isinstance(c, dict) else None
+        if f and p.get(f) not in (None, ''):
+            return c
+    return dict()
+
+
 def amount_of(p, cfg):
     return float(pfield(p, cfg, 'amount_field', 'past_due'))
 
@@ -153,7 +205,7 @@ def plan_products(products, today, bands, cal, product_cfg=None):
     """Per-product facts: product_id, band, deadline, floor, full, attempts [(amount_kind, date)]."""
     out = []
     for i, p in enumerate(products):
-        cfg = (product_cfg or dict()).get(str(p.get('type') or '')) or dict()
+        cfg = product_cfg_of(p, product_cfg)
         full = amount_of(p, cfg)
         ff = cfg.get('floor_field') or 'floor'
         floor = float(p.get(ff)) if p.get(ff) not in (None, '') else full

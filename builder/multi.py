@@ -17,14 +17,22 @@ updates the JSON state in vars and writes the next instruction. Nothing is writt
 confirmation; promises and notes are then written by engine-run nodes, never by the model.
 Verified 10 Oct (probe): a pre-hook sees the model's arguments in config['body'] and its vars writes persist;
 a post-hook sees vars but not <tool>_args.
+Verified 11 Oct (chat-API probe, call 26dc5ce1): SET_POST's rewrite of result['data'] is the tool result the model
+reads (it spoke a token that existed only in what_to_do_next). A code_exec tool returns data null instead, so the
+model never sees a rejection: api is the default. A non-2xx response is a function_call_error and skips the post-hook.
+Body leaves need a {{sp_<field>}} default to be model-filled: without one only customer_id was sent (regate-a9-B).
+Verified 11 Oct (chat-API probe, call b17bfc2f, seeded and verified PUB-13 customer): the model's product_id, outcome,
+amount and date reach config['body']; the pre-hook rejected a date after the deadline, then stored the product as agreed
+on its deadline in mp_state; the model spoke both answers (the deadline, then the next product's attempt 1).
 """
 from builder.lib import dates, embed, money
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
 
 SLOTS = 3          # products per call the engine can record / note (the brief allows up to three)
 SET_TOOL = "set_product"
-SET_MODE = "code"  # "code" (code_exec tool, nothing in the bank ledger) or "api" (get_account route + pre-hook)
+SET_MODE = "api"   # "api" (get_account route + pre/post hooks; the model reads what_to_do_next) or "code" (code_exec, data null)
 PHASE = "mp_phase"
+ARG_VAR = "sp_"    # set_product body field f defaults to {{sp_f}}; no sp_* variable is ever set, so the model fills it
 PROMISE_FIELDS = ("product_id", "amount", "date")
 
 
@@ -36,6 +44,8 @@ def _const(name, value):
 
 MP_ACCOUNT_CODE = r'''
 try:
+    if vars.get('account_state') != 'facts':
+        raise ValueError(str(vars.get('account_error') or 'no account facts'))
     plans = plan_products([f['product'] for f in facts], today, BANDS, CAL, PRODUCTS)
     order = list(range(len(facts)))
     if MP.get('order') == 'highest_past_due':
@@ -57,7 +67,9 @@ try:
                      ', ' + str(f['days_late']) + ' days late, ' + str(pl['band']).upper() + ' band. Floor (lowest amount you may accept): ' +
                      fmt(f['floor']) + '. Deadline (latest date you may accept): ' + speak(pl['deadline']) + '.\n  Persuasion plan: ' +
                      ' '.join('Attempt ' + str(j + 1) + ': ' + t for j, t in enumerate(att)) + ' ' +
-                     NUMS.get(str(n), str(n)).capitalize() + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.')
+                     NUMS.get(str(n), str(n)).capitalize() + (' persuasion attempt' if n == 1 else ' persuasion attempts') + ' for this product.' +
+                     (' After one refusal make no other offer for it (no lower amount, no other date).' if n == 1 else '') +
+                     (' Make no offer for it.' if n == 0 else ''))
     last = max(pl['deadline'] for pl in plans)
     days = dict()
     d = today
@@ -71,6 +83,7 @@ try:
     vars['mp_msg'] = 'none yet'
     vars['mp_readback'] = ''
     vars['rb_answer'] = 'pending'
+    vars['mp_ended'] = 'no'
     vars['products_text'] = '\n'.join(lines)
     vars['products_count'] = str(len(order))
     if len(order) > 1:
@@ -87,9 +100,45 @@ except Exception as e:
 '''
 
 
+# ---------------------------------------------------------------- per-product state
+# mp_state holds what prepare_account computed (order, amounts, plans, calendar) and is never rewritten by set_product.
+# What a set_product call changes for a product lives in that product's own variable mp_p<num> (and the "offer made"
+# flag a result sets in mp_o<num>). Verified 11 Oct (chat-API probe f58d6ed0, three parallel calls): parallel calls'
+# pre-hooks all read the same snapshot of vars; their writes merge per variable, so a shared JSON rewritten by each
+# call keeps only the last writer's change (PUB-12 call 922f2517 lost an agreed product that way), while one variable
+# per product keeps every change. The post-hooks ran after the batch's pre-hooks and saw the merged variables.
+DYN = ("status", "amount", "date", "capped", "extra", "asked", "offered", "tried", "ack", "seq", "own")
+
+LOAD = r'''
+def _load(vars):
+    """mp_state with each product's own variable mp_p<num> laid over it."""
+    st = json.loads(str(vars.get('mp_state') or '{}'))
+    for q in st.get('order') or []:
+        P = st['p'][q]
+        k = str(P.get('num'))
+        try:
+            d = json.loads(str(vars.get('mp_p' + k) or '{}'))
+        except Exception:
+            d = dict()
+        if isinstance(d, dict):
+            P.update(d)
+        if str(vars.get('mp_o' + k) or '') == 'yes':
+            P['offered'] = True
+    return st
+'''
+
+
+def load_state(v):
+    """The merged product state of a variable table (tests, offline tools): the same code the hooks run."""
+    import json
+    g = {"json": json}
+    exec(LOAD, g)
+    return g["_load"](v)
+
+
 # ---------------------------------------------------------------- set_product hooks
 
-SET_PRE = r'''
+SET_LIB = r'''
 def _num(x):
     try:
         return float(str(x).replace(',', '').strip().lstrip('$').strip())
@@ -176,12 +225,20 @@ def _readback(st):
     return 'To confirm, you will pay ' + body + '. ' + CFG['confirm']
 
 
-def _next(st):
+def _next(st, cur=None):
     pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
+    if cur is not None and cur in pend:
+        return 'open', ''
     if pend:
         P = st['p'][pend[0]]
+        if not P['att']:
+            return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). Its plan has no offers: make no offer for it and call ' +
+                            TOOL + ' with outcome refused for it now.')
+        P['offered'] = True
+        st['_offer'] = pend[0]
+        k = min(int(P.get('tried') or 0), len(P['att']) - 1)
         return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). If the customer already gave an answer for it, call ' +
-                        TOOL + ' for it now. Otherwise make attempt 1 of its plan: ' + P['att'][0] + ' Do not ask about today again.')
+                        TOOL + ' for it now. Otherwise make attempt ' + str(k + 1) + ' of its plan: ' + P['att'][k] + ' Do not ask about today again.')
     if [q for q in st['order'] if st['p'][q]['status'] == 'agreed']:
         return 'readback', 'Every product is settled. The read-back is spoken automatically: say nothing more.'
     return 'done', 'Every product is settled and there is nothing to confirm. Say nothing more.'
@@ -199,7 +256,9 @@ def _agree(st, b, today):
     if d not in DAYS:
         return None, 'NOT accepted: ' + d + ' is not a date that can be used. Ask the customer for the exact day again.'
     raw = str(b.get('amount') if b.get('amount') is not None else 'full').strip().lower()
-    shared = every and len(targets) > 1
+    # one date for several products, also when they are reported one at a time: another product already agreed on it
+    shared = (every and len(targets) > 1) or any(
+        st['p'][o]['status'] == 'agreed' and st['p'][o].get('asked') == d for o in st['order'] if o not in targets)
     new = dict()
     errs = []
     for q in targets:
@@ -256,7 +315,7 @@ def _agree(st, b, today):
         if extra[xf] is not None and extra[xf] != b.get(xf):
             said.append(xf.replace('_', ' ') + ' noted as ' + str(extra[xf]))
     for q, v in new.items():
-        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra)
+        st['p'][q].update(status='agreed', amount=v[0], date=v[1], capped=v[2], extra=extra, asked=d, offered=True)
     note = (' Note: ' + '; '.join(said) + '. Tell the customer this value.') if said else ''
     return st, 'Noted for now (nothing is registered before the confirmation).' + note
 
@@ -270,13 +329,25 @@ def _refuse(st, b):
     q = targets[0]
     P = st['p'][q]
     n = len(P['att'])
-    k = _num(b.get('attempts_made'))
-    k = 0 if (k is None or k != k) else int(k)
+    if n == 0:
+        P.update(status='refused', amount=None, date=None, capped=False)
+        return st, 'Noted: the plan of the ' + P['words'] + ' has no offers. Make no offer for it.'
+    if not P.get('offered') and P['status'] == 'pending':
+        # a refusal counts only after an offer for this product; "not today" to the first question uses no attempt
+        P['offered'] = True
+        # no offer text here: in the common case the offer was already spoken and must not be read out again
+        return st, ('Not counted yet. If you already made attempt 1 for the ' + P['words'] + ' and the customer refused it, call ' + TOOL +
+                    ' with outcome refused for it again now, before you speak. If you have not made it yet (a no to the today question '
+                    'is not a refusal), make attempt 1 of its plan.')
+    k = int(P.get('tried') or 0) + 1
+    P['tried'] = k
+    P['offered'] = True
     if k < n:
-        return None, ('Not yet: the ' + P['words'] + ' has ' + str(n) + ' persuasion attempts and you have made ' + str(k) +
-                      '. Make attempt ' + str(k + 1) + ' now: ' + P['att'][k] + ' Never repeat an offer the customer already refused.')
+        P.update(status='pending', amount=None, date=None, capped=False)
+        return st, ('Refusal noted (attempt ' + str(k) + ' of ' + str(n) + ' for the ' + P['words'] + '). Make attempt ' + str(k + 1) +
+                    ' now: ' + P['att'][k] + ' Never repeat an offer the customer already refused.')
     P.update(status='refused', amount=None, date=None, capped=False)
-    return st, 'Noted. Make no more offers for the ' + P['words'] + '.'
+    return st, ('Noted: that was the last attempt for the ' + P['words'] + '. Make no more offers for it: no other amount, no other date.')
 
 
 def _note(st, b, out):
@@ -286,49 +357,120 @@ def _note(st, b, out):
     for q in targets:
         st['p'][q].update(status=out, amount=None, date=None, capped=False)
     return st, 'Noted. ' + CFG['say'].get(out, '')
+'''
 
-
+SET_PRE = r'''
+_seq = 0
 try:
     import json, re
+    _seq = int(str(vars.get('mp_seq') or '0').strip() or 0) + 1
+    # parallel set_product calls each read the same snapshot of vars and their writes merge per variable (A11 probe):
+    # a call writes only its own products' mp_p<num> and the shared counter, never a shared JSON
+    vars['mp_seq'] = str(_seq)
     b = ARGS()
     if not isinstance(b, dict):
         b = dict()
-    st = json.loads(str(vars.get('mp_state') or '{}'))
+    st = _load(vars)
     today = st['today']
     DAYS = st.get('days') or dict()
     out = str(b.get('outcome') or '').strip().lower()
-    phase = str(vars.get('mp_phase') or 'open')
+    touched, every = _targets(st, b.get('product_id'), ('pending', 'agreed', 'refused') + tuple(CFG['notes']))
+    if every:
+        touched, every = _targets(st, b.get('product_id'), ('pending', 'agreed'))
     if out == 'review':
-        phase, nxt = _next(st)
-        msg = ('Not every product is settled yet. ' + nxt) if phase == 'open' else nxt
+        new, ack, touched = None, '', []
+    elif out == 'agreed':
+        new, ack = _agree(st, b, today)
+    elif out == 'refused':
+        new, ack = _refuse(st, b)
+    elif out in CFG['notes']:
+        new, ack = _note(st, b, out)
     else:
-        if out == 'agreed':
-            new, ack = _agree(st, b, today)
-        elif out == 'refused':
-            new, ack = _refuse(st, b)
-        elif out in CFG['notes']:
-            new, ack = _note(st, b, out)
+        new, ack, touched = None, 'Unknown outcome. Use one of: agreed, refused, ' + ', '.join(CFG['notes']) + ', review.', []
+    if new is not None:
+        st = new
+    if new is None and len(touched) != 1:
+        touched = []
+    if touched:
+        ws = [st['p'][q]['words'] for q in touched]
+        label = (', the '.join(ws[:-1]) + ' and the ' + ws[-1]) if len(ws) > 1 else ws[0]
+        for q in touched:
+            P = st['p'][q]
+            # the ack itself says what to do next for a product that is still open (refusal counted, not counted, NOT accepted)
+            own = new is None or (out == 'refused' and P['status'] == 'pending')
+            P.update(ack='The ' + label + ': ' + ack, seq=_seq, own=own)
+            vars['mp_p' + str(P['num'])] = json.dumps(dict((k, P.get(k)) for k in DYN))
+    else:
+        vars['mp_ax'] = json.dumps(dict(seq=_seq, msg=ack, review=out == 'review'))
+except Exception as e:
+    vars['mp_ax'] = json.dumps(dict(seq=_seq, msg='There was a technical problem with that step (' + str(e)[:60] + '). Call ' + TOOL +
+                                    ' again with the same values.', review=False))
+'''
+
+# the answer, from the merged state: in api mode this runs in the post-hook, which reads vars after the parallel calls'
+# pre-hook writes have merged (A11 probe f58d6ed0); every result of a batch carries every ack of that batch
+SET_FIN = r'''
+try:
+    import json
+    st = _load(vars)
+    DAYS = st.get('days') or dict()
+    seq = int(str(vars.get('mp_seq') or '0').strip() or 0)
+    acks = []
+    cur = None
+    own = False
+    for q in st['order']:
+        P = st['p'][q]
+        if P.get('seq') == seq and P.get('ack'):
+            if P['ack'] not in acks:
+                acks.append(P['ack'])
+            own = own or bool(P.get('own'))
+            if cur is None and P.get('own') and P['status'] == 'pending':
+                cur = q
+    review = False
+    try:
+        ax = json.loads(str(vars.get('mp_ax') or '{}'))
+    except Exception:
+        ax = dict()
+    if isinstance(ax, dict) and ax.get('seq') == seq:
+        review = bool(ax.get('review'))
+        if ax.get('msg'):
+            acks.append(str(ax['msg']))
+    phase, nxt = _next(st, cur)
+    if own and not review:
+        # a result of this batch already says what to do (attempt k+1, not counted yet, NOT accepted)
+        nxt = ''
+        st.pop('_offer', None)
+    if st.get('_offer'):
+        vars['mp_o' + str(st['p'][st['_offer']]['num'])] = 'yes'
+    open_ = [st['p'][q]['words'] for q in st['order'] if st['p'][q]['status'] == 'pending']
+    if phase == 'open':
+        names = (', the '.join(open_[:-1]) + ' and the ' + open_[-1]) if len(open_) > 1 else open_[0]
+        head = ('NOT every product is settled: the ' + names + (' is' if len(open_) == 1 else ' are') + ' still open. Nothing is noted '
+                'or recorded for ' + ('it' if len(open_) == 1 else 'them') + ' and the call is not over: never say noted, recorded or goodbye now.')
+        if review:
+            msg = ' '.join([head] + acks + [nxt])
+        elif len(acks) > 1:
+            # several answers in one turn (parallel calls): every result of the batch lists every answer and what is open
+            msg = ' '.join(acks + [nxt, 'Still open: the ' + names + '.'])
         else:
-            new, ack = None, 'Unknown outcome. Use one of: agreed, refused, ' + ', '.join(CFG['notes']) + ', review.'
-        if new is None:
-            msg = ack
-        else:
-            st = new
-            phase, nxt = _next(st)
-            msg = (ack + ' ' + nxt).strip()
+            msg = ' '.join(acks + [nxt])
+    else:
+        msg = ' '.join(acks + [nxt])
+    vars['mp_readback'] = _readback(st) if [q for q in st['order'] if st['p'][q]['status'] == 'agreed'] else ''
     if phase == 'readback':
-        vars['mp_readback'] = _readback(st)
         vars['rb_answer'] = 'pending'
-    vars['mp_state'] = json.dumps(st)
     vars['mp_phase'] = phase
-    vars['mp_msg'] = msg
+    vars['mp_msg'] = re.sub(r'\s+', ' ', msg).strip()
 except Exception as e:
     vars['mp_msg'] = 'There was a technical problem with that step (' + str(e)[:60] + '). Call ' + TOOL + ' again with the same values.'
 '''
 
 API_ARGS = r'''
 def ARGS():
-    return config.get('body') if isinstance(config, dict) else None
+    b = config.get('body') if isinstance(config, dict) else None
+    if isinstance(b, dict):
+        return dict((k, v) for k, v in b.items() if not (isinstance(v, str) and v.strip()[:2] == chr(123) * 2))
+    return b
 '''
 
 CODE_ARGS = r'''
@@ -360,12 +502,13 @@ except Exception:
 # ---------------------------------------------------------------- engine-run chain
 
 RECORD_PLAN = r'''
-import json
 try:
-    st = json.loads(str(vars.get('mp_state') or '{}'))
+    st = _load(vars)
     ags = [q for q in st['order'] if st['p'][q]['status'] == 'agreed']
 except Exception:
     st, ags = dict(order=[], p=dict()), []
+# the customer confirmed these at the read-back: no wrap ever notes them as refused (A11)
+vars['mp_confirmed'] = json.dumps(ags)
 for i in range(1, SLOTS + 1):
     if i <= len(ags):
         P = st['p'][ags[i - 1]]
@@ -416,15 +559,38 @@ except Exception:
     pass
 '''
 
+END_NODE = "negotiate_end"
+NEG_END_CODE = r'''
+try:
+    st = _load(vars)
+    DAYS = st.get('days') or dict()
+    ags = [q for q in st.get('order', []) if st['p'][q]['status'] == 'agreed']
+    if ags:
+        # from the merged state: a result spoken while parallel calls were still landing may have built an older read-back
+        vars['mp_readback'] = _readback(st)
+except Exception:
+    ags = []
+if ags and str(vars.get('mp_readback') or '') and str(vars.get('mp_ended') or '') != 'yes':
+    vars['mp_phase'] = 'readback'
+    vars['rb_answer'] = 'pending'
+    vars['mp_end'] = 'readback'
+else:
+    vars['mp_end'] = 'wrap'
+vars['mp_ended'] = 'yes'
+'''
+
 WRAP_CODE = r'''
-import json
 def _true(k):
     return str(vars.get(k)).lower() == 'true'
 try:
-    st = json.loads(str(vars.get('mp_state') or '{}'))
+    st = _load(vars)
     order = st.get('order') or []
 except Exception:
     st, order = dict(p=dict()), []
+try:
+    confirmed = json.loads(str(vars.get('mp_confirmed') or '[]'))
+except Exception:
+    confirmed = []
 recorded = []
 for i in range(1, SLOTS + 1):
     s = str(i)
@@ -439,8 +605,10 @@ for q in (st.get('ga') or order):
         continue
     stt = P.get('status')
     if stt == 'agreed':
-        r = FAIL_NOTE if RECORDING else END_NOTE
-        if RECORDING:
+        # every product without a promise gets a note; negotiate_end reads agreed products back before any wrap.
+        # Confirmed at the read-back but not recorded: the service-failure note, never the refused note (A11)
+        r = FAIL_NOTE if (RECORDING or q in confirmed) else END_NOTE
+        if RECORDING or q in confirmed:
             failed.append(P['words'])
     elif stt == 'pending':
         r = END_NOTE
@@ -564,24 +732,26 @@ class Multi:
             xprops[f] = {"type": "string", "description": "For agreed: " + self.c.extra_desc(f, p, g)}
             if p.get("enum"):
                 xprops[f]["enum"] = list(p["enum"])
-        head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL
+        head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\n" % SET_TOOL + _const("DYN", list(DYN))
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
-            "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: its last persuasion attempt was refused. "
+            "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: the customer refused the current persuasion attempt for it (call it after EVERY refusal; the result says whether another attempt is allowed). "
                         + " ".join("%s: %s." % (o, self.outcome_words(o)) for o in cfg["notes"])
                         + " review: every product is settled and the promises must be read back again (with product_id ALL)."},
             "amount": {"type": "string", "description": "For agreed: the amount as a number such as 220.00, or full, or floor."},
             "date": {"type": "string", "description": "For agreed: the payment date, YYYY-MM-DD."},
-            "attempts_made": {"type": "number", "description": "For refused: how many persuasion attempts of this product's plan you made."},
         }
         props.update(xprops)
-        desc = ("Report a settled product. CALL it every time a product is settled (agreed, refused, "
-                + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
+        desc = ("Report a product's answer. CALL it after EVERY refusal of an offer (refused, before you speak), and when a product "
+                "is agreed or settled (agreed, " + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
         if mode == "api":
-            body = {k: dict(v, default="{{sp_%s}}" % k) for k, v in props.items()}
+            # api_call body leaves are model-filled only through a {{var}} default naming a variable that is never set
+            # (docs/tools-and-code.md "One key decides"); a leaf without default never reached the request (regate-a9-B)
+            body = {k: dict(v, default="{{%s%s}}" % (ARG_VAR, k)) for k, v in props.items()}
             return self.c.tool(SET_TOOL, body, ["product_id", "outcome"], path="get_account", description=desc,
-                               mapping=[{"path": "data.phase", "variable": PHASE}], pre=head + API_ARGS + SET_PRE, post=SET_POST)
-        code = head + CODE_ARGS + SET_PRE + CODE_RESULT
+                               mapping=[{"path": "data.phase", "variable": PHASE}], pre=head + API_ARGS + LOAD + SET_LIB + SET_PRE,
+                               post=head + LOAD + SET_LIB + SET_FIN + SET_POST)
+        code = head + CODE_ARGS + LOAD + SET_LIB + SET_PRE + SET_FIN + CODE_RESULT
         assert_no_braces(code, SET_TOOL)
         return {"type": "function", "config": {"timeoutMs": 12000},
                 "function": {"name": SET_TOOL, "handler": "__function__:code_exec", "description": desc,
@@ -617,7 +787,7 @@ class Multi:
                 if ev.get("say"):
                     parts.append(ev["say"])
             lead[t] = " ".join(parts)
-        code = ("import json\n" + embed.source(dates, money) + "\n" + "SLOTS = %d\n" % SLOTS +
+        code = ("import json\n" + LOAD + embed.source(dates, money) + "\n" + "SLOTS = %d\n" % SLOTS +
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
@@ -650,14 +820,16 @@ class Multi:
             elif act == "offer_transfer_else_close":
                 values.append(eid)
                 desc.append("%s: the customer %s." % (eid, trig))
-                trans.append(go("readback_reset", "Back to negotiate: " + eid, cond_any(eq("rb_answer", eid))))
+                # A10: the support offer step (spoken once, reply routed in code), as from negotiate
+                t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
+                trans.append(go(c.support_nodes(ev, t), "Support offer: " + eid, cond_any(eq("rb_answer", eid))))
         return values, desc, trans
 
     def build(self, nodes):
         c = self.c
         # records
         extra_f = [f for f, _ in c.model_extras("create_promise", PROMISE_FIELDS)]
-        nodes["record_plan"] = code_node("record_plan", "import json\n" + _const("EXTRA_F", extra_f) + "SLOTS = %d\n" % SLOTS + RECORD_PLAN,
+        nodes["record_plan"] = code_node("record_plan", "import json\n" + LOAD + _const("EXTRA_F", extra_f) + "SLOTS = %d\n" % SLOTS + RECORD_PLAN,
                                          "wrap_recorded",
                                          [go("record_1", "A promise to record", cond_any(eq("rec_has_1", "yes")))])
         for i in range(1, SLOTS + 1):
@@ -694,7 +866,7 @@ class Multi:
             "name": "readback", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": "{{mp_readback}}"},
             "task_message": ("You just read back every promise and asked %s. If the customer asks a question, answer it briefly "
-                             "from the read-back and ask %s again. Nothing is registered yet: never say anything is recorded. "
+                             "from the read-back and ask %s again. Nothing is registered yet: never say anything is recorded or registered. "
                              "No tool call is allowed in this step." % (q, q)),
             "extraction_schema": [{
                 "name": "rb_answer", "type": "string", "min_confidence": 0.6,
@@ -710,8 +882,16 @@ class Multi:
         nodes["readback_reset"] = code_node(
             "readback_reset", "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n"
             "vars['mp_msg'] = 'The customer did not confirm the read-back. Handle what they said; call %s again for any product that changes, "
-            "or with product_id ALL and outcome review if the same promises stand.'\n" % SET_TOOL, "negotiate")
-        # wraps
+            "or with product_id ALL and outcome review if the same promises stand.'\n" % SET_TOOL, "negotiate",
+            [go("wrap_done", "The call is already ending: no second negotiation", cond_any(eq("mp_ended", "yes")))])
+        # negotiate's turn cap and the customer's goodbye: agreed products are read back once (and recorded on a yes),
+        # never noted as refused; nothing agreed -> wrap_done
+        rb_head = ("import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", {"confirm": self.s["confirmation"]["question"]}) +
+                   LOAD + SET_LIB)
+        nodes[END_NODE] = code_node(END_NODE, rb_head + NEG_END_CODE, "wrap_done",
+                                    [go("readback", "Agreed products: read them back", cond_any(eq("mp_end", "readback")))])
+        # wraps; a turn cap, goodbye or "nothing to confirm" after a support offer ends with that event's wrap (A10)
+        c.latch_gate("wrap_done")
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
         refused = c.events.get("refused") or {}
         nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
@@ -737,7 +917,10 @@ class Multi:
                     "name": "note_" + s, "node_type": "api_request", "passthrough": True, "passthrough_default_transition": "finish",
                     "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True, "pre_actions": [t], "transitions": tr}
         targets = self.wrap_targets()
-        nodes["finish"] = code_node("finish", "vars['mp_finished'] = 'yes'\n", targets[-1] if targets else "close_account_error",
+        # no close chosen (a wrap that did not run): the service-failure close when the wraps can reach it
+        fail = c.close_key(self.fail_ev)
+        default = fail if fail in targets else (targets[-1] if targets else "close_account_error")
+        nodes["finish"] = code_node("finish", "vars['mp_finished'] = 'yes'\n", default,
                                     [go(t, "Close: " + t, cond_any(eq("mp_close", t))) for t in targets])
         # close nodes reached from a wrap speak the computed summary
         for t in targets:

@@ -196,6 +196,29 @@ def test_prepare_account_reads_products_list():
     assert v["product_words"] == "car loan" and v["floor_text"] == "210.50"
 
 
+def test_prepare_account_product_without_type_key():
+    other_key = {k: v for k, v in CARD.items() if k != "type"}
+    v = _run_account("2026-10-14T11:00", dict(other_key, product_type="credit_card"))
+    assert v["account_state"] == "ok" and v["product_words"] == "credit card ending 4821" and v["floor_text"] == "35.00"
+    s = copy.deepcopy(A)
+    s["products"]["credit_card"]["amount_field"] = "amount_due"
+    bare = {k: v for k, v in other_key.items() if k != "past_due"}
+    v = _run_account("2026-10-14T11:00", dict(bare, amount_due=420.0), spec=s)
+    assert v["account_state"] == "ok" and v["past_due_text"] == "420.00" and v["floor_text"] == "35.00"
+
+
+def test_product_cfg_of_fallbacks():
+    from builder.lib import dates as D
+    pc = {"card": {"words": "card", "amount_field": "due"}, "loan": {"words": "loan"}}
+    assert D.product_cfg_of({"type": "loan"}, pc) is pc["loan"]
+    assert D.product_cfg_of({"kind": "loan"}, pc) is pc["loan"]
+    assert D.product_cfg_of({"due": 5}, pc) is pc["card"]
+    assert D.product_cfg_of({"x": 1}, pc) == {} and D.product_cfg_of({"type": "loan"}, None) == {}
+    [plan] = D.plan_products([{"kind": "card", "due": 50, "days_late": 3}],
+                             __import__("datetime").date(2026, 10, 14), A["bands"], A["calendar"], pc)
+    assert plan["full"] == 50.0
+
+
 def test_prepare_account_examples_from_spec():
     for ex in A["examples"]:
         v = _run_account(ex["today"] + "T11:00", dict(CARD, days_late=ex["days_late"]))
@@ -300,7 +323,8 @@ def test_extra_rules_naming_other_tools_are_dropped():
 
 def test_negotiate_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4000
+    # A9 raised it from 4000 for the day-number, cut-off and date-only rules of diag t5r5.
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4800
 
 
 def test_reference_specs_still_valid():
@@ -393,3 +417,71 @@ def test_g3_no_figure_restated():
     assert "only the date" in plan.split("Attempt 2")[1]
     neg = wf()["nodes"]["negotiate"]["task_message"]
     assert "Never restate a figure already offered" in neg and "A read-back is not an offer" in neg
+
+
+# ---------------------------------------------------------------- A9 (diag t5r5)
+
+def test_a9_calendar_rows_carry_the_day_number_in_digits_and_words():
+    """PUB-07: "Monday the." + "twenty-sixth." must land on the bank-holiday row."""
+    v = _run_account("2026-10-14T11:00", dict(CARD, type="personal_loan", days_late=4))
+    rows = v["calendar_text"].split("\n")
+    hol = [r for r in rows if "(2026-10-26)" in r][0]
+    assert hol.startswith("- the 26th (twenty-sixth): Monday 26 October 2026")
+    assert "BANK HOLIDAY" in hol and "Tuesday 27 October 2026" in hol
+    assert rows[0].startswith("- the 14th (fourteenth): ") and "(today)" in rows[0]
+    labels = {r.split(":")[0] for r in rows}
+    for want in ("- the 1st (first)", "- the 2nd (second)", "- the 3rd (third)", "- the 11th (eleventh)",
+                 "- the 12th (twelfth)", "- the 13th (thirteenth)", "- the 21st (twenty-first)", "- the 22nd (twenty-second)",
+                 "- the 23rd (twenty-third)", "- the 31st (thirty-first)"):
+        assert want in labels, want
+
+
+def test_a9_day_number_and_cut_off_rules_in_both_templates():
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert '"twenty-sixth"' in t and "first calendar row with that number" in t
+        assert '"Monday the."' in t and 'say only "Go on."' in t and "uses no attempt" in t
+
+
+def test_fix1_cut_off_fragment_is_not_cannot_pay_in_extraction():
+    """Fix round 1, item 5: neg_event never reads a cut-off fragment as cannot_pay_or_too_much."""
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        ex = [e for e in w["nodes"]["negotiate"]["extraction_schema"] if e["name"] == "neg_event"][0]
+        assert "cannot_pay_or_too_much" in ex["enum_values"]
+        assert '"you tell me what the"' in ex["description"] and "is never cannot_pay_or_too_much: it is continue" in ex["description"]
+
+
+def test_a9_date_only_takes_the_current_attempt_amount():
+    """PUB-04: a date accepted without an amount gets the current offer's amount, no open "what amount?"."""
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert "A date with no amount: the amount is the one of your current attempt" in t
+        assert "never ask them to name an amount" in t
+    t = wf()["nodes"]["negotiate"]["task_message"]
+    step1 = t.split("HOW TO GET A PROMISE")[1].split("\n2. ")[0]
+    assert '"twelve"... "fifty" = 1250' in step1 and "the rest of it" in step1 and "A date with no amount" in step1
+
+
+def test_a9_refer_back_speaks_no_figure_and_keeps_the_date():
+    """Item 6 (PUB-06 re-gate): asked about an amount already offered, refer back without the number or a new date."""
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert '"That is the <minimum payment / amount> I mentioned. Can you pay it <date of that offer>?"' in t
+        assert "no figure, no new date (keep that date unless they refused it)" in t
+        assert "the <amount> I mentioned" not in t
+
+
+def test_a9_no_internal_or_premature_record_words():
+    """Wording audit: no "floor amount" to speak, no "our records"/"on file", "registered" only after a tool result."""
+    for spec in (A, json.load(open("specs/reference/spec-b.json"))):
+        w = C(spec, OA)
+        sp = w["system_prompt"]
+        assert "say 'note down' or 'register'" not in sp and "say 'noted'" in sp
+        assert "'register' or 'registered'" in sp and "recorded, registered, saved" in sp
+        assert "Never say them to the customer" in sp and "floor" in sp.split("internal words")[1]
+        allcode = json.dumps(w)
+        assert "propose the floor amount" not in allcode and "the details on file" not in allcode
+        assert "never \\\"records\\\" or \\\"on file\\\"" in allcode
+    v = _run_account("2026-10-14T11:00", dict(CARD, days_late=20))
+    assert "propose the lower amount 35.00 on the deadline" in v["attempt_plan"]
+    assert "floor" not in v["attempt_plan"]

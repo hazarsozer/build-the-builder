@@ -18,13 +18,15 @@ Steps (design spec §4 and the Task 8 rulings):
 
 Hard stop: at --budget-min minus FINAL_RESERVE_S, whatever is running is abandoned and the best spec so far goes to
 the final step. Every phase is wrapped: once a spec exists, a crash anywhere still ends in a saved, exported agent.
-No spec at all: exit 2 with a `no_spec` trace event.
+No spec at all: exit 2 with a `no_spec` trace event. No openapi: exit 2 with a `no_openapi` trace event (the openapi is
+--openapi, else openapi.json next to the briefs, else the single OpenAPI .json among the briefs; never a default).
 
 Trace: traces/<UTC time>-<slot>.jsonl (every line through redact.scrub) plus a .md summary of the same events.
-Exit code: 0 when the workflow was exported, 1 when a spec existed but the final step failed, 2 with no spec.
+Exit code: 0 when the workflow was exported, 1 when a spec existed but the final step failed, 2 with no spec or no openapi.
 """
 import argparse
 import datetime
+import hashlib
 import json
 import re
 import subprocess
@@ -53,9 +55,13 @@ STATE_FILE = ROOT / ".freya-agents.json"
 SIMS_FILE = ROOT / ".freya-sims.json"     # simulations this builder started (only these are ever cancelled)
 FINISHED = ("completed", "failed", "paused", "cancelled", "canceled")
 EXTRACT_MAX_S = 360          # extraction budget (design §4: <= 6 min)
+EXTRACT_RETRY_MIN_S = 10 * 60   # no spec from extraction: retry once only with more than this left (after the reserve)
 FINAL_RESERVE_S = 150        # kept back for the final compile, save and export
 ROUND2_MIN_S = 12 * 60       # fix round + round 2 only with more than this left (after the reserve)
 TUNNEL_WAIT_S = 120          # once the spec exists, wait at most this long for the tunnel
+TUNNEL_TRIES = 3             # tunnel.start attempts (in the background, during extraction)
+TUNNEL_BACKOFF_S = 3         # sleep before attempt k+1: k * this
+TUNNEL_RETRY_MIN_S = 4 * 60  # no further attempt with less than this left for tests
 BUSY_MAX_S = 180             # a busy workspace (another team simulation) longer than this skips the self-test
 FREYA_CALL_S = 180           # one save_workflow / export_workflow call
 STYLES = [None, "talkative", "pieces", "corrects", "asks_back", "in_words"]   # tools/run_cases.STYLES, mixed
@@ -117,22 +123,40 @@ def run_fix(*a, **kw):
 
 # ---------------------------------------------------------------------------------------------------------- inputs
 
+class OpenapiNotFound(Exception):
+    """No single OpenAPI document was found next to the briefs and --openapi was not given."""
+
+
 def resolve_openapi(briefs, override):
-    """--openapi, else the openapi.json next to the brief files, else tools/openapi.json."""
+    """--openapi; else the openapi.json next to the brief files; else the one OpenAPI document (a .json with
+    `openapi` and `paths`) among the brief arguments and the brief folders. None or several: OpenapiNotFound.
+    Never a silent default: another brief's API would build a wrong agent."""
     if override:
         return Path(override)
-    for b in briefs:
-        p = Path(b)
-        cand = (p if p.is_dir() else p.parent) / "openapi.json"
-        if cand.exists():
-            return cand
-    return ROOT / "tools" / "openapi.json"
+    dirs = list(dict.fromkeys((p if p.is_dir() else p.parent).resolve() for p in map(Path, briefs)))
+    for d in dirs:
+        if (d / "openapi.json").is_file():
+            return d / "openapi.json"
+    cands = [Path(b).resolve() for b in briefs if sdk.is_openapi_file(b)]
+    cands += [x.resolve() for d in dirs if d.is_dir() for x in sorted(d.glob("*.json")) if sdk.is_openapi_file(x)]
+    cands = list(dict.fromkeys(cands))
+    if len(cands) == 1:
+        return cands[0]
+    if not cands:
+        raise OpenapiNotFound("no OpenAPI document (a .json with `openapi` and `paths`) next to the briefs in %s; "
+                              "pass --openapi PATH" % ", ".join(map(str, dirs)))
+    raise OpenapiNotFound("several OpenAPI documents next to the briefs (%s); pass --openapi PATH"
+                          % ", ".join(map(str, cands)))
 
 
 def slug_for(briefs):
+    """Default slot: the first brief's folder and name, plus a short hash of the resolved brief set, so x/brief.md and
+    y/brief.md never share a slot (or an export file). The same brief set always gets the same slug."""
     p = Path(str(briefs[0]).rstrip("/"))
-    name = p.name if p.is_dir() else p.stem
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "brief"
+    name = p.name if p.is_dir() else "%s-%s" % (p.resolve().parent.name, p.stem)
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-") or "brief"
+    key = "\n".join(sorted(str(Path(str(b).rstrip("/")).resolve()) for b in briefs))
+    return "%s-%s" % (base, hashlib.sha1(key.encode()).hexdigest()[:6])
 
 
 def resolve_now(cli, spec, briefs):
@@ -238,6 +262,7 @@ class Build:
         self.rounds = []
         self.final = {}
         self.srv = self.tun = None
+        self._bank_stopped = False   # set once the build ends: a background tunnel retry then gives up
 
     # -- helpers
     def left(self):
@@ -281,12 +306,22 @@ class Build:
 
     def _run(self):
         a = self.a
-        oa_path = resolve_openapi(self.briefs, a.openapi)
-        openapi = json.loads(Path(oa_path).read_text())
-        self.openapi = openapi
+        oa_path, oa_error = None, None
+        try:
+            oa_path = resolve_openapi(self.briefs, a.openapi)
+            openapi = json.loads(Path(oa_path).read_text())
+            if not isinstance(openapi, dict) or "paths" not in openapi:
+                raise OpenapiNotFound("%s is not an OpenAPI document (no `paths`)" % oa_path)
+        except (OpenapiNotFound, OSError, ValueError) as e:
+            oa_error = e
         self.ev("start", briefs=self.briefs, slot=self.slot, git_commit=git_commit(), model=sdk.model_name(),
-                openapi=str(oa_path), budget_min=a.budget_min, selftest=not a.no_selftest, now=a.now,
-                out_dir=str(self.out_dir), argv=sys.argv[1:])
+                openapi=str(oa_path) if oa_path else None, budget_min=a.budget_min, selftest=not a.no_selftest,
+                now=a.now, out_dir=str(self.out_dir), argv=sys.argv[1:])
+        if oa_error is not None:
+            self.ev("no_openapi", error=_err(oa_error))
+            self.log("no openapi: %s" % _err(oa_error))
+            return 2
+        self.openapi = openapi
         self.log("build %s: %s" % (self.slot, ", ".join(self.briefs)))
         if not a.no_selftest:
             self._start_bank()
@@ -318,12 +353,27 @@ class Build:
         try:
             self.srv = server.serve(0, self.openapi)
             port = self.srv.server_address[1]
-            self.tun = Bg(lambda: tunnel.start(port), on_late=lambda v: tunnel.stop(v[1]))
+            self.tun = Bg(lambda: self._tunnel(port), on_late=lambda v: tunnel.stop(v[1]))
             self.ev("bank_started", port=port)
         except Exception as e:
             self.failed("bank", e)
 
+    def _tunnel(self, port):
+        """tunnel.start, up to TUNNEL_TRIES attempts with a short backoff, while the self-test still has time."""
+        for k in range(1, TUNNEL_TRIES + 1):
+            try:
+                return tunnel.start(port)
+            except Exception as e:
+                if self._bank_stopped:
+                    raise
+                last = k == TUNNEL_TRIES or self.test_left() < TUNNEL_RETRY_MIN_S
+                self.ev("tunnel_failed", attempt=k, error=_err(e), retry=not last)
+                if last:
+                    raise
+                time.sleep(TUNNEL_BACKOFF_S * k)
+
     def _stop_bank(self):
+        self._bank_stopped = True
         if self.tun is not None:
             v = self.tun.abandon()
             if v is not None:
@@ -340,15 +390,24 @@ class Build:
             self.srv = None
 
     # -- extract
-    def _extract(self):
+    def _extract_once(self, **kw):
         deadline_s = max(60, min(EXTRACT_MAX_S, int(self.left() - FINAL_RESERVE_S - 30)))
         try:
-            spec, errs, info = bounded(lambda: ex.extract(self.briefs, self.openapi, self.trace, deadline_s=deadline_s),
-                                       deadline_s + 90)
+            return bounded(lambda: ex.extract(self.briefs, self.openapi, self.trace, deadline_s=deadline_s, **kw),
+                           deadline_s + 90)
         except BudgetStop:
-            spec, errs, info = None, ["extraction did not return within %d s" % (deadline_s + 90)], {}
+            return None, ["extraction did not return within %d s" % (deadline_s + 90)], {}
         except Exception as e:
-            spec, errs, info = None, [_err(e)], {}
+            return None, [_err(e)], {}
+
+    def _extract(self):
+        spec, errs, info = self._extract_once()
+        if spec is None and self.left() - FINAL_RESERVE_S > EXTRACT_RETRY_MIN_S:
+            # one more, lighter attempt (single extraction, no oracle) while the budget still allows a build after it
+            self.ev("extract_retry", errors=[scrub(str(x))[:400] for x in errs[:5]], seconds_left=round(self.left(), 1))
+            self.log("extraction produced no spec; retrying once (single extraction, no oracle)")
+            spec, errs2, info = self._extract_once(dual=False, use_oracle=False)
+            errs = list(errs) + list(errs2)
         if spec is None:
             self.ev("no_spec", errors=[scrub(str(x))[:400] for x in errs[:10]])
             self.log("extraction produced no spec: %s" % scrub(str(errs[:3])))
@@ -464,7 +523,8 @@ class Build:
         n = 11 if _notes_on(spec) else 10
         cs = cases.generate(spec, self.openapi, now, n=n, seed=SEED)
         self.ev("cases", n=n, seed=SEED, now=now, ids=[c["id"] + ":" + str(c.get("scenario")) for c in cs],
-                skipped=list(cs.skipped), unpicked=list(cs.unpicked))
+                skipped=list(cs.skipped), unpicked=list(cs.unpicked),
+                errors={k: scrub(str(v))[:300] for k, v in (getattr(cs, "errors", None) or {}).items()})
         return cs
 
     def _selftest(self, spec):
@@ -566,8 +626,9 @@ class Build:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(prog="python -m builder.main", description=__doc__.split("\n")[0])
     ap.add_argument("briefs", nargs="+", help="brief files or directories")
-    ap.add_argument("--slot", help="Freya slot name (default: a slug of the first brief's name)")
-    ap.add_argument("--openapi", help="openapi.json when none sits next to the briefs")
+    ap.add_argument("--slot", help="Freya slot name, used exactly (default: the first brief's folder and name plus a hash of the brief set)")
+    ap.add_argument("--openapi", help="the bank's OpenAPI file (default: openapi.json next to the briefs, else the only OpenAPI .json "
+                    "there; none or several is an error)")
     ap.add_argument("--no-selftest", action="store_true", help="skip the bank, the tunnel and the self-test")
     ap.add_argument("--budget-min", type=float, default=27.0, help="hard stop, minutes (default 27)")
     ap.add_argument("--now", help="call variable `now` for self-test cases (ISO, e.g. 2026-10-14T11:00)")
