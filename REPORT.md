@@ -4,6 +4,8 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 
 ## 1. The short version
 
+> **Latest (Sun ~04:30):** `builder` is at tag `gate-green-2`. On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. It now includes every overnight fix. Still to run: dress rehearsals on this version, the bench, and the style checks.
+
 - **The builder exists end to end and is merged.** `python -m builder.main <brief files>` reads a brief and writes a policy spec, compiles a Freya workflow, tests it on our own copy of the bank, fixes the spec, then exports the workflow and writes a trace. Code: branch `builder`, 451 tests passing.
 - **Live results on the organisers' bank were perfect on the practice set at the `gate-green-1` tag.** Later checks with pieces-style customers show gaps (see section 10):
 
@@ -192,6 +194,15 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 - [x] **Gate on A9 (with fixes), organisers' bank, 3 runs:**
   - **Brief A:** 10/10 in run 1 and 10/10 in run 2. Run 3 was lost to the platform: the simulation stuck at "running" for 30 min and was cancelled.
   - **Brief B: 2/3.** Root cause of PUB-12: the model made 3 product calls in parallel. They overwrote each other's state, so one agreed product was lost and later noted as refused. Fix A11 is in progress and makes those updates safe when calls run in parallel.
+- [x] **MERGE BAR MET: `builder` @ d77a197, tag `gate-green-2`.** It contains:
+  - the final-review fixes
+  - outage resilience (A8)
+  - multi-product fixes (A9)
+  - the hardship lock and style fixes (A10)
+  - product updates made safe when calls run in parallel (A11)
+
+  Gate on the reference specs, organisers' bank, 3 runs: **Brief A 10/10, Brief B 3/3**, with 0 sandbox errors. The suite passes at 594. One run was lost to a stuck Freya simulation, which we cancelled.
+- [ ] A12, in review: the date verdict for a single product moves into code, through a check_date tool. This fixes PUB-07, where the customer said "Monday the twenty-sixth" and the agent offered 2 Nov.
 - [ ] Dress rehearsal on Brief A+B: build time and 3 runs
 - [ ] Bench over the 10 test briefs
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
