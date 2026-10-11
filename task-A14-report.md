@@ -78,3 +78,32 @@ No simulations. One chat-API conversation on slot `probe-hooks` (call 4c48412b, 
 4. **Same-turn counting depends on `negotiate.total_turns`.** It is verified in a pre-hook only, and in a chat-API conversation, not a voice simulation. Without it, the batch counter is the clock: parallel siblings never count, but a sequential same-turn re-report would.
 5. **A re-instruction after a not-counted refusal** reads "Next is the personal loan ..." even when that product is already under way. It names the same attempt again, which is accurate but may lead the model to repeat the current offer.
 6. **Probe slot.** probe-hooks now holds the probe workflow (version 16, httpbin only). The bank ledger was not touched.
+
+---
+
+# Fix round 1 (review: 1 Critical, 1 Important, 2 Minor)
+
+This round adds commit 2bcd0a1 and this report section. `uv run pytest -q tests/test_multi.py` gives 89 passed and 1 skipped. The full suite gives **731 passed, 6 skipped**. Both specs lint clean. spec-a is unchanged (0 paths differ). spec-b's prompt is still 5494 characters, because this round changed only code and no prompt text.
+
+| # | Fix | Where |
+|---|---|---|
+| 1 (C) | **A refusal that is not counted no longer re-names the current offer.** `_next(st, cur, clock, again)` checks whether the first open product's attempt was named in an earlier turn (`_told < clock`). If so, and the batch is not a review, the result is `Continue with the customer's answer to your current offer for the <Y> (attempt k of its plan); do not repeat it.` That text has no amount and no date. `mp_o<num>` (`st['_offer']`) is written only when a product is named for the first time (`_told` is None), so a re-naming never moves its clock. A refusal of another product reads `Not counted: that no is for the <X>; it is not its turn yet and uses no attempt.` Review still names the product again (`again`), and it keeps the product's clock too. The reviewer's sequence now works: p1 agreed, then in one turn p3 refused followed by p2 refused. p2 counts (tried 1), gets no `no` stance and does not get "I understand ...". The variant where a later product is paid or agreed first and the current product is refused in the same turn also counts. | multi.py `_next`, `_refuse`, SET_FIN (`clk` read once, passed to `_next`) |
+| 2 (I) | **The fallback clock.** A per-product last-counted marker (`lc`, now in `DYN`) means there is never more than one count per clock value. Parallel duplicates in one batch were already idempotent because they read the same snapshot. **Limitation, stated plainly:** without `negotiate.total_turns`, a sequential re-report in the same turn (batch N+1) cannot be told apart from the customer's next-turn refusal (also batch N+1). No other variable separates them: the live call's variable table has no other per-turn signal. `system.iso_utc_now` is the call start in a voice simulation and does not change. The fix therefore relies on the turn variable. The live **voice gate** call 01176716 shows that variable present at every set_product turn (see item 4), so the fallback only runs offline and in code-mode tests. | `_refuse` (`fresh` test), `DYN` |
+| 3 (m) | **No `no` stance for the product being offered.** A refusal of the current product, including product 1's at the today question, never sets `no`. Only a product that was never named keeps it. Product 1's today-answer "no" gets the plain attempt-1 instruction, with no "you said no to the credit card". | `_refuse` |
+| 4 (m) | **Where the "pay today?" question sits.** The question is spoken by the engine as negotiate's `on_enter` TTS (`verified_lead() + {{debt_statement_text}} {{first_ask_text}}`, `on_enter_first_entry_only`, compile.py `negotiate_multi_node`). The identity answers are counted in the identity node, before load_account and prepare_account run. So the customer's answer to the today question is **negotiate turn 1**. The live gate call 01176716 confirms it: `negotiate.total_turns` was 0 through identity, load_account and prepare_account. It was **1** at "I will pay the credit card tomorrow ..." (the three parallel calls), **2** at the next answer and **3** at the third. Both sequential calls of turn 3 (p2's last attempt and the model's extra p3 report) saw 3. That is exactly the case the same-turn guard catches. This is a voice simulation, which settles concern 4 of the first report for a pre-hook's variable table. | live call 01176716 `route_evaluated` variable tables |
+
+New tests (tests/test_multi.py):
+- `test_a14r1_no_for_a_later_product_then_the_current_refusal_in_one_turn` (the reviewer's critical sequence)
+- `test_a14r1_later_product_settled_then_the_current_refusal_in_one_turn` (paid and agreed variants)
+- `test_a14r1_review_still_names_the_current_product`
+- `test_a14r1_turn_path_never_counts_twice_in_one_turn`
+- `test_a14r1_fallback_clock_never_counts_twice_in_one_batch`
+
+Updated tests:
+- the not-counted wording in five tests;
+- `test_a14_up_front_no_for_product_one_uses_no_attempt_and_keeps_no_stance` (renamed: product 1 gets no stance);
+- `test_a14_refusal_of_a_later_product_mid_negotiation...`, which now asserts the exact "Continue ..." result.
+
+Remaining concerns:
+- Concerns 1–3, 5 and 6 of the first report still stand. Concern 5 is narrower now: a re-naming happens only in the turn the product was named, or on review.
+- When the current product was named in an earlier turn but its offer was never actually spoken, "do not repeat it" leaves the customer without an offer. For product 1 this can happen when the model answered a question at turn 1 instead of offering. The model's own offer from step 1 is still the expected path.
