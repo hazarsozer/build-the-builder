@@ -217,3 +217,60 @@ sentences.
   code nodes" docstring in builder/lib (4.3, accurate and harmless).
 - Step descriptions key on the builder's own node-name families (labels.py). A future new node family without an entry
   would get "Code step: <name>.", and `test_every_step_has_a_description` would flag it.
+
+## Fix round 1 (commit 9593394)
+
+1. **Backup-close matches_intent** (compile.py, `event_values`). It now uses `sentence("the customer", trig)`, which
+   is `subj()` with a capital first letter, and the counted-close condition uses the same helper. Before:
+   `"The customer %s" % bare_trigger(trig)`. With "After identity is verified, the customer says the debt is not
+   theirs." it now gives "The customer says the debt is not theirs (after identity is verified)". With "The person
+   (not the customer) says ..." it keeps "The person (not the customer) says ...". Test:
+   `test_backup_close_intent_keeps_own_subject`. No reference or fixture spec has a backup-close trigger in those
+   shapes, so the compiled diff did not change here.
+2. **Refused matches_intent** (single-product negotiate). My first A20 pass did **not** touch this field: it was still
+   `"Customer: " + raw trigger`. Now it is `sentence("the customer", trigger) + "." + trigger_rest(trigger)`. This
+   changes spec-a: `Customer: the persuasion attempts are used up after flat refusals or non-answers` becomes
+   `The persuasion attempts are used up after flat refusals or non-answers.` The same field changes for dress-A (the
+   "Customer: " prefix is dropped and the definition sentences are kept) and for ids. spec-b is multi-product and has
+   no such edge. Test: `test_refused_intent_is_normalised`.
+3. **Abbreviations.** The sentence split skips a full stop after Mr, Mrs, Ms, Dr, St, No, e.g., i.e., etc., vs,
+   approx, Jr, Sr, Prof or a single-letter initial. Test: `test_sentence_split_skips_abbreviations`.
+4. **verb_led.** A subject is added only when the first word is in a known verb list (asks, says, mentions, refuses,
+   declines, gives, offers, still, cannot, ...). Otherwise the trigger is left as it is: "Fees are disputed" becomes
+   "fees are disputed", with no subject. Test: `test_subject_only_before_a_known_verb`. No compiled output changed.
+5. **Internal-word grep.** Work words now match case-insensitively on whole words (`probe`, `todo`, `fixme`, `hack`).
+   Task labels are case-sensitive (`\bA\d{1,2}\b`, `\b[A-Z]{2,4}-\d{2}\b`), so the hook variable `a2` is not
+   flagged. The stricter grep found the local variable `todo` in the check_date pre-hooks; it is renamed to
+   `next_step`. That is code, but only a rename: the AST is identical once `todo` is mapped to `next_step`.
+   Test: `test_internal_patterns_catch_labels`.
+
+**New test:** `test_hostile_trigger_shapes_never_double`. It rewrites every event and say-rule trigger in spec-a,
+dress-A, dress-B and insurance into each of six shapes: a leading after-clause, a leading before-clause with "the
+person", "The person (not the customer) says", "They say", "Asked whether", and a two-sentence trigger. It then
+checks every string in the compiled workflow for a doubled subject or a doubled full stop, and checks that each
+matches_intent description starts with a capital letter. This found one more site: the hardship-hold extraction's
+`human_request: they %s`. It produced "they after identity is verified, ..." and, on the real specs, "they asks for a
+human or a person". It now reads "the customer asks for a human or a person".
+
+**Re-verification against base**, over the same 6 specs x 2 base-URL variants:
+
+```
+   116  code: comments/docstrings only (plus the todo -> next_step rename)
+   536  description: always-transition label
+    88  description: extraction description
+   112  description: pre-action api description
+    16  description: tool/parameter description
+    22  description: transition condition (matches_intent)
+    16  description: transition description
+   424  new: pre_actions function description
+    10  prompt: system_prompt
+    54  prompt: task_message
+UNEXPECTED: 0
+```
+
+Nodes, transition targets, condition operators, variables and operands, extraction names and enums, and tool schemas
+are still unchanged. Full suite: **922 passed, 6 skipped**. Reference specs lint clean.
+
+**Concern added:** the refused matches_intent text is a routing field that the platform's intent model reads. It is
+now worded differently for spec-a and the single-product fixtures. The meaning is the same, but it has not been
+simulated.
