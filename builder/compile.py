@@ -20,7 +20,7 @@ import re
 import sys
 
 from builder.lib import dates, embed, money
-from builder.lint import lint, safe_opening
+from builder.lint import lint, never_say_words, safe_opening
 from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
@@ -29,6 +29,8 @@ from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, clo
 STAGES = ["opening", "third_party", "identity", "negotiate"]
 # "any" means the customer's own stages; a third party is only covered when a spec names it.
 ANY_STAGES = ["opening", "identity", "negotiate"]
+# conversation steps before the customer is verified (no offer can come up there)
+PRE_VERIFY_NODES = {"opening", "identity", "third_party"}
 # Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
 STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
                "negotiate": {"create_promise"}, "any": set()}
@@ -1715,11 +1717,38 @@ class _Compiler:
                   "- When a tool result contains what_to_do_next, follow it."]
         if neg.get("never_ask_how_much"):
             lines.append('- Never ask "how much can you pay?".')
+        if self.never_say_line():
+            lines.append("- " + self.never_say_line())
         ex = self.extra("any")
         if ex:
             lines.append("Rules from the brief:")
             lines += ["- " + l for l in ex]
         return "\n".join(lines)
+
+    def never_say_line(self):
+        """spec.never_say as one prompt line; also appended to every conversation step (STW-05: the word was in the
+        global prompt only, and the model echoed the customer's word in a negotiate reply)."""
+        words = never_say_words(self.s)
+        if not words:
+            return ""
+        return ("Never say %s, in any form (plural, past tense), in any sentence, even when the customer says it first: "
+                "answer without repeating the word." % join_or(q(w) for w in words))
+
+    def add_never_say(self, nodes):
+        """Every conversation step repeats the never-say words; every step after verification (where an offer can
+        come up) also repeats the banned offers. The global prompt alone was not enough (STW-05)."""
+        words = self.never_say_line()
+        banned = self.s["negotiation"].get("banned_offers") or []
+        offers = "Never offer %s." % join_or(dict.fromkeys(with_article(b) for b in banned)) if banned else ""
+        for k, n in nodes.items():
+            if n.get("node_type") != "conversation" or not isinstance(n.get("task_message"), str):
+                continue
+            pre = k in PRE_VERIFY_NODES or k.endswith(tuple("_" + p for p in PRE_VERIFY_NODES))  # e.g. human_hold_opening
+            # a step that already answers a request for a banned offer ("say you cannot offer it") keeps its own line
+            add = [words] + ([] if pre or "cannot offer" in n["task_message"] else [offers])
+            add = [a for a in add if a and a not in n["task_message"]]
+            if add:
+                n["task_message"] = n["task_message"].rstrip() + "\n" + "\n".join(add)
 
     def banned_words(self):
         return join_or([q(w) for w in self.s["opening"].get("banned_before_verify", [])])
@@ -2325,6 +2354,7 @@ HOW TO RUN THE CALL
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
+        self.add_never_say(n)
         test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
         # call variables beyond the usual ones (e.g. a company name): declared with an empty default, so a call
         # that does not pass one never speaks a raw placeholder
