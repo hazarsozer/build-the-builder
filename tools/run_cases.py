@@ -79,7 +79,7 @@ def main():
     if a.reps > 1:
         for f in final:
             if f["void"]: print("VOID", f["id"], f"(platform retried {f['void_runs']} of {f['runs']} runs, the other {f['runs'] - f['void_runs']} passed)")
-            else: print(("PASS" if f["pass"] else "FAIL"), f["id"], f"{f['passes']}/{f['runs']}")
+            else: print(("PASS" if f["pass"] else "FAIL"), f["id"], f"{f['passes']}/{f['runs']}" + (f" ({f['void_runs']} void)" if f["void_runs"] else ""))   # n stays the rep count: regate.sh greps "^FAIL <id> [0-2]/3"
     print(f"\n{n} / {len(counted)} passed (bank records and conversation checks){'' if a.reps == 1 else f', a customer counts with {need} of {a.reps} runs'}{f'; {len(void)} void, not counted (platform retried the run): ' + ', '.join(void) if void else ''}. Last simulation {sim_id}, status {status}, {total_s:.0f} s.")
     with open(ROOT / "results" / "log.jsonl", "a") as f:      # one line per run, the record of how the score moved over time
         f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "agent_id": a.agent_id, "brief": a.brief, "runs": a.reps, "passed": n, "total": len(counted), "seconds": round(total_s), "failed": [f["id"] for f in counted if not f["pass"]], "void": void}) + "\n")
@@ -123,7 +123,7 @@ def run_once(agent_id, cases, ids):
     # something about the speed of the model at that moment, not only about the agent.
     waits = []
     for r in rows:
-        if not r["call_id"]: continue
+        if not r["call_id"] or r.get("void"): continue        # a retried run's call says nothing about the agent's speed
         try: call = freya.get_call(r["call_id"])
         except Exception: continue
         last_user, worst = None, 0.0
@@ -134,7 +134,7 @@ def run_once(agent_id, cases, ids):
             elif last_user is not None: worst = max(worst, t - last_user); last_user = None if m.get("role") == "assistant" else last_user
         r["slowest_turn_s"] = round(worst, 1); r["ended"] = call.get("endedReason"); waits.append(worst)
     if waits:
-        waits.sort(); med = waits[len(waits) // 2]; hung = sum(r.get("ended") == "customer-ended-call" and not r["pass"] for r in rows)
+        waits.sort(); med = waits[len(waits) // 2]; hung = sum(r.get("ended") == "customer-ended-call" and not r["pass"] and not r.get("void") for r in rows)
         print(f"\nslowest agent turn per call: median {med:.0f} s, worst {waits[-1]:.0f} s. Failed calls where the customer hung up: {hung}.")
         if med > 10: print("WARNING: the phone agent was slow in this run. If the same agent is fast in another run, the model was busy and this score is too low.")
     return rows, sim_id, it_id, status, took, (med if waits else 0)
