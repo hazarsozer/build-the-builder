@@ -4,6 +4,7 @@ to_text(path)        one file as Markdown text (never raises: an unreadable file
 case_files(folder)   every file under folder, recursively: BRIEF.md first, README.md second, the rest by relative path
 load_folder(folder)  every document under a `# <relative name>` heading, in case_files order
 """
+import os
 from pathlib import Path
 
 TEXT = {".md", ".markdown", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml"}
@@ -87,6 +88,10 @@ def to_text(path):
     """The file as Markdown text. Images and unknown types: a note naming the file. Never raises."""
     p = Path(path)
     ext = p.suffix.lower()
+    if is_secret_name(p.name):
+        return "%s (secret-looking file, not read)" % p.name
+    if p.is_symlink():
+        return "%s (symlink, not read)" % p.name
     try:
         if ext in TEXT:
             return read_text(p)
@@ -124,16 +129,33 @@ def _rank(rel):
     return 4
 
 
+def is_secret_name(name):
+    """Secret-looking file names: listed by name only, never read."""
+    n = name.lower()
+    return (n.startswith(".env") or n == "env.sh" or n.endswith((".key", ".pem", ".p12", ".pfx"))
+            or n.startswith(("id_rsa", "id_ed25519", "id_ecdsa", "credentials")))
+
+
 def case_files(folder, skip=lambda p: False):
-    """Every file under folder (recursively; hidden files and folders left out), BRIEF.md, README.md, then the rest
-    sorted by relative path (case-insensitively, then exactly)."""
+    """Every regular file under folder, recursively, BRIEF.md, README.md, then the rest sorted by relative path
+    (case-insensitively, then exactly). Never follows a symlink (file or dir), never leaves the resolved folder,
+    leaves out hidden files and folders."""
     folder = Path(folder)
+    root = folder.resolve()
     out = []
-    for p in folder.rglob("*"):
-        rel = p.relative_to(folder)
-        if any(part.startswith(".") for part in rel.parts) or not p.is_file() or skip(p):
-            continue
-        out.append(p)
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        d = Path(dirpath)
+        dirnames[:] = sorted(x for x in dirnames if not x.startswith(".") and not (d / x).is_symlink())
+        for fn in filenames:
+            p = d / fn
+            if fn.startswith(".") or os.path.islink(p) or not p.is_file():
+                continue
+            try:
+                p.resolve().relative_to(root)
+            except ValueError:
+                continue
+            if not skip(p):
+                out.append(p)
     return sorted(out, key=lambda p: (_rank(p.relative_to(folder)), str(p.relative_to(folder)).lower(),
                                       str(p.relative_to(folder))))
 
