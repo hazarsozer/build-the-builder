@@ -23,7 +23,7 @@ from builder.lib import dates, embed, money
 from builder.lint import lint, safe_opening
 from builder import labels, layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
-from builder.triggers import verb_led, bare_trigger, split_trigger, subj, trigger_rest
+from builder.triggers import verb_led, bare_trigger, sentence, split_trigger, subj, trigger_rest
 from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
                            cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
 
@@ -976,7 +976,7 @@ try:
             msg = ('NO DAY FOUND in the words given. If the customer named a day, call ' + TOOL + ' again with it as YYYY-MM-DD in date; '
                    'otherwise ask for the exact day.')
     else:
-        kind, off, bad, todo = _cd_judge(d, dl)
+        kind, off, bad, next_step = _cd_judge(d, dl)
         if kind == 'ok' and d.isoformat() in offered:
             i = max([j for j in range(n) if pd[j] == d.isoformat()] or [n - 1])
             msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. Do not propose it again. ' + _rb(i, d) + ', then record (create_promise date: ' + d.isoformat() + ').')
@@ -984,10 +984,10 @@ try:
             msg = ('NEW DATE: ' + say_date(d) + ' can be accepted. You have not offered it: do not offer it now. ' + _rb(max(n, 1) - 1, d) +
                    '. This is not a question about paying and not a new offer. After a yes, record (create_promise date: ' + d.isoformat() + ').')
         elif kind == 'past':
-            msg = 'IN THE PAST: ' + bad + '. Say so and ' + todo + '.'
+            msg = 'IN THE PAST: ' + bad + '. Say so and ' + next_step + '.'
         else:
             head = dict(after_deadline='AFTER THE DEADLINE', today_closed='TOO LATE FOR TODAY').get(kind, 'NOT A BUSINESS DAY')
-            first = 'Say ' + todo[4:] if todo.startswith('say ') else 'Say so and ' + todo
+            first = 'Say ' + next_step[4:] if next_step.startswith('say ') else 'Say so and ' + next_step
             msg = head + ': ' + bad + '. ' + first + (cur if off is not None else '') + '.' + never
             if off is not None:
                 msg += ' If they accept, create_promise date: ' + off.isoformat() + '.'
@@ -1048,14 +1048,14 @@ try:
             _off_bank('NOT RECORDED: the date was not given as YYYY-MM-DD. Call ' + TOOL + ' with the customer\'s day, '
                       'say the date it gives, read it back and ask again.')
         else:
-            kind, off, bad, todo = _cd_judge(d, dl)
+            kind, off, bad, next_step = _cd_judge(d, dl)
             if kind == 'ok':
                 config['url'] = PROMISE_URL
                 b['date'] = raw
                 vars['promise_date_used'] = raw
                 vars['promise_sent'] = 'yes'
             else:
-                _off_bank('NOT RECORDED: ' + bad + '; ' + todo + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
+                _off_bank('NOT RECORDED: ' + bad + '; ' + next_step + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
                           '. Say this date, read it back and ask again.')
 except Exception:
     try:
@@ -1404,7 +1404,7 @@ class _Compiler:
                 said = subj("the customer", trig)
                 trans.append({"target_node": self.latch_gate(self.end_target(stage, eid)), "is_tool_call": True,
                               "description": "Call this when %s%s. The goodbye is spoken automatically." % (said, nth),
-                              "condition": {"operator": "matches_intent", "description": (said[:1].upper() + said[1:] + nth)}})
+                              "condition": {"operator": "matches_intent", "description": sentence("the customer", trig) + nth}})
                 continue
             extra = (" It must be the %s time; an earlier time is NOT %s." % (ORD.get(times, str(times)), eid)
                      if times > 1 and "second" not in trig and "twice" not in trig else "")
@@ -1458,7 +1458,7 @@ class _Compiler:
                     # has paid; the model can end the call itself (the extraction normally routes before it speaks)
                     trans.append({"target_node": self.end_target(stage, eid), "is_tool_call": True,
                                   "description": "Call this when %s. The goodbye is spoken automatically." % subj("the customer", trig),
-                                  "condition": {"operator": "matches_intent", "description": "The customer %s" % bare_trigger(trig)}})
+                                  "condition": {"operator": "matches_intent", "description": sentence("the customer", trig)}})
         desc.append(self.not_events(stage))
         return values, desc, trans
 
@@ -1568,7 +1568,7 @@ class _Compiler:
             if h["action"] == "insist_once_then_transfer":
                 v = h["id"] + "_request"
                 values.append(v)
-                hdesc.append("%s: they %s." % (v, bare_trigger(h["trigger"])))
+                hdesc.append("%s: %s." % (v, subj("the customer", h["trigger"])))
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
                 routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
@@ -2097,7 +2097,8 @@ HOW TO GET A PROMISE
             ev = self.events["refused"]
             tr.append({"target_node": self.latch_gate(self.close_key("refused")), "is_tool_call": True,
                        "description": "Call this when every persuasion attempt in the plan has been made and the customer still refuses. The goodbye is spoken automatically.",
-                       "condition": {"operator": "matches_intent", "description": "Customer: " + ev["trigger"]}})
+                       "condition": {"operator": "matches_intent",
+                                     "description": sentence("the customer", ev["trigger"]) + "." + trigger_rest(ev["trigger"])}})
         return {
             "name": "negotiate", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},

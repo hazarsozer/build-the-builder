@@ -80,20 +80,31 @@ def test_trigger_extra_sentence_is_kept(compiled):
 
 # ---------------------------------------------------------------- 2. internal labels
 
-INTERNAL = re.compile(r"\bA\d{1,2}\b|probe|TODO|FIXME|hack")
+# work words, any case, whole words only; task labels (A11, IDS-08) case-sensitive, so a code variable a2 is not one
+INTERNAL_WORDS = re.compile(r"\b(?:probe|todo|fixme|hack)\b", re.I)
+INTERNAL_LABELS = re.compile(r"\bA\d{1,2}\b|\b[A-Z]{2,4}-\d{2}\b")
+
+
+def internal(txt):
+    return sorted({m.group(0) for p in (INTERNAL_WORDS, INTERNAL_LABELS) for m in p.finditer(txt)})
+
+
+def test_internal_patterns_catch_labels():
+    assert internal("x (A11 probe) y") == ["A11", "probe"]
+    assert internal("# Todo: HACK around IDS-08, PUB-13") == ["HACK", "IDS-08", "PUB-13", "Todo"]
+    assert internal("a2 = probes + todos; hacked; SELF-05x") == []
 
 
 @pytest.mark.parametrize("name", ["a", "b"])
 @pytest.mark.parametrize("base_url", [None, "https://bank.example/v1"])
 def test_no_internal_labels_in_export(name, base_url):
     """Task numbers, 'probe' and the like never reach the exported workflow (hooks, code nodes, descriptions)."""
-    txt = json.dumps(C(SPECS[name], OA, base_url=base_url))
-    assert sorted(set(INTERNAL.findall(txt))) == []
+    assert internal(json.dumps(C(SPECS[name], OA, base_url=base_url))) == []
 
 
 def test_no_internal_labels_in_any_fixture(compiled):
     name, _, wf = compiled
-    assert sorted(set(INTERNAL.findall(json.dumps(wf)))) == [], name
+    assert internal(json.dumps(wf)) == [], name
 
 
 # ---------------------------------------------------------------- 3. no "brief" the live model never sees
@@ -245,3 +256,84 @@ def test_relative_paths_leaves_lookalike_paths():
     assert trace.relative_paths(base + "-other/x").endswith("-other/x")       # a sibling directory is not cut
     assert not trace.relative_paths(base + "-other/x").startswith(".")
     assert trace.relative_paths(base + "/a/b.json") == "a/b.json"
+
+
+
+# ---------------------------------------------------------------- fix round 1
+
+@pytest.mark.parametrize("trigger, first, rest", [
+    ("The customer says Dr. Smith told them to wait. Do not argue.", "says Dr. Smith told them to wait", "Do not argue."),
+    ("The person says Mrs. Reyes is away, e.g. Friday.", "says Mrs. Reyes is away, e.g. Friday", ""),
+    ("The customer names St. Mary's hospital.", "names St. Mary's hospital", ""),
+    ("The customer gives No. 12 as the house number. Ask once.", "gives No. 12 as the house number", "Ask once."),
+])
+def test_sentence_split_skips_abbreviations(trigger, first, rest):
+    assert split_trigger(trigger)[1:] == (first, rest)
+
+
+@pytest.mark.parametrize("trigger, clause", [
+    ("Fees are disputed.", "fees are disputed"),                  # not a verb: left as it is, no subject added
+    ("Payments stop for two months.", "payments stop for two months"),
+    ("Bills arrive late.", "bills arrive late"),
+    ("asks for a human", "the customer asks for a human"),
+    ("still refuses after the floor", "the customer still refuses after the floor"),
+    ("refuses to pay", "the customer refuses to pay"),
+])
+def test_subject_only_before_a_known_verb(trigger, clause):
+    assert subj("the customer", trigger) == clause
+
+
+# every shape a trigger can take that once doubled a subject: a time clause, a non-customer subject, "They"
+HOSTILE = [
+    "After identity is verified, the customer says {x}.",
+    "Before identity is verified, the person says {x}.",
+    "The person (not the customer) says {x}.",
+    "They say {x}.",
+    "Asked whether {x}.",
+    "The customer says {x}. Do not argue.",
+]
+DOUBLE_ANY = re.compile(r"(?i:\b(?:the customer|the person|they|customer:)\s+(?:the customer|the person|they|after|before|asked)\b)|"
+                        r"\bIf (?:The|After|Before|Asked|They) |[a-z)]\.\.(?!\.)|[a-z)]\.:|\.\s+\.")
+
+
+@pytest.mark.parametrize("spec_name", ["a", "dress-A", "dress-B", "insurance"])
+@pytest.mark.parametrize("shape", range(len(HOSTILE)))
+def test_hostile_trigger_shapes_never_double(spec_name, shape):
+    """Every embedding site (prompts, extraction, tool and edge descriptions, matches_intent conditions) with every
+    trigger rewritten into a shape that once doubled the subject."""
+    import copy
+    s = copy.deepcopy(SPECS[spec_name])
+    for i, e in enumerate(s["events"] + s.get("say_rules", [])):
+        e["trigger"] = HOSTILE[shape].format(x="case %d happens" % i)
+    wf = C(s, OA, base_url="https://bank.example/v1")
+    hits = sorted({t[max(0, m.start() - 50):m.end() + 20] for t in texts(wf) for m in DOUBLE_ANY.finditer(t)
+                   if "case " in t[max(0, m.start() - 80):m.end() + 80]})
+    assert hits == [], (spec_name, HOSTILE[shape])
+    # the matches_intent fields carry the clause too
+    intents = [t["condition"]["description"] for nd in wf["nodes"].values() for t in nd.get("transitions") or []
+               if (t.get("condition") or {}).get("operator") == "matches_intent" and "case " in t["condition"]["description"]]
+    for d in intents:
+        assert d[:1].isupper() and not DOUBLE_ANY.search(d), d
+
+
+def test_backup_close_intent_keeps_own_subject():
+    import copy
+    s = copy.deepcopy(SPECS["a"])
+    ev = next(e for e in s["events"] if e["id"] == "dispute")
+    ev["trigger"] = "After identity is verified, the customer says the debt is not theirs."
+    wf = C(s, OA, base_url="https://bank.example/v1")
+    d = [t["condition"]["description"] for t in wf["nodes"]["negotiate"]["transitions"]
+         if t.get("is_tool_call") and t["target_node"] == "close_dispute"]
+    assert d == ["The customer says the debt is not theirs (after identity is verified)"]
+    ev["trigger"] = "The person (not the customer) says the debt is not theirs."
+    wf = C(s, OA, base_url="https://bank.example/v1")
+    d = [t["condition"]["description"] for t in wf["nodes"]["negotiate"]["transitions"]
+         if t.get("is_tool_call") and t["target_node"] == "close_dispute"]
+    assert d == ["The person (not the customer) says the debt is not theirs"]
+
+
+def test_refused_intent_is_normalised():
+    wf = C(SPECS["a"], OA, base_url="https://bank.example/v1")
+    d = [t["condition"]["description"] for t in wf["nodes"]["negotiate"]["transitions"]
+         if t.get("is_tool_call") and t["target_node"] == "close_refused"]
+    assert d == ["The persuasion attempts are used up after flat refusals or non-answers."]
