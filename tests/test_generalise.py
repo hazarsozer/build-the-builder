@@ -4,6 +4,7 @@ import json
 
 from builder import cases, oracle
 from builder.compile import compile as C
+from builder.multi import load_state
 from builder.lib import dates
 from builder.lint import lint
 from builder.validate import validate
@@ -27,6 +28,7 @@ def _sp_call(sp, v, params):
     """One set_product call (api mode: its pre-hook gets the model's arguments as the request body)."""
     if sp.get("pre_process_code"):
         exec(sp["pre_process_code"], {"vars": v, "config": {"url": "x", "body": dict(params)}})
+        exec(sp["post_process_code"], {"vars": v, "result": {"status": "success", "data": {"ok": True}}})
     else:
         exec(sp["function"]["parameters"]["properties"]["code"]["default"], {"vars": v, "params": dict(params)})
 
@@ -133,7 +135,7 @@ def test_g1_multi_order_uses_mapped_fields():
     v = {"now": "2026-10-14T11:00", "acct_products_json": json.dumps(prods)}
     exec(_code(w["nodes"]["setup"]), {"vars": v})
     exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
-    assert json.loads(v["mp_state"])["order"] == ["p2", "p1"]
+    assert load_state(v)["order"] == ["p2", "p1"]
 
 
 def test_g1_plan_products_uses_mapping():
@@ -366,7 +368,7 @@ def test_m1_multi_token_match_and_ack():
     exec(_code(w["nodes"]["setup"]), {"vars": v})
     exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
     _sp_call(sp, v, {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-16", "channel": "credit card"})
-    assert json.loads(v["mp_state"])["p"]["p1"]["extra"]["channel"] == "card"
+    assert load_state(v)["p"]["p1"]["extra"]["channel"] == "card"
     assert "channel" in v["mp_msg"] and "card" in v["mp_msg"]
 
 

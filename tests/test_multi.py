@@ -4,6 +4,7 @@ import datetime as dt
 import json
 
 from builder.compile import compile as C
+from builder.multi import load_state
 from builder.lib import dates as D
 from builder.lint import lint
 
@@ -176,7 +177,7 @@ class Sim:
         msg = None
         for _ in range(n):
             msg = self.say(product_id=pid, outcome="refused")
-            if msg.startswith("Not counted yet."):  # no offer noted yet: the offer is made, then refused
+            if "Not counted yet." in msg:  # no offer noted yet: the offer is made, then refused
                 msg = self.say(product_id=pid, outcome="refused")
             if "last attempt" in msg:
                 break
@@ -320,7 +321,7 @@ def test_a9_shared_date_capped_when_reported_one_product_at_a_time():
     s = Sim("PUB-13")
     s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
     msg = s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-30")
-    assert not msg.startswith("NOT accepted") and s.v["mp_phase"] == "readback"
+    assert "NOT accepted" not in msg and s.v["mp_phase"] == "readback"
     rb = s.v["mp_readback"]
     assert "300.00 for your credit card ending 6604 on Friday 30 October 2026" in rb
     assert "Friday 23 October 2026, because that is the latest date I can accept for it" in rb
@@ -335,20 +336,20 @@ def test_a9_per_product_cap_respects_reject_policy():
     s = Sim("PUB-13", spec)
     s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
     msg = s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-30")
-    assert msg.startswith("NOT accepted") and "Friday 23 October 2026" in msg
+    assert "NOT accepted" in msg and "Friday 23 October 2026" in msg
 
 
 def test_single_product_date_after_deadline_is_refused_with_deadline():
     s = Sim("PUB-13")
     msg = s.say(product_id="p2", outcome="agreed", amount="900", date="2026-10-30")
     assert "Friday 23 October 2026" in msg and s.v["mp_phase"] == "open"
-    assert json.loads(s.v["mp_state"])["p"]["p2"]["status"] == "pending"
+    assert load_state(s.v)["p"]["p2"]["status"] == "pending"
 
 
 def test_below_floor_and_weekend_rejected():
     s = Sim("PUB-13")
     msg = s.say(product_id="p1", outcome="agreed", amount="10", date="2026-10-16")
-    assert "90.00" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert "90.00" in msg and load_state(s.v)["p"]["p1"]["status"] == "pending"
     msg = s.say(product_id="p1", outcome="agreed", amount="300", date="2026-10-17")
     assert "Monday 19 October 2026" in msg
 
@@ -441,7 +442,7 @@ def test_product_reference_by_number_or_words():
     s = Sim("PUB-12")
     s.say(product_id="1", outcome="agreed", amount="510", date="2026-10-15")
     s.refuse("personal loan", 2)
-    st = json.loads(s.v["mp_state"])["p"]
+    st = load_state(s.v)["p"]
     assert st["p1"]["status"] == "agreed" and st["p2"]["status"] == "refused"
 
 
@@ -476,12 +477,12 @@ def test_fix3_multi_prompt_noted_only_after_a_noted_result():
     """regate-a9-B: after "Unknown outcome" the model said the promises were noted and read them back itself."""
     w = wf()
     t = w["nodes"]["negotiate"]["task_message"]
-    assert 'Say a product is noted only after a result that starts with "Noted"' in t
+    assert 'Say a product is noted only after a result that says "Noted" for it' in t
     assert '"NOT accepted", "Not counted yet" or any other result, nothing is noted' in t
     assert "Never read promises back or ask for confirmation yourself." in t
     assert "unless the tool result says so" in w["system_prompt"]
     s = Sim("PUB-13")
-    assert s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-20").startswith("Noted")
+    assert s.say(product_id="p2", outcome="agreed", amount="full", date="2026-10-20").startswith("The personal loan: Noted")
     assert s.say(product_id="p2", outcome="bogus").startswith("Unknown outcome")
 
 
@@ -512,14 +513,14 @@ def test_a9_set_product_is_api_mode_and_model_reads_the_answer():
     s.say(product_id="p1", outcome="agreed", amount="full", date="2026-10-30")
     s.say(product_id="p2", outcome="agreed", amount="900", date="2026-10-30")  # same date given product by product
     msg = s.say(product_id="p2", outcome="agreed", amount="900", date="2026-11-30")
-    assert msg.startswith("NOT accepted") and s.last_result["data"]["what_to_do_next"] == msg
+    assert msg.startswith("The personal loan: NOT accepted") and s.last_result["data"]["what_to_do_next"] == msg
     assert s.last_result["data"]["phase"] == s.v["mp_phase"]
 
 
 def test_a9_unfilled_template_args_are_ignored():
     s = Sim("PUB-13")
     s.say(product_id="p1", outcome="agreed", amount="{{sp_amount}}", date="2026-10-20")
-    assert json.loads(s.v["mp_state"])["p"]["p1"]["amount"] == 300.0
+    assert load_state(s.v)["p"]["p1"]["amount"] == 300.0
 
 
 def test_code_mode_still_works(monkeypatch):
@@ -551,31 +552,31 @@ def test_api_mode_still_works(monkeypatch):
 def test_r1_non_calendar_date_rejected():
     s = Sim("PUB-13")
     msg = s.say(product_id="p1", outcome="agreed", amount="300", date="2026-10-32")
-    assert "NOT accepted" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert "NOT accepted" in msg and load_state(s.v)["p"]["p1"]["status"] == "pending"
 
 
 def test_r2_nan_amount_rejected():
     s = Sim("PUB-13")
     msg = s.say(product_id="p1", outcome="agreed", amount="nan", date="2026-10-20")
-    assert "NOT accepted" in msg and json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert "NOT accepted" in msg and load_state(s.v)["p"]["p1"]["status"] == "pending"
 
 
 def test_a9_attempts_counted_in_code_per_refusal():
     """A9 item 2: each refused call is one used attempt, counted in mp_state; the band's count is the limit."""
     s = Sim("PUB-13")  # p1 early band: one attempt; p2 late band: two
     msg = s.say(product_id="p1", outcome="refused")  # first call: no offer noted yet (fix round 1, item 3)
-    assert msg.startswith("Not counted yet.") and "is not a refusal" in msg
-    assert json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
+    assert msg.startswith("The credit card ending 6604: Not counted yet.") and "is not a refusal" in msg
+    assert load_state(s.v)["p"]["p1"]["status"] == "pending"
     msg = s.say(product_id="p1", outcome="refused")
-    st = json.loads(s.v["mp_state"])["p"]
+    st = load_state(s.v)["p"]
     assert st["p1"]["status"] == "refused" and st["p1"]["tried"] == 1
     assert "no more offers" in msg and "no other amount, no other date" in msg
     assert "attempt 1 of its plan" in msg  # p2 starts at its attempt 1
     msg = s.say(product_id="p2", outcome="refused")
-    st = json.loads(s.v["mp_state"])["p"]
+    st = load_state(s.v)["p"]
     assert st["p2"]["status"] == "pending" and st["p2"]["tried"] == 1 and "Make attempt 2 now" in msg
     msg = s.say(product_id="p2", outcome="refused")
-    assert json.loads(s.v["mp_state"])["p"]["p2"]["status"] == "refused" and s.v["mp_phase"] == "done"
+    assert load_state(s.v)["p"]["p2"]["status"] == "refused" and s.v["mp_phase"] == "done"
 
 
 def test_a9_next_names_the_attempt_after_the_used_ones():
@@ -589,9 +590,9 @@ def test_fix1_refusal_before_any_offer_is_not_counted():
     """Fix round 1, item 3: "I can't pay all today" at step 1 must not use a one-attempt product's only attempt."""
     s = Sim("PUB-12")  # p3 car loan: early band, one attempt
     msg = s.say(product_id="p3", outcome="refused")
-    p3 = json.loads(s.v["mp_state"])["p"]["p3"]
+    p3 = load_state(s.v)["p"]["p3"]
     assert p3["status"] == "pending" and not p3.get("tried") and "Make attempt" not in msg
-    assert msg.startswith("Not counted yet. If you already made attempt 1 for the car loan and the customer refused it, call set_product")
+    assert msg.startswith("The car loan: Not counted yet. If you already made attempt 1 for the car loan and the customer refused it, call set_product")
     assert "before you speak" in msg and "make attempt 1 of its plan" in msg and s.v["mp_phase"] == "open"
     # fix round 2: no offer text, so the model is not invited to read the offer out a second time
     import re
@@ -602,7 +603,7 @@ def test_fix1_refusal_before_any_offer_is_not_counted():
     assert 'A "no" to the today question uses no attempt' in s.w["nodes"]["negotiate"]["task_message"]
     # once the offer is noted (here: the Not-yet answer told the model to make it), a refusal counts
     msg = s.say(product_id="p3", outcome="refused")
-    assert json.loads(s.v["mp_state"])["p"]["p3"]["status"] == "refused" and "no more offers" in msg
+    assert load_state(s.v)["p"]["p3"]["status"] == "refused" and "no more offers" in msg
 
 
 def test_fix1_offer_named_by_a_result_counts_without_not_yet():
@@ -626,7 +627,7 @@ def test_fix1_band_with_no_attempts():
     msg = s.say(product_id="ALL", outcome="review")
     assert "has no offers: make no offer" in msg
     msg = s.say(product_id="p3", outcome="refused")
-    assert "has no offers" in msg and json.loads(s.v["mp_state"])["p"]["p3"]["status"] == "refused"
+    assert "has no offers" in msg and load_state(s.v)["p"]["p3"]["status"] == "refused"
     assert s.v["mp_phase"] == "done"
     s.end = "wrap_done"
     promises, notes, close, outcome, reason = s.chain()
@@ -751,7 +752,7 @@ def test_notes_in_get_account_order():
     spec = copy.deepcopy(B)
     spec["multi_product"]["order"] = "highest_past_due"
     s = Sim("PUB-12", spec)
-    st = json.loads(s.v["mp_state"])
+    st = load_state(s.v)
     assert st["order"][0] == "p2" and st["ga"] == ["p1", "p2", "p3"]
     s.refuse("p2", 2)
     s.say(product_id="p1", outcome="dispute")
