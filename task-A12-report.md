@@ -278,3 +278,44 @@ Commits 7cb68c5, e505e0c, plus this report section.
 
 1. **ACCEPTED OFFER also fires on a plan date the agent has not yet spoken.** This happens when the customer names a plan date first, for example attempt 2's deadline before attempt 2 was made. The verdict then asks for a read-back with the current amount instead of a proposal. In practice the plan date is the first one offered, and a read-back states the amount and asks for confirmation, so the customer can still say no.
 2. **Not live-tested in this round.** No probe was run: hook mechanics are unchanged and only the wording and the offered-date bookkeeping changed. A gate run of PUB-06 should confirm that the model now reads back once.
+
+---
+
+# Fix round 4 (ACCEPTED OFFER only for offers the agent really made)
+
+Commit de703cf, plus this report section.
+
+**Cause.** `offered` in CHECK_PRE held every plan attempt date and the deadline from the start. A customer who named one of them before the agent said it (for example the deadline on attempt 1) got "The customer accepted your offer: do not propose it again" for an offer never made. The verdict did not name an amount either. DATE_ONLY still said "Propose that amount", which conflicted with the read-back.
+
+| # | Fix | Where |
+|---|---|---|
+| a | **check_date takes `attempt`**, a required model-filled body field (`{{cdx_attempt}}`): "the number of the last plan attempt you have already said to the customer: 0 before your first offer with a date, 1 after attempt 1, ...". The hook reads leading digits only and clamps the value to the plan length. An unreadable, negative or template value counts as 0. | compile.py check_tool, CHECK_PRE |
+| b | **Offered = plan dates of attempts 1..attempt, plus `cd_offered`.** `cd_offered` holds the dates an earlier result told the model to offer; they are spoken in that same turn. The deadline is no longer added by itself: it counts only as a reached attempt's date or as an offered alternative (after the deadline). The bare-weekday `prefer` list uses the same set, so an unsaid plan date never steers a bare weekday. | CHECK_PRE |
+| c | **Both verdicts name the amount.** prepare_account writes `offer_amounts` (full/floor/current per attempt). ACCEPTED OFFER reads back the amount of the attempt that proposed that date (the latest reached attempt with that date; for a `cd_offered` date, the current attempt). NEW DATE reads back the current attempt's amount (attempt `max(attempt,1)`). Full gives the past-due figure, floor gives the floor, and current gives "540.00 (or 180.00 if the customer already said the full amount is too much)". It adds "(an amount the customer named and you may accept instead, if they named one)". | compile.py:295, :391, CHECK_PRE `_amt`/`_rb` |
+| d | **NEW DATE verdict** (replaces "OK: ... If not, propose this date"): `NEW DATE: <date> can be accepted. You have not offered it: do not offer it now. As a confirmation, read back once the product and <amount> on <date> (...) and ask "Do you confirm?". This is not a question about paying and not a new offer. After a yes, record (create_promise date: <iso>).` | CHECK_PRE |
+| e | **DATE_ONLY harmonised:** "... the amount is the one of your current attempt (the full amount, or the floor once it is on the table). Never offer it again: read it back with their date once, as the confirmation of step 4; never ask them to name an amount." | compile.py:54 |
+
+Kept unchanged: offer verdicts (holiday, after the deadline, too late for today) with "never say a figure the customer already heard", the fail-closed create_promise guard, the retry guard, and last-mention parsing. The hook uses json/re/datetime only and contains no `{{`/`}}` (asserted).
+
+## Tests
+
+- **tests/test_a12.py:**
+  - `test_fix4_plan_dates_count_only_once_the_attempt_was_said`, run for each of the 5 now-values, late band (attempt 1 current, attempt 2 floor on the deadline). Each plan date with attempt missing/""/0/template/"x" gives NEW DATE with 540.00 (or 180.00), and the deadline does so at attempt 1 too. Attempt 1 said gives ACCEPTED OFFER for its date. Attempt 2 said gives ACCEPTED OFFER for the deadline with 180.00 and no 540.00. A new date after attempt 2 reads back 180.00.
+  - `test_fix4_attempt_one_date_named_first_is_a_new_date`, run for each of the 5 now-values, early band: the plan date and the deadline named at attempt 0 give NEW DATE with 540.00. The deadline stays a NEW DATE after attempt 1 when it is not a plan date.
+  - `test_fix4_attempt_out_of_range_is_clamped` and `test_fix4_check_date_asks_for_the_attempt_and_date_only_reads_back` (field and required, no `{{` in the hook, DATE_ONLY wording, ≤ 4800, lint clean).
+  - Fix-3 tests updated to pass `attempt` and to the new wording. The deadline counts only after an after-deadline result offered it. The no-restated-amount test also forbids "propose this date".
+- **Runs:**
+  - `uv run pytest -q tests/test_a12.py` → 54 passed.
+  - `uv run pytest -q` → **697 passed, 6 skipped**.
+  - spec-b lint is `[]`.
+
+## Compiled-prompt changes
+
+- **spec-a:** the negotiate task_message is **4430 chars** (budget 4800). Only DATE_ONLY changed. check_date gains the `attempt` field, and prepare_account writes `offer_amounts`.
+- **spec-b:** the negotiate task is unchanged. Its prepare_account also writes the unused `offer_amounts`.
+
+## Concerns
+
+1. **The model fills the attempt count.** If it under-counts, a real acceptance gets NEW DATE, which still reads back once with the amount, so the behaviour is the same. If it over-counts, an unsaid plan date gets ACCEPTED OFFER, which is the old false claim, but now it names the amount. No probe was run because the hook mechanics are unchanged (one more model-filled body field, like `said`). A gate run of PUB-06/07 should confirm that the model fills `attempt`.
+2. **A deadline the model proposes under the vague-period rule** (no tool told it) is not tracked. A later "the 2nd is fine" gets NEW DATE, which also reads back once.
+3. **Attempt kind "current"** cannot be resolved in code: the hook does not know whether the floor is on the table. The read-back therefore names both figures with the condition, and the model picks one.
