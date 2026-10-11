@@ -267,8 +267,7 @@ def test_in06_lapsed_policy_fires_before_the_debt_is_stated():
     tr = {t["description"]: t["target_node"] for t in hold["transitions"]}
     acc = [t for d, t in tr.items() if "transfer accepted" in d][0]
     assert w["nodes"][acc]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]["properties"]["queue"]["default"] == "retention"
-    close_t = w["nodes"][acc]["passthrough_default_transition"] if w["nodes"][acc].get("passthrough_default_transition") else \
-        w["nodes"][acc]["transitions"][-1]["target_node"]
+    close_t = w["nodes"][acc]["transitions"][0]["target_node"]  # A24: the transfer's ok route (otherwise its retry)
     assert _close_of(w["nodes"][close_t]) == ("transferred", "policy_lapsed")
     # declined, or a payment named: the else-close straight away, no wrap and so no notes
     assert tr["policy_lapsed: the customer names a payment, none is taken"] == "close_policy_lapsed"

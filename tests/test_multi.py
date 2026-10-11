@@ -112,7 +112,11 @@ def test_spec_a_node_set_unchanged():
         "hardship_offer", "hardship_hold", "hardship_back",  # A10 support offer latch
         "id_decline_gate",  # A10 SELF-06: a decline with an answer in it is checked first
         "opening_ask",  # A21: the opening counts its asks in code (small talk is not an ask)
-        "id_explain"}  # A21 fix round 1: the one explanation is spoken by a step, flagged in code
+        "id_explain",  # A21 fix round 1: the one explanation is spoken by a step, flagged in code
+        # A24: every bank call is retried once, a second failure closes as the service failure
+        "load_account_retry", "transfer_restructuring_retry", "transfer_general_retry",
+        "transfer_support_retry", "close_identity_service_error", "close_callback_service_error",
+        "close_transfer_service_error"}
     # A12: one product's named days are judged by the read-only check_date tool
     assert [t["function"]["name"] for t in w["nodes"]["negotiate"]["tools"]] == ["check_date", "create_promise"]
 
@@ -122,7 +126,8 @@ def test_transfers_skip_notes():
     for k, n in w["nodes"].items():
         if k.startswith("transfer_"):
             for t in n["transitions"]:
-                assert t["target_node"].startswith("close_"), (k, t)
+                # A24: a failed transfer goes to its retry (a transfer node too)
+                assert t["target_node"].startswith(("close_", k + "_retry")), (k, t)
                 assert "note" not in t["target_node"]
 
 
@@ -266,6 +271,12 @@ class Sim:
                     body = self.hook(node, tool, {"status": "success", "data": {"ok": True}})
                     notes.append((body["product_id"], body["reason"]))
                     self.notes_order = list(notes)
+                if tool != "create_promise":
+                    # A24: a bank call that worked answers ok: true (its node routes on it; no ok -> its retry)
+                    for m in n.get("response_mapping", []):
+                        if m["path"] == "data.ok":
+                            self.v[m["variable"]] = "true"
+                    self.v[node + "_response.data.ok"] = "true"
             node = self.route(n)
         exec(_code(self.w["nodes"][node]), {"vars": self.v})
         # close_call drops an empty reason (CLOSE_PRE), so "" and unset both mean no reason

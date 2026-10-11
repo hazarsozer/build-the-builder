@@ -164,7 +164,7 @@ def test_mrw03_recorded_promise_then_restructuring_transfers_without_notes():
     assert ar["on_enter"]["text"].startswith("{{mp_said}} ")
     assert "credit card ending 5590 is recorded" in v["mp_said"]
     t = _route(ar, dict(v, ar_answer="restructuring"))
-    assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_restructuring"
+    assert t.startswith("transfer_") and n[t]["transitions"][0]["target_node"] == "close_restructuring"  # A24: ok route; else retry
     # anything else: the recorded sentence is not repeated by the close, the notes are then written
     assert _route(ar, dict(v, ar_answer="nothing")) == "after_record_done"
     assert _route(ar, dict(v, ar_answer="other")) is None  # stays: answers, asks again (no close on an unread reply)
@@ -286,7 +286,7 @@ def test_human_request_after_recording_asks_once_then_transfers_without_notes():
     hold = _route(n[ask], vv)
     assert hold == "human_hold_after_record" and vv["human_asked"] == "yes"
     t = _route(n[hold], dict(vv, human_reply="insists"))
-    assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_human"
+    assert t.startswith("transfer_") and n[t]["transitions"][0]["target_node"] == "close_human"  # A24: ok route; else retry
     # accepts help: back to after_record (the recorded sentence is not spoken again)
     back = _route(n[hold], dict(vv, human_reply="other"))
     assert back == "human_back_after_record" and _route(n[back], vv) == "after_record"
@@ -307,7 +307,7 @@ def test_support_event_after_recording_offers_then_transfers_or_ends_as_nothing_
     hold = _route(n[offer], vv)
     assert hold == "hardship_hold_after_record"
     t = _route(n[hold], dict(vv, hardship_reply="accepted"))
-    assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_hardship_transfer"
+    assert t.startswith("transfer_") and n[t]["transitions"][0]["target_node"] == "close_hardship_transfer"  # A24: ok route; else retry
     for r in ("declined", "names_payment", "other"):
         assert _route(n[hold], dict(vv, hardship_reply=r)) == "after_record_done", r
     assert n[hold]["max_turn_transition"] == "after_record_done"

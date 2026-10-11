@@ -27,7 +27,7 @@ on its deadline in mp_state; the model spoke both answers (the deadline, then th
 """
 from builder.lib import dates, embed, money
 from builder.triggers import subj
-from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
+from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, is_true, py_json
 
 AFTER_RECORD_STEP = "after_record_step"
 AFTER_RECORD_VISITS = 3   # after_record entries before the call ends as "nothing else"
@@ -1136,13 +1136,23 @@ class Multi:
         if self.notes_on:
             for i in range(1, SLOTS + 1):
                 s = str(i)
-                t = c.tool("add_note", {"product_id": {"default": "{{note%s_pid}}" % s},
-                                        "reason": {"default": "{{note%s_reason}}" % s}},
-                           ["product_id", "reason"], retries=1, pre="SLOT = %r\n" % s + NOTE_PRE)
+                def note_tool():
+                    return c.tool("add_note", {"product_id": {"default": "{{note%s_pid}}" % s},
+                                               "reason": {"default": "{{note%s_reason}}" % s}},
+                                  ["product_id", "reason"], retries=1, pre="SLOT = %r\n" % s + NOTE_PRE)
                 tr = ([go("note_%d" % (i + 1), "Next note", cond_any(eq("note_has_%d" % (i + 1), "yes")))] if i < SLOTS else []) + [always("finish")]
+                # A24: a note without ok is sent once more (note_<s>_retry); after that the call goes on to the close the
+                # wrap chose: a note is bookkeeping, and a service-failure close could deny a promise already recorded
+                ok = is_true("note%s_ok" % s, *c.resp_vars("add_note", "ok", "note_" + s))["conditions"]
+                first = ([go("note_%d" % (i + 1), "Noted; next note", all_of(o, eq("note_has_%d" % (i + 1), "yes"))) for o in ok]
+                         if i < SLOTS else []) + [go("finish", "Noted", cond_any(*ok)), always("note_%s_retry" % s)]
                 nodes["note_" + s] = {
-                    "name": "note_" + s, "node_type": "api_request", "passthrough": True, "passthrough_default_transition": "finish",
-                    "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True, "pre_actions": [t], "transitions": tr}
+                    "name": "note_" + s, "node_type": "api_request", "passthrough": True, "passthrough_default_transition": "note_%s_retry" % s,
+                    "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True, "pre_actions": [note_tool()],
+                    "response_mapping": [{"path": "data.ok", "variable": "note%s_ok" % s}], "transitions": first}
+                nodes["note_%s_retry" % s] = {
+                    "name": "note_%s_retry" % s, "node_type": "api_request", "passthrough": True, "passthrough_default_transition": "finish",
+                    "on_enter": {"type": "silent"}, "disable_inactivity_monitor": True, "pre_actions": [note_tool()], "transitions": tr}
         targets = self.wrap_targets()
         # no close chosen (a wrap that did not run): the service-failure close when the wraps can reach it
         fail = c.close_key(self.fail_ev)

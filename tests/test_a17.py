@@ -92,6 +92,7 @@ def _wrap(w, node, status, confirmed=False, recorded=False, now="2026-10-22T16:0
         cur = _route(w["nodes"][cur], v) or w["nodes"][cur]["passthrough_default_transition"]
     while cur.startswith("note_"):
         notes.append((v["note%s_pid" % cur[-1]], v["note%s_reason" % cur[-1]]))
+        v["note%s_ok" % cur[-1]] = "true"  # A24: the bank answered ok (no ok -> the note's retry)
         cur = _route(w["nodes"][cur], v)
     assert cur == "finish"
     close = _route(w["nodes"]["finish"], v)
@@ -239,17 +240,23 @@ def test_sm03_a_result_with_no_answer_check_counts_too():
     assert _route(idn, v) == ID_FAIL_CLOSE
 
 
-def test_identity_failure_route_only_when_the_failure_event_covers_identity():
+def test_identity_failure_route_on_every_brief_with_the_events_sentence_only_when_it_covers_identity():
+    """A24 supersedes A17's "only when the failure event covers identity": every brief retries verify_identity once and
+    closes as the service failure after a second error; the event's own sentence is spoken only when it covers identity."""
     for spec in (A, B):
         w = C(spec, OA)
-        assert ID_FAIL_CLOSE not in w["nodes"]
-        assert "verify_identity_failure_count" not in json.dumps(w["nodes"]["identity"]["transitions"])
-        assert "id_tech_n" not in w["nodes"]["identity"]["tools"][0]["post_process_code"]
+        assert ID_FAIL_CLOSE in w["nodes"]
+        assert "verify_identity_failure_count" in json.dumps(w["nodes"]["identity"]["transitions"])
+        assert "id_tech_n" in w["nodes"]["identity"]["tools"][0]["post_process_code"]
+        assert _code(w["nodes"][ID_FAIL_CLOSE]).count("I am sorry, there was a technical problem.") == 1
     s = copy.deepcopy(SME)
     for e in s["events"]:
         if e["id"] == "service_error":
             e["stages"] = ["negotiate"]
-    assert ID_FAIL_CLOSE not in C(s, SME_OA, base_url=URL)["nodes"]
+            e["stage_say"] = {"identity": "The bank will call you back."}
+    w = C(s, SME_OA, base_url=URL)
+    assert "The bank will call you back." not in _code(w["nodes"][ID_FAIL_CLOSE])
+    assert "service_error" not in w["nodes"]["identity"]["extraction_schema"][0]["enum_values"]
 
 
 def test_reference_specs_lint_clean():

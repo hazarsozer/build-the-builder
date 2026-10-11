@@ -15,6 +15,7 @@ Single product: prepare_account computes the facts of every product in a list an
 first one; the multi-product loop (Task 5) builds on product_facts().
 """
 import argparse
+import copy
 import json
 import re
 import sys
@@ -95,6 +96,16 @@ TECH_COUNT = "            vars['id_tech_n'] = str(int(str(vars.get('id_tech_n') 
 ID_TOOL_FAIL = ('If a verify_identity call fails (an error such as "API request failed" instead of a result): nothing was checked and it is '
                 'NOT a wrong answer. Call verify_identity again at once with the same field and answer, before you speak and without '
                 'asking the customer again. If it fails a second time, the call ends automatically: do not say goodbye yourself.')
+# A24: a generic tool-failure policy. Every bank tool call: an HTTP error -> exactly one retry (an engine retry node,
+# or the calling node's instruction to call it again); a second error -> the service-failure close (fail_close: the
+# failure event's outcome/reason, else the no-promise outcome), which records nothing and claims nothing. A rule the
+# brief gives itself wins: create_promise (retry_promise / record+retry), a failure event that covers identity (its
+# own sentence). A transfer that fails twice is not a transfer: the call closes as the service failure.
+CB_FAIL_CLOSE = "close_callback_service_error"
+TRANSFER_FAIL_CLOSE = "close_transfer_service_error"
+CB_TOOL_FAIL = ('If a schedule_callback call fails (an error such as "API request failed" instead of a result): nothing was booked. '
+                'Call schedule_callback again at once with the same date and time, before you speak and without asking again. '
+                'If it fails a second time, the call ends automatically: do not say goodbye yourself.')
 NUM = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
 ORD = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
 CB_DAY_WORDS = {"today": "today", "next_business_day": "the next business day", "next_day": "tomorrow",
@@ -1470,8 +1481,19 @@ class _Compiler:
             if name in self.transfers.values():
                 name = "transfer_" + queue + "_" + ev_id
             self.transfers[key] = name
-            self.nodes[name] = transfer_node(name, queue, close, self.base, self.oa,
-                                             tool=self.tool("transfer_to_agent", {"queue": {"default": queue}}, ["queue"], retries=1))
+            node = transfer_node(name, queue, close, self.base, self.oa,
+                                 tool=self.tool("transfer_to_agent", {"queue": {"default": queue}}, ["queue"], retries=1))
+            # A24: a transfer counts only with ok; otherwise once more, then the service-failure close (our reading where
+            # the brief is silent: the brief's transferred close would record a transfer that did not happen)
+            retry = copy.deepcopy(node)
+            retry["name"] = name + "_retry"
+            for k, nd, fail in ((name, node, retry["name"]), (retry["name"], retry, TRANSFER_FAIL_CLOSE)):
+                nd["response_mapping"] = [{"path": "data.ok", "variable": k + "_ok"}]
+                nd["passthrough_default_transition"] = fail
+                nd["transitions"] = [go(close, "Transfer done", is_true(k + "_ok", *self.resp_vars("transfer_to_agent", "ok", k))),
+                                     always(fail)]
+            self.nodes[name] = node
+            self.nodes[retry["name"]] = retry
         return self.transfers[key]
 
     def stage_events(self, stage):
@@ -1543,9 +1565,10 @@ class _Compiler:
     def id_fail_farewell(self):
         """A17: the identity service-failure close speaks the failure event's own sentence for identity (stage_say),
         else its say, else its fixed sentence; the generic apology only when the spec stores none."""
-        fe = self.events[self.fail_ev]
-        say = (say_for(fe, "identity")
-               or (self.s["third_party"].get("fixed_sentences") or {}).get(self.fail_ev))
+        # A24: a failure event that does not cover identity is about another tool: its sentence is not spoken here
+        fe = self.events[self.fail_ev] if self.id_fail else {}
+        say = self.id_fail and (say_for(fe, "identity")
+                                or (self.s["third_party"].get("fixed_sentences") or {}).get(self.fail_ev))
         return " ".join([code_tpl(say) if say else "I am sorry, there was a technical problem.", self.thanks(False)])
 
     def thanks(self, named):
@@ -2005,6 +2028,7 @@ class _Compiler:
             "- Never move the day or time they name to another one yourself: book only a day and time they said. A day outside the window "
             "(a weekend day, a holiday, a day too far ahead) is handled like any time outside it: say so and ask.",
         ]
+        lines.append("- " + CB_TOOL_FAIL)
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
         lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
         lines.append(bullet_block("Rules:", self.extra("third_party")))
@@ -2069,8 +2093,7 @@ class _Compiler:
             "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time. "
             "Small talk is not a refusal: never explain for it; ask your question again in a few words." % q(idn["decline_explanation"]),
         ]
-        if self.id_fail:
-            lines.append(ID_TOOL_FAIL)
+        lines.append(ID_TOOL_FAIL)   # A24: on every brief (A17: only when the failure event covered identity)
         # the cut-off rule is a bullet with the other situations, as in the opening and third-party steps
         lines += ["- " + l for l in [CUT_OFF] + self.event_guidance("identity") + self.say_lines("identity")]
         lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
@@ -2203,6 +2226,9 @@ HOW TO GET A PROMISE
         if self.has("callback"):
             tr.append(go(self.close_for("third_party", "callback"), "Callback booked",
                          cond_any(eq("cb_status", "booked"), *is_true(*self.resp_vars("schedule_callback", "ok"))["conditions"])))
+        # A24: an HTTP error skips CALLBACK_POST; the task line has the model call it once more, a second error closes
+        tr.append(go(CB_FAIL_CLOSE, "schedule_callback failed again after one retry", all_of(
+            eq("schedule_callback_response.status", "error"), gt("schedule_callback_failure_count", "1"))))
         return {
             "name": "third_party", "node_type": "conversation",
             "task_message": self.third_party_task(),
@@ -2239,7 +2265,7 @@ HOW TO GET A PROMISE
         not_yet = "Do not mention %s yet." % (join_or(self.s["opening"].get("banned_before_verify", []), "or") or "why you are calling")
         post = ("import json\n" + _const("HINTS", idn.get("non_counting_hints") or {}) + "UNREADABLE = %r\nNEXT_Q = %r\nNOT_YET = %r\n"
                 % (unreadable, next_q, not_yet) + "MAX_WRONG = %d\nSCOPE = %r\n" % (idn["max_wrong"], idn.get("wrong_scope", "total"))
-                + (VERIFY_POST.replace(TECH_AT, TECH_AT + TECH_COUNT) if self.id_fail else VERIFY_POST))
+                + VERIFY_POST.replace(TECH_AT, TECH_AT + TECH_COUNT))
         pre = "import json\n" + _const("FORMATS", {x["field"]: {k: v for k, v in x.items() if k in ("format", "length", "date_order")} for x in qs}) + VERIFY_PRE
         answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
@@ -2304,9 +2330,10 @@ HOW TO GET A PROMISE
             "transitions": [
                 go("load_account", "All answers verified", is_true("id_all", *self.resp_vars("verify_identity", "all_verified"))),
                 go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), *[eq(x, "0") for x in self.resp_vars("verify_identity", "wrong_answers_left")])),
-            ] + ([go(ID_FAIL_CLOSE, "verify_identity failed again after one retry", cond_any(
-                {"logic": "and", "conditions": [eq("verify_identity_response.status", "error"), gt("verify_identity_failure_count", "1")]},
-                gt("id_tech_n", "1")))] if self.id_fail else []) + trans,
+                go(ID_FAIL_CLOSE, "verify_identity failed again after one retry", cond_any(
+                    {"logic": "and", "conditions": [eq("verify_identity_response.status", "error"), gt("verify_identity_failure_count", "1")]},
+                    gt("id_tech_n", "1"))),
+            ] + trans,
         }
 
     def account_nodes(self):
@@ -2320,6 +2347,16 @@ HOW TO GET A PROMISE
                                  {"path": "data.products_json", "variable": "acct_products_json"}],
             "transitions": [always("prepare_account")],
         }
+        # A24: a read without ok -> get_account once more (maxRetries does not repeat an HTTP 500); prepare_account
+        # then closes as the account error if there are still no facts. A retry that fails keeps a first read's data.
+        retry = copy.deepcopy(self.nodes["load_account"])
+        retry["name"] = "load_account_retry"
+        self.nodes["load_account_retry"] = retry
+        first = self.nodes["load_account"]
+        first["response_mapping"].append({"path": "data.ok", "variable": "acct_ok"})
+        first["passthrough_default_transition"] = "load_account_retry"
+        first["transitions"] = [go("prepare_account", "Account read", is_true("acct_ok", *self.resp_vars("get_account", "ok", "load_account"))),
+                                always("load_account_retry")]
         neg = self.s["negotiation"]
         code = (self.prelude() + self.support_init_code() + "ACCOUNT_OK = %r\n" % ("facts" if self.multi else "ok") +
                 _const("PRODUCTS", self.s["products"]) + _const("BANDS", self.s["bands"]) +
@@ -2610,9 +2647,13 @@ HOW TO RUN THE CALL
             n["negotiate"] = self.negotiate_node()
             n["retry_promise"] = self.retry_node()
             self.build_closes()
-        if self.id_fail:
-            # its own node: a several-product call rewrites the event's close to speak the wrap's summary
-            n[ID_FAIL_CLOSE] = close_node(ID_FAIL_CLOSE, *self.fail_close(), self.id_fail_farewell())
+        # its own node: a several-product call rewrites the event's close to speak the wrap's summary
+        n[ID_FAIL_CLOSE] = close_node(ID_FAIL_CLOSE, *self.fail_close(), self.id_fail_farewell())
+        n[CB_FAIL_CLOSE] = close_node(CB_FAIL_CLOSE, *self.fail_close(),
+                                      "I am sorry, there was a technical problem, so I could not arrange the callback. " + self.thanks(False))
+        if self.transfers:
+            n[TRANSFER_FAIL_CLOSE] = close_node(TRANSFER_FAIL_CLOSE, *self.fail_close(),
+                                                "I am sorry, because of a technical problem I cannot transfer you right now. " + self.thanks(False))
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
