@@ -46,6 +46,56 @@ def safe_opening(sentence):
     return " ".join(out), need
 
 
+def required_pre_verify_sentences(spec):
+    """(where, text) for every sentence the spec requires the agent to say before identity is verified."""
+    op, idn = spec.get("opening") or {}, spec.get("identity") or {}
+    out = []
+    if isinstance(op.get("first_sentence"), str):
+        out.append(("opening.first_sentence", safe_opening(op["first_sentence"])[0]))
+    if isinstance(op.get("confirm_question"), str):
+        out.append(("opening.confirm_question", op["confirm_question"]))
+    for i, q in enumerate(idn.get("questions") or []):
+        if isinstance(q, dict) and isinstance(q.get("ask"), str):
+            out.append(("identity.questions[%d].ask" % i, q["ask"]))
+    for k, v in sorted((idn.get("non_counting_hints") or {}).items()):
+        if isinstance(v, str):
+            out.append(("identity.non_counting_hints.%s" % k, v))
+    if isinstance(idn.get("decline_explanation"), str):
+        out.append(("identity.decline_explanation", idn["decline_explanation"]))
+    fixed = (spec.get("third_party") or {}).get("fixed_sentences") or {}
+    for k, v in sorted(fixed.items()):
+        if isinstance(v, str):
+            out.append(("third_party.fixed_sentences.%s" % k, v))
+    return out
+
+
+def reconcile_banned(spec):
+    """Drop banned_before_verify terms that a required pre-verification sentence itself contains
+    (case-insensitive, word boundary, also without a leading "the"). Returns (spec, removals); the input is
+    never mutated and is returned as is when nothing changes. removals: [{"term", "found_in", "sentence"}]."""
+    op = spec.get("opening") if isinstance(spec, dict) else None
+    banned = op.get("banned_before_verify") if isinstance(op, dict) else None
+    if not isinstance(banned, list) or not banned:
+        return spec, []
+    sentences = required_pre_verify_sentences(spec)
+    keep, removals = [], []
+    for term in banned:
+        bare = re.sub(r"^\s*the\s+", "", term, flags=re.I).strip() if isinstance(term, str) else ""
+        hit = None
+        if bare:
+            rx = re.compile(r"\b%s\b" % re.escape(bare), re.I)
+            hit = next(((w, t) for w, t in sentences if rx.search(t)), None)
+        if hit:
+            removals.append({"term": term, "found_in": hit[0], "sentence": hit[1]})
+        else:
+            keep.append(term)
+    if not removals:
+        return spec, []
+    out = dict(spec)
+    out["opening"] = dict(op, banned_before_verify=keep)
+    return out, removals
+
+
 # ---------------------------------------------------------------- helpers
 
 def _code_of(node):
