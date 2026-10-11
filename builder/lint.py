@@ -50,7 +50,12 @@ _VERBATIM_WORDS = re.compile(r"\bword[ -]for[ -]word\b|\bverbatim\b|\bexact(?:ly
 # would be spoken on every call.
 _OPENING_PLACE = re.compile(r"\bopening\b(?!\s+offers?\b)|\b(?:first|second|third) sentence\b(?!\s+of\s+your\s+(?:answer|reply|response)\b)|"
                             r"\bgreeting\b|\b(?:start|beginning) of (?:the|every|each) call\b", re.I)
-_NEGATION = re.compile(r"\b(?:do not|don't|never|avoid|must not|no longer)\b", re.I)
+_NEGATION = re.compile(r"\b(?:do not|don't|never|avoid|must not|no longer|not|without|instead|rather than|except)\b", re.I)
+# another moment or listener than the opening to the customer (read outside the quote). "after the first sentence"
+# is the placement this matcher exists for (bench strict-wording), so it alone does not count as "after".
+_OTHER_MOMENT = re.compile(r"voicemail|answering machine|message|third[- ]part|someone else|for them|\bafter\b|"
+                           r"\bbefore\b|confirm|verif|identity", re.I)
+_AFTER_FIRST = re.compile(r"\b(?:right |just |directly |immediately )?after the first sentence\b", re.I)
 _CONDITION = re.compile(r"\b(?:if|when|whenever|unless|only|asked|in case|once)\b", re.I)
 _QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”')
 _PLACEHOLDER = re.compile(r"\[|\]|\{\{|\}\}")
@@ -65,7 +70,10 @@ def opening_verbatim_rules(spec):
         text = r.get("text") or ""
         if r.get("stage") != "opening" or _NEGATION.search(text) or _CONDITION.search(text):
             continue
-        if not (_VERBATIM_WORDS.search(text) and _OPENING_PLACE.search(_QUOTED.sub(" ", text))):
+        outside = _QUOTED.sub(" ", text)
+        if _OTHER_MOMENT.search(_AFTER_FIRST.sub(" ", outside)):
+            continue
+        if not (_VERBATIM_WORDS.search(text) and _OPENING_PLACE.search(outside)):
             continue
         quoted = [(m.group(1) or m.group(2)).strip() for m in _QUOTED.finditer(text)]
         quoted = [x for x in quoted if len(x.split()) >= 3]

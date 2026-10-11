@@ -83,6 +83,15 @@ def test_rule_shapes_detected():
         ("opening", 'In the opening, say word for word: "Hello [name], this is your bank."'),
         ("opening", 'In the opening, say word for word: "Hello {{first_name}}, this is your bank."'),
         ("opening", 'Say exactly "We value your call." as the opening offer.'),
+        # review round 2: other negations, and other moments or listeners than the opening to the customer
+        ("opening", 'For voicemail, the first sentence must be exactly "This is Freya Bank, please call us back."'),
+        ("opening", 'Voicemail message, word for word, as the greeting: "This is Freya Bank, please call us back."'),
+        ("opening", 'Third parties: the opening sentence for them is exactly "I will try again another time."'),
+        ("opening", 'After the customer confirms identity, say this second sentence word for word: "Thanks for confirming who you are."'),
+        ("opening", 'The greeting must be in exactly two sentences, not "Hello there my friend how are you".'),
+        ("opening", 'Before the greeting, say exactly "Please hold for a moment."'),
+        ("opening", 'In the opening, say word for word "Calls are reviewed by our team." instead of the recording notice.'),
+        ("opening", 'Right after the first sentence, once the person answers, say word for word: "One two three four."'),
         ("opening", 'Right after the first sentence, mention the privacy notice.'),
         ("identity", 'After both questions pass, say this sentence word for word, before anything about the account: "One two three four."'),
     ]
