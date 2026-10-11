@@ -79,6 +79,13 @@ LEAD_IN = {
     "callback": "Thank you, we will call back then.",
     "wrong_number": "I apologise for the inconvenience.",
 }
+# A17: verify_identity failing (an HTTP error skips the post-hook, so no what_to_do_next reaches the model)
+ID_FAIL_CLOSE = "close_identity_service_error"
+TECH_AT = "        elif technical:\n"
+TECH_COUNT = "            vars['id_tech_n'] = str(int(str(vars.get('id_tech_n') or '0')) + 1)\n"
+ID_TOOL_FAIL = ('If a verify_identity call fails (an error such as "API request failed" instead of a result): nothing was checked and it is '
+                'NOT a wrong answer. Call verify_identity again at once with the same field and answer, before you speak and without '
+                'asking the customer again. If it fails a second time, the call ends automatically: do not say goodbye yourself.')
 NUM = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
 ORD = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
 CB_DAY_WORDS = {"today": "today", "next_business_day": "the next business day", "next_day": "tomorrow",
@@ -1179,6 +1186,9 @@ class _Compiler:
         # A15: events a band fires by itself as get_account returns (bands[].event): never listened for in speech
         self.account_events = list(dict.fromkeys(b["event"] for b in spec["bands"] if b.get("event") in self.events))
         self.fail_ev = spec["confirmation"].get("failure_event") or ""
+        # A17: the service-failure event also covers identity (verify_identity failing twice): the engine routes it
+        # from the tool's own failure count, never from the customer's words
+        self.id_fail = "identity" in stages_of(self.events.get(self.fail_ev) or {})
         self.nodes = {}
         self.transfers = {}   # (queue, close) -> node key
         self.latched = set()  # close/wrap nodes that redirect to a support event's else-close once its offer was made
@@ -1317,7 +1327,7 @@ class _Compiler:
 
     def stage_events(self, stage):
         skip = set(STRUCTURAL.get(stage, set()))
-        if stage == "negotiate":
+        if stage == "negotiate" or (stage == "identity" and self.id_fail):
             skip.add(self.fail_ev)
         skip |= set(self.account_events)
         return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip
@@ -1818,6 +1828,8 @@ class _Compiler:
             "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time."
             % q(idn["decline_explanation"]),
         ]
+        if self.id_fail:
+            lines.append(ID_TOOL_FAIL)
         lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
         lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
         lines.append(bullet_block("Rules from the brief:", self.extra("identity")))
@@ -1979,7 +1991,7 @@ HOW TO GET A PROMISE
         not_yet = "Do not mention %s yet." % (join_or(self.s["opening"].get("banned_before_verify", []), "or") or "why you are calling")
         post = ("import json\n" + _const("HINTS", idn.get("non_counting_hints") or {}) + "UNREADABLE = %r\nNEXT_Q = %r\nNOT_YET = %r\n"
                 % (unreadable, next_q, not_yet) + "MAX_WRONG = %d\nSCOPE = %r\n" % (idn["max_wrong"], idn.get("wrong_scope", "total"))
-                + VERIFY_POST)
+                + (VERIFY_POST.replace(TECH_AT, TECH_AT + TECH_COUNT) if self.id_fail else VERIFY_POST))
         pre = "import json\n" + _const("FORMATS", {x["field"]: {k: v for k, v in x.items() if k in ("format", "length", "date_order")} for x in qs}) + VERIFY_PRE
         answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
@@ -2027,7 +2039,9 @@ HOW TO GET A PROMISE
             "transitions": [
                 go("load_account", "All answers verified", is_true("id_all", *self.resp_vars("verify_identity", "all_verified"))),
                 go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), *[eq(x, "0") for x in self.resp_vars("verify_identity", "wrong_answers_left")])),
-            ] + trans,
+            ] + ([go(ID_FAIL_CLOSE, "verify_identity failed again after one retry", cond_any(
+                {"logic": "and", "conditions": [eq("verify_identity_response.status", "error"), gt("verify_identity_failure_count", "1")]},
+                gt("id_tech_n", "1")))] if self.id_fail else []) + trans,
         }
 
     def account_nodes(self):
@@ -2311,6 +2325,10 @@ HOW TO RUN THE CALL
             n["negotiate"] = self.negotiate_node()
             n["retry_promise"] = self.retry_node()
             self.build_closes()
+        if self.id_fail:
+            # its own node: a several-product call rewrites the event's close to speak the wrap's summary
+            fe = self.events[self.fail_ev]
+            n[ID_FAIL_CLOSE] = close_node(ID_FAIL_CLOSE, *self.fail_close(), self.farewell(fe, "close"))
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
