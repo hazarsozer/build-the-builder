@@ -876,8 +876,8 @@ def test_a11_pre_hook_writes_only_its_own_product_variable():
     s = Sim("PUB-12")
     s.batch(*PUB12_BATCH)
     w2, w1, w3 = s.batch_writes
-    assert set(w1) == {"mp_p1", "mp_seq"} and set(w2) == {"mp_p2", "mp_seq"} and set(w3) == {"mp_p3", "mp_seq"}
-    assert w1["mp_seq"] == w2["mp_seq"] == w3["mp_seq"]
+    assert set(w1) == {"mp_p1", "mp_seq", "mp_clock"} and set(w2) == {"mp_p2", "mp_seq", "mp_clock"} and set(w3) == {"mp_p3", "mp_seq", "mp_clock"}
+    assert w1["mp_seq"] == w2["mp_seq"] == w3["mp_seq"] and w1["mp_clock"] == w2["mp_clock"] == w3["mp_clock"]
     for w in (w1, w2, w3):
         assert "mp_state" not in w and "mp_msg" not in w and "mp_phase" not in w
 
@@ -1099,7 +1099,7 @@ def test_a14_up_front_paid_and_dispute_settle_at_once_in_parallel():
     s.batch({"product_id": "p2", "outcome": "dispute"}, {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-15"},
             {"product_id": "p3", "outcome": "paid"})
     assert [_st(s, p)["status"] for p in ("p1", "p2", "p3")] == ["agreed", "dispute", "paid"]
-    assert sorted(set(k for w in s.batch_writes for k in w)) == ["mp_p1", "mp_p2", "mp_p3", "mp_seq"]
+    assert sorted(set(k for w in s.batch_writes for k in w)) == ["mp_clock", "mp_p1", "mp_p2", "mp_p3", "mp_seq"]
     assert s.v["mp_phase"] == "readback"
 
 
@@ -1124,3 +1124,16 @@ def test_a14_hooks_read_the_negotiate_turn_counter_and_the_prompt_says_so():
     assert ("Only the product the last result (or step 1) told you to offer counts; report a no about another product too: "
             "it uses no attempt.") in task
     assert len(task) <= 5500
+
+
+def test_a14_post_hook_uses_the_turn_its_pre_hook_read():
+    """Only a pre-hook was seen reading negotiate.total_turns (probe 4c48412b): the post-hook's "offer named at" clock is
+    the pre-hook's copy (mp_clock), so the two never mix a turn number with a batch number."""
+    s = Sim("PUB-12")
+    for _ in range(4):
+        s.next_turn()
+    cfg = {"url": "x", "body": {"product_id": "p1", "outcome": "agreed", "amount": "full", "date": "2026-10-15"}}
+    exec(s.t["pre_process_code"], {"vars": s.v, "config": cfg})
+    s.v.pop("negotiate.total_turns")
+    exec(s.t["post_process_code"], {"vars": s.v, "result": {"status": "success", "data": {"ok": True}}})
+    assert s.v["mp_clock"] == "4" and s.v["mp_o2"] == "4" and _st(s, "p2")["told"] == 4 and s.v["mp_seq"] == "1"

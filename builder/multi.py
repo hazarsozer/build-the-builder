@@ -421,6 +421,8 @@ try:
     # parallel set_product calls each read the same snapshot of vars and their writes merge per variable (A11 probe):
     # a call writes only its own products' mp_p<num> and the shared counter, never a shared JSON
     vars['mp_seq'] = str(_seq)
+    # the clock as the pre-hook read it; the post-hook uses this copy (probe 4c48412b read the turn in a pre-hook only)
+    vars['mp_clock'] = str(_clock(vars))
     b = ARGS()
     if not isinstance(b, dict):
         b = dict()
@@ -502,7 +504,11 @@ try:
         st.pop('_offer', None)
     if st.get('_offer'):
         # the clock at which the code named this product's offer: a refusal of it counts from the next turn on (A14)
-        vars['mp_o' + str(st['p'][st['_offer']]['num'])] = str(_clock(vars))
+        try:
+            clk = int(str(vars.get('mp_clock')).strip())
+        except Exception:
+            clk = _clock(vars)
+        vars['mp_o' + str(st['p'][st['_offer']]['num'])] = str(clk)
     open_ = [st['p'][q]['words'] for q in st['order'] if st['p'][q]['status'] == 'pending']
     if phase == 'open':
         names = (', the '.join(open_[:-1]) + ' and the ' + open_[-1]) if len(open_) > 1 else open_[0]
