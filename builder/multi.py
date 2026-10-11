@@ -111,7 +111,7 @@ except Exception as e:
 # has spoken since that instruction. "told" is the clock (the customer's turn number in negotiate, NODE.total_turns,
 # readable in hooks: chat-API probe 4c48412b) at which the product's current attempt was named; "no" remembers a
 # customer's no given before any offer for the product, so its first offer is made with an acknowledgement.
-DYN = ("status", "amount", "date", "capped", "extra", "asked", "told", "no", "tried", "ack", "seq", "own")
+DYN = ("status", "amount", "date", "capped", "extra", "asked", "told", "no", "lc", "tried", "ack", "seq", "own")
 NODE = "negotiate"   # the node whose turn counter is the clock (the multi negotiate node's name)
 
 LOAD = r'''
@@ -257,7 +257,10 @@ def _told(st, q):
     return None if t is None else int(t)
 
 
-def _next(st, cur=None):
+def _next(st, cur=None, clock=None, again=False):
+    """The next step. A product whose current attempt was named in an earlier turn is not named again (its offer was
+    made; the customer's answer to it is still to come): "continue, do not repeat it", unless again (a review).
+    mp_o<num> (st['_offer']) is written only when a product is named for the first time (A14 fix round 1)."""
     pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
     if cur is not None and cur in pend:
         return 'open', ''
@@ -266,8 +269,13 @@ def _next(st, cur=None):
         if not P['att']:
             return 'open', ('Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). Its plan has no offers: make no offer for it and call ' +
                             TOOL + ' with outcome refused for it now.')
-        st['_offer'] = pend[0]
+        t = _told(st, pend[0])
         k = min(int(P.get('tried') or 0), len(P['att']) - 1)
+        if t is None:
+            st['_offer'] = pend[0]
+        elif clock is not None and t < clock and not again:
+            return 'open', ('Continue with the customer\'s answer to your current offer for the ' + P['words'] + ' (attempt ' + str(k + 1) +
+                            ' of its plan); do not repeat it.')
         head = 'Next is the ' + P['words'] + ' (product_id ' + pend[0] + '). '
         if P.get('no') and not P.get('tried'):
             return 'open', (head + 'The customer already said no to it before any offer; that used no attempt. Acknowledge it once, in the same '
@@ -382,16 +390,20 @@ def _refuse(st, b, clock):
             acks[q] = 'Noted: the plan of the ' + P['words'] + ' has no offers. Make no offer for it.'
             continue
         told = _told(st, q)
-        if P['status'] != 'agreed' and not (q == cur and told is not None and clock > told):
+        # lc: the clock of this product's last counted refusal; never two counts at one clock (one batch, one turn)
+        fresh = told is not None and clock > told and str(P.get('lc')) != str(clock)
+        if P['status'] != 'agreed' and not (q == cur and fresh):
             if q == cur:
-                why = 'no offer for it was made before this answer; a no before an offer uses no attempt.'
+                acks[q] = 'Not counted: no offer for it was made before this answer; a no before an offer uses no attempt.'
             else:
-                why = 'its offer is not made yet; this no uses no attempt.'
-            if not P.get('tried') and not every:
-                P['no'] = True
-            acks[q] = 'Not counted: ' + why
+                # remembered only for a product never offered: its attempt 1 is then made with an acknowledgement. Never for
+                # the product being offered (product 1's no at the today question is a no to paying today)
+                if told is None and not P.get('tried') and not every:
+                    P['no'] = True
+                acks[q] = 'Not counted: that no is for the ' + P['words'] + '; it is not its turn yet and uses no attempt.'
             continue
         P['counted'] = True
+        P['lc'] = clock
         k = int(P.get('tried') or 0) + 1
         P['tried'] = k
         if k < n:
@@ -497,17 +509,17 @@ try:
         review = bool(ax.get('review'))
         if ax.get('msg'):
             acks.append(str(ax['msg']))
-    phase, nxt = _next(st, cur)
+    try:
+        clk = int(str(vars.get('mp_clock')).strip())
+    except Exception:
+        clk = _clock(vars)
+    phase, nxt = _next(st, cur, clk, review)
     if own and not review:
         # a result of this batch already says what to do (attempt k+1, not counted yet, NOT accepted)
         nxt = ''
         st.pop('_offer', None)
     if st.get('_offer'):
         # the clock at which the code named this product's offer: a refusal of it counts from the next turn on (A14)
-        try:
-            clk = int(str(vars.get('mp_clock')).strip())
-        except Exception:
-            clk = _clock(vars)
         vars['mp_o' + str(st['p'][st['_offer']]['num'])] = str(clk)
     open_ = [st['p'][q]['words'] for q in st['order'] if st['p'][q]['status'] == 'pending']
     if phase == 'open':
