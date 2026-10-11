@@ -49,26 +49,40 @@ def safe_opening(sentence, verbatim=False):
     return " ".join(out), need
 
 
-_REC_DET = re.compile(r"\b(a|an|the|your|any|each|every|this|that|these|those|its|their|our)\s+recorded\s+", re.I)
-_REC_HAVE = re.compile(r"\b(have|has|had)\s+(?:already\s+)?recorded\s+", re.I)
-_REC_PASSIVE = re.compile(r"\b(is|are|was|were|been|be|being)\s+(already\s+)?recorded\b", re.I)
-_REC_WORD = re.compile(r"\b([Rr])ecord(s|ed|ing)?\b")
+# Only record* about a promise (or its payment, date, amount) is rephrased; any other use ("our records show", "for the
+# record", "this call is being recorded") keeps its meaning and is left for lint to flag.
+_PROMISE_NOUN = r"(?:promises?|payments?|dates?|amounts?|payment\s+dates?|payment\s+plans?|arrangements?)"
+_DET = r"(?:a|an|the|your|any|each|every|this|that|these|those|its|their|our)"
+# "a recorded promise" -> "a promise"
+_REC_DET = re.compile(r"\b(%s)\s+recorded\s+(?=%s\b)" % (_DET, _PROMISE_NOUN), re.I)
+# "we have recorded your promise" -> "we have taken your promise"; "record the promise" -> "take the promise"
+_REC_VERB = re.compile(r"\b(record(?:s|ed|ing)?)(\s+(?:%s\s+)?%s\b)" % (_DET, _PROMISE_NOUN), re.I)
+_TAKE = {"record": "take", "records": "takes", "recorded": "taken", "recording": "taking"}
+# "the promise is (already) recorded" / "has been recorded" -> "... noted"
+_REC_PASSIVE = re.compile(r"\b(%s\s+(?:is|are|was|were|will\s+be|has\s+been|have\s+been|had\s+been)\s+(?:already\s+)?)recorded\b"
+                          % _PROMISE_NOUN, re.I)
 
 
 def safe_pre_success(text):
-    """Text spoken before a promise can be recorded, without record* words and with the same meaning (the honesty
-    check reads any "record*" before a successful create_promise literally). Returns (text, changed).
-    "A recorded promise cannot ..." -> "A promise cannot ...", "we have recorded your date" -> "we have your date",
-    "is recorded" -> "is noted", any other record* -> note*."""
+    """Text spoken before a promise can be recorded, without record* words about the promise and with the same
+    meaning (the honesty check reads any "record*" before a successful create_promise literally). Returns
+    (text, changed). Only promise phrasings are rewritten: "A recorded promise cannot ..." -> "A promise cannot ...",
+    "we have recorded your promise" -> "we have taken your promise", "the promise is recorded" -> "the promise is
+    noted". Every other record* word is kept (lint flags it)."""
     if not text or not _RECORD.search(text):
         return text or "", False
     t = _REC_DET.sub(lambda m: m.group(1) + " ", text)
-    t = _REC_HAVE.sub(lambda m: m.group(1) + " ", t)
-    t = _REC_PASSIVE.sub(lambda m: m.group(1) + " " + (m.group(2) or "") + "noted", t)
-    t = _REC_WORD.sub(lambda m: ("N" if m.group(1) == "R" else "n") + "ote" + {"s": "s", "ed": "d", "ing": "ing"}.get(m.group(2) or "", ""), t)
-    # "noteing" -> "noting"
-    t = re.sub(r"\b([Nn])oteing\b", r"\1oting", t)
-    return re.sub(r"[ \t]{2,}", " ", t), t != text
+
+    def verb(m):
+        w = m.group(1)
+        before = re.findall(r"(\w+)\s*$", t[:m.start()])
+        if before and re.fullmatch(_DET, before[0], re.I):  # a noun ("our records ..."), not the verb
+            return m.group(0)
+        out = _TAKE[w.lower()]
+        return (out[0].upper() + out[1:] if w[0].isupper() else out) + m.group(2)
+    t = _REC_VERB.sub(verb, t)
+    t = _REC_PASSIVE.sub(lambda m: m.group(1) + "noted", t)
+    return t, t != text
 
 
 def never_say_words(spec):

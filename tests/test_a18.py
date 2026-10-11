@@ -319,10 +319,20 @@ def test_safe_pre_success_rephrases_record_words():
     from builder.lint import safe_pre_success as f
     assert f("A recorded promise cannot be changed in this call; you can change it in the mobile app.") == (
         "A promise cannot be changed in this call; you can change it in the mobile app.", True)
-    assert f("We have recorded your date.")[0] == "We have your date."
+    assert f("We have recorded your promise.")[0] == "We have taken your promise."
+    assert f("Record the payment date now.")[0] == "Take the payment date now."
     assert f("Your promise is already recorded.")[0] == "Your promise is already noted."
-    assert f("We record every call.")[0] == "We note every call."
+    assert f("The payment date has been recorded.")[0] == "The payment date has been noted."
     assert f("You can change it in the mobile app.") == ("You can change it in the mobile app.", False)
+
+
+def test_safe_pre_success_keeps_every_other_record_word():
+    """Fix round 2: nouns and non-promise uses keep their meaning; lint flags them instead."""
+    from builder.lint import safe_pre_success as f
+    for t in ("Our records show a balance.", "Our records show payments.", "For the record, I am a digital assistant.",
+              "The payment record is old.", "This call is being recorded.", "We record every call.", "A recorded line.",
+              "Your records are up to date."):
+        assert f(t) == (t, False), t
 
 
 def test_change_note_before_success_is_rephrased_and_lints_clean():
