@@ -206,6 +206,16 @@
       "$ref": "#/$defs/str",
       "description": "What the agent says it is, e.g. when asked whether it is a robot."
     },
+    "language": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "description": "Optional. The language of the brief documents, which the phone agent speaks with the customer.",
+      "properties": {
+        "code": {"type": "string", "description": "ISO 639-1 code, e.g. en, tr."},
+        "name": {"type": "string", "description": "English name of the language, e.g. Turkish."}
+      }
+    },
     "address_as": {
       "$ref": "#/$defs/str",
       "description": "How to address the customer, as a template over call_variables, e.g. \"{<honorific_var>} {<surname_var>}\"."
