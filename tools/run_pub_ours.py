@@ -53,11 +53,14 @@ def main():
                 why = "; ".join(r["failed"])
                 warn = ("  [warn: " + "; ".join(r["warnings"]) + "]") if r["warnings"] else ""
                 print(f"{'PASS' if r['pass'] else 'FAIL'} {r['id']} {r['title']}" + (f" -- {why}" if why else "") + warn, flush=True)
+            for r in res.get("void") or []:
+                print(f"VOID {r['id']} (platform retried the run)", flush=True)
     finally:
         if proc: tunnel.stop(proc)
         srv.shutdown()
     passed, total = sum(r["passed"] for r in runs), sum(r["total"] for r in runs)
-    print(f"TOTAL {passed}/{total} (brief {a.brief}, style {a.style}, reps {a.reps})")
+    nv = sum(len(r.get("void") or []) for r in runs)
+    print(f"TOTAL {passed}/{total} (brief {a.brief}, style {a.style}, reps {a.reps})" + (f", {nv} void runs not counted (platform retried them)" if nv else ""))
     out = HERE / "results" / f"pub-ours-{a.brief}-{a.style or 'none'}.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps({"brief": a.brief, "style": a.style, "reps": a.reps, "spec": a.spec, "slot": slot, "agent_id": agent,
