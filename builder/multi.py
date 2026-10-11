@@ -913,21 +913,42 @@ class Multi:
         return values, desc, trans
 
     def after_record(self, nodes):
-        """A transfer request after promises were recorded (recorded promises stay, the call is transferred, no notes):
-        the recorded sentence is spoken in a conversation step that asks whether there is anything else, before any
-        note is written. Without it the recorded sentence and the goodbye were one engine turn, so a request made after
-        the promise was recorded could never be heard. Only built when negotiate has a transfer event."""
+        """Requests after promises were recorded: the recorded sentence is spoken in a conversation step that asks
+        whether there is anything else, before any note is written (before, the recorded sentence and the goodbye were
+        one engine turn, so a request made after "recorded" was never heard; bench MRW-03). Routed as in negotiate,
+        with the recorded promises kept and no notes on a transfer: a transfer event transfers; a request for a human
+        gets its ask-once step; a support event gets its own offer step, whose yes transfers and whose every other
+        reply ends like "nothing else". "nothing else" / goodbye or the turn cap: notes, then the close as before.
+        Only built when negotiate has a transfer, ask-once or support event."""
         c = self.c
-        evs = [e for e in c.stage_events("negotiate") if e["action"] == "transfer"]
-        if not evs:
-            return
+        stage = "after_record"
         values, desc, trans = [], [], []
-        for ev in evs:
-            values.append(ev["id"])
+        for ev in c.stage_events("negotiate"):
+            eid, act = ev["id"], ev["action"]
             trig = ev["trigger"].rstrip(". ")
-            desc.append("%s: %s." % (ev["id"], trig if trig.lower().startswith("the customer ") else "the customer " + trig))
-            t = c.transfer_to(ev["queue"], c.close_key(ev["id"]), ev["id"])
-            trans.append(go(t, "After recording: " + ev["id"], cond_any(eq("ar_answer", ev["id"]))))
+            trig = trig if trig.lower().startswith("the customer ") else "the customer " + trig
+            if act == "transfer":
+                values.append(eid)
+                desc.append("%s: %s." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
+                trans.append(go(t, "After recording: " + eid, cond_any(eq("ar_answer", eid))))
+            elif act == "insist_once_then_transfer":
+                values += [eid + "_first_request", eid + "_insists"]
+                desc.append("%s_first_request: %s (the first time)." % (eid, trig))
+                desc.append("%s_insists: the agent already asked whether it can help first and %s again." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
+                trans.append(go(t, "After recording, insists: " + eid,
+                                all_of(eq("ar_answer", eid + "_insists"), eq(eid + "_asked", "yes"))))
+                trans.append(go(c.ask_once_nodes(stage, ev, t), "After recording, first request: " + eid,
+                                cond_any(eq("ar_answer", eid + "_first_request"), eq("ar_answer", eid + "_insists"))))
+            elif act == "offer_transfer_else_close":
+                values.append(eid)
+                desc.append("%s: %s." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
+                trans.append(go(c.support_nodes(ev, t, after="after_record_done"), "After recording, support offer: " + eid,
+                                cond_any(eq("ar_answer", eid))))
+        if not values:
+            return
         wrap = nodes["wrap_recorded"]
         wrap["transitions"].insert(0, go("after_record", "Promises recorded: ask whether there is anything else",
                                          cond_any(eq("mp_recorded", "yes"))))
@@ -939,21 +960,21 @@ class Multi:
         nodes["after_record"] = {
             "name": "after_record", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": "{{mp_said}} Is there anything else I can help you with?"},
+            # an ask-once step that returns here does not repeat the recorded sentence
+            "on_enter_first_entry_only": True,
             "task_message": ("You just told the customer which promises are recorded and asked whether there is anything else. "
                              "The negotiation is over: never propose an amount, a date or a plan. "
                              + ("If they ask to change or cancel a recorded promise, say: \"%s\" " % change if change else "")
-                             + "If they ask a question, answer it in one sentence, then ask whether there is anything else. "
-                               "No tool call is allowed in this step."),
+                             + "If they ask a question or say anything else, answer it in one sentence, then ask whether there "
+                               "is anything else. No tool call is allowed in this step."),
             "extraction_schema": [{
                 "name": "ar_answer", "type": "string", "min_confidence": 0.6,
-                "enum_values": ["pending", "nothing"] + values + ["question", "other"],
+                "enum_values": ["pending", "nothing"] + values + ["other"],
                 "description": " ".join(["The customer's LATEST message, a reply to \"Is there anything else I can help you with?\"."]
-                                        + desc + ["question: they only ask a question.",
-                                                  "nothing: no, nothing else, thanks, goodbye.",
-                                                  "other: anything else.", "pending: no reply yet."])}],
+                                        + desc + ["nothing: no, nothing else, thanks, or goodbye.",
+                                                  "other: anything else (a question, a comment).", "pending: no reply yet."])}],
             "max_node_turns": 3, "max_turn_transition": "after_record_done",
-            "transitions": trans + [go("after_record_done", "Nothing else",
-                                       cond_any(eq("ar_answer", "nothing"), eq("ar_answer", "other")))]}
+            "transitions": trans + [go("after_record_done", "Nothing else", cond_any(eq("ar_answer", "nothing")))]}
 
     def build(self, nodes):
         c = self.c
