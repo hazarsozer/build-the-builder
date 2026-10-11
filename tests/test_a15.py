@@ -167,3 +167,49 @@ def test_total_scope_counts_across_questions():
     assert d["wrong_answers_left"] == 1
     d = _answer(t, v, "postcode", "LS6 3QT", dict(WRONG, wrong_answers_left=9))
     assert d["wrong_answers_left"] == 0 and "check has ended" in d["what_to_do_next"]
+
+
+# ---------------------------------------------------------------- 3. a ladder date that is the n-th business day
+
+def _ins_nth():
+    s = copy.deepcopy(INS)
+    s["bands"][1]["attempts"][1] = {"amount": "floor", "date": "nth_business_day", "n": 5}
+    s["examples"].append({"kind": "attempt", "today": "2026-10-21", "days_late": 33, "attempt_index": 2,
+                          "expect": "2026-10-28", "source": "IN-03: attempt 2 on the 5th business day"})
+    return s
+
+
+def test_attempt_date_nth_business_day():
+    import datetime as dt
+    from builder.lib import dates
+    cal = INS["calendar"]
+    t = dt.date(2026, 10, 21)
+    dl = dates.deadline(t, {"rule": "nth_business_day", "n": 10}, cal)
+    assert dl == dt.date(2026, 11, 4)
+    assert dates.attempt_date(t, {"amount": "floor", "date": "nth_business_day", "n": 5}, dl, cal) == dt.date(2026, 10, 28)
+    # capped at the deadline
+    assert dates.attempt_date(t, {"amount": "floor", "date": "nth_business_day", "n": 30}, dl, cal) == dl
+    # a plain kind still works
+    assert dates.attempt_date(t, "deadline", dl, cal) == dl
+
+
+def test_nth_business_day_spec_validates_and_needs_n():
+    from builder.validate import validate
+    s = _ins_nth()
+    assert validate(s, INS_OA) == []
+    bad = copy.deepcopy(s)
+    del bad["bands"][1]["attempts"][1]["n"]
+    assert validate(bad, INS_OA) != []
+
+
+def test_in03_attempt_2_offers_the_5th_business_day():
+    """IN-03: Wed 21 Oct, lapse-risk (33 days): attempt 2 is 137 on Wed 28 Oct, not the deadline 4 Nov."""
+    s = _ins_nth()
+    w = C(s, INS_OA, base_url="https://bank.example/v1")
+    prods = [_ins_product("p1", "life_insurance", 33, 410, 137)]
+    v = {"now": "2026-10-21T10:00", "acct_products_json": json.dumps(prods)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    st = json.loads(v["mp_state"])
+    assert "2026-10-28" in json.dumps(st["p"]["p1"]) and "Wednesday 28 October 2026" in json.dumps(st["p"]["p1"]), st["p"]["p1"]
+    assert [p for p in lint(w, s) if not p.startswith("warning:")] == []

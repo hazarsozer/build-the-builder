@@ -308,7 +308,7 @@ def s_floor_after_too_much(c, **o):
     b = _band(c.spec, _late(c.spec, p))
     if not b["attempts"]: return None
     floor = _floor(c.spec, p)
-    d = D.attempt_date(c.today, b["attempts"][0]["date"], c.deadline(p), c.cal)
+    d = D.attempt_date(c.today, b["attempts"][0], c.deadline(p), c.cal)
     n = c.spec["negotiation"]
     checks = [f"the lowest amount ({_money(floor)}) is offered once" + (f', with "{n["floor_offer"]["sentence_suffix"]}"' if n["floor_offer"].get("sentence_suffix") else ""),
               f"promise for {_money(floor)} on {_day(d)}"]

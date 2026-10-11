@@ -66,8 +66,10 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `bands[].deadline.weeks` (optional): integer, min 0. Weeks to add, for fixed_weekday_after_n_weeks.
 - `bands[].deadline.snap` (optional): one of `back`, `forward`, `null`. If the computed day is not a business day: back = previous business day, forward = next business day, null/absent = keep it.
 - `bands[].attempts` (required): list of object. Persuasion attempts in order; their count is the number of attempts allowed.
+  - each item: when `date` is nth_business_day, also required: `n`
 - `bands[].attempts[].amount` (required): one of `current`, `full`, `floor`. current: the full past-due amount, or the floor if the customer already said the full amount is too much. full: always the full past-due amount. floor: the floor amount (products[type].floor_field).
-- `bands[].attempts[].date` (required): one of `today`, `last_business_day_of_week`, `deadline`, `next_business_day`. today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. Always capped at the deadline.
+- `bands[].attempts[].date` (required): one of `today`, `last_business_day_of_week`, `deadline`, `next_business_day`, `nth_business_day`. today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. nth_business_day: the n-th business day after today (set n), e.g. 'the 5th business day after today' when that is not the band deadline. Always capped at the deadline.
+- `bands[].attempts[].n` (optional): integer, min 0. Count for date nth_business_day.
 - `negotiation` (required): object. Stating the debt and getting a promise.
 - `negotiation.debt_statement` (required): string. The debt statement for one product, said after verification.
 - `negotiation.first_ask` (required): string. The first ask for payment, said word for word.

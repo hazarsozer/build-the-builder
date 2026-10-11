@@ -279,7 +279,7 @@ def product_facts(p):
     attempts = []
     prev = None
     for i, a in enumerate(band['attempts']):
-        d = attempt_date(today, a['date'], dl, CAL)
+        d = attempt_date(today, a, dl, CAL)
         when = ('on the deadline, ' + speak(d)) if a['date'] == 'deadline' else ('on ' + speak(d))
         if prev is not None and a['amount'] == prev:
             txt = 'propose only the new date ' + when + ' for that same amount, without saying the figure again.'

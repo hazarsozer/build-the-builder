@@ -171,10 +171,28 @@
             "today",
             "last_business_day_of_week",
             "deadline",
-            "next_business_day"
+            "next_business_day",
+            "nth_business_day"
           ],
-          "description": "today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. Always capped at the deadline."
+          "description": "today. last_business_day_of_week: the last business day of this week, or of next week if today is that day. deadline: the band deadline. next_business_day: the business day after today. nth_business_day: the n-th business day after today (set n), e.g. 'the 5th business day after today' when that is not the band deadline. Always capped at the deadline."
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count for date nth_business_day."
         }
+      },
+      "if": {
+        "properties": {
+          "date": {
+            "const": "nth_business_day"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "n"
+        ]
       },
       "description": "One persuasion attempt: which amount, on which date."
     }

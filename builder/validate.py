@@ -305,7 +305,7 @@ def _example_errors(spec):
                     errs.append("%s: band %s has only %d attempt(s), no attempt %d"
                                 % (tag, band["name"], len(band["attempts"]), k))
                     continue
-                got = dates.attempt_date(today, band["attempts"][k - 1]["date"], dl, cal)
+                got = dates.attempt_date(today, band["attempts"][k - 1], dl, cal)
         except Exception as exc:  # bad rule or date
             errs.append("%s: could not compute: %s" % (tag, exc))
             continue

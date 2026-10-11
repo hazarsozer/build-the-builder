@@ -134,6 +134,11 @@ def deadline(today, rule, cal):
 
 
 def attempt_date(today, kind, deadline_d, cal):
+    """kind: an attempt's date enum, or the attempt itself (a bands[].attempts[] entry; nth_business_day reads its n)."""
+    n = None
+    if isinstance(kind, dict):
+        n = kind.get("n")
+        kind = kind.get("date")
     if kind == "today":
         d = today
     elif kind == "last_business_day_of_week":
@@ -144,6 +149,10 @@ def attempt_date(today, kind, deadline_d, cal):
         d = deadline_d
     elif kind == "next_business_day":
         d = next_bd(today, cal)
+    elif kind == "nth_business_day":
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("attempt date nth_business_day needs a whole number n, got " + str(n))
+        d = nth_bd(today, n, cal)
     else:
         raise ValueError("unknown attempt kind: " + str(kind))
     if d > deadline_d:
@@ -214,7 +223,7 @@ def plan_products(products, today, bands, cal, product_cfg=None):
             floor = full
         band = band_for(days_of(p, cfg), bands)
         dl = deadline(today, band['deadline'], cal)
-        attempts = [(a['amount'], attempt_date(today, a['date'], dl, cal)) for a in band['attempts']]
+        attempts = [(a['amount'], attempt_date(today, a, dl, cal)) for a in band['attempts']]
         out.append(dict(product_id=str(p.get('product_id') or ('p' + str(i + 1))), band=band['name'],
                         deadline=dl, floor=floor, full=full, attempts=attempts))
     return out
