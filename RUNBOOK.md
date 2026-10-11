@@ -16,20 +16,34 @@ The rules that bind this run (kit README, "The final" and "Rules"):
 
 ## 20:00: briefs arrive
 
-Put each brief, with its own API file, in its own folder: `final/<name>/brief*.md` plus `final/<name>/openapi.json`. A raw-material brief means every file in the folder.
+The organisers' run command (submission page) is `python3 builder/build.py {case_folder} {mock_url}`. In the final the
+phone agent calls only our own mock, so the exported workflow's tools must point at our mock, not at the API file's
+`servers[0]`. `builder/build.py` does that.
 
-For each brief, run:
+Put each case in its own folder: `final/<name>/brief*.md` plus its API file (`openapi.json`, or the only `.json` with
+`openapi` and `paths`). A raw-material brief means every file in the folder.
+
+For each case, from the repo root, run:
 
 ```
-uv run python -m builder.main final/<name>/ --slot final-<name> --openapi final/<name>/openapi.json \
-    > results/final-<name>.log 2>&1
+python3 builder/build.py final/<name>/ https://<our-mock>.<our-subdomain>.workers.dev > results/final-<name>.log 2>&1
 ```
 
-- **Always pass `--openapi`.** The builder fails loudly when it finds no API file, or more than one, next to the briefs. It never falls back to the kit's own file.
-- **Always pass `--slot`.** The default slot name contains a path hash, which is unreadable in the dashboard and in the submission.
-- When Brief B builds on Brief A, pass both: `final/a/ final/b/`, the way `briefs/brief-a.md briefs/brief-b.md` was passed for the practice briefs.
-- Run the briefs one after the other. Each run uses the one simulation slot for its self-test.
-- Exit 0 means exported, 1 means a spec existed but the final step failed, and 2 means there was no spec (or no API file). On 1 or 2, read the `.md` trace, fix only a crash, and re-run.
+- It finds the API file in the folder (none or several: exit 2, nothing built), names the slot `final-<name>`, and runs
+  the normal builder flow: `builder.main final/<name>/ --openapi <found> --slot final-<name> --mock-url <mock_url>`.
+- **Mock URL joining.** Tools are called at `<mock_url>/v1/<tool>`: the path of the API file's `servers[0]` (`/v1`) is
+  appended unless the mock URL already ends with it. `https://m.workers.dev` and `https://m.workers.dev/v1` give the same
+  result. The mock URL must be `https`, never a trycloudflare tunnel, with no query or fragment (exit 2 otherwise).
+- The self-test is unchanged: it still runs against our local bank through the tunnel. Only the final, exported
+  workflow uses the mock URL. The trace records it (`start.mock_url`, and `saved` with `url_kind: "mock"` and `base_url`).
+- Plain `python3` works: when the dependencies are missing, `build.py` re-execs itself with `.venv/bin/python`, else
+  with `uv run --project <repo> python`. The env must already be sourced (`set -a; source env.sh; set +a`).
+- When Brief B builds on Brief A, `build.py` takes one folder only: use `builder.main` directly with both folders,
+  `--openapi`, `--slot final-<name>` and `--mock-url <mock_url>`.
+- Run the cases one after the other. Each run uses the one simulation slot for its self-test.
+- Exit 0 means exported, 1 means a spec existed but the final step failed, and 2 means there was no spec, no API file
+  or a bad argument. On 1 or 2, read the `.md` trace, fix only a crash, and re-run.
+- `submission.example.json` is the shape of `submission.json` (placeholders only).
 
 ## After each build
 
@@ -49,7 +63,7 @@ uv run python -m builder.main final/<name>/ --slot final-<name> --openapi final/
    python3 -c 'import os,sys,pathlib as P; v=[x for k,x in os.environ.items() if (k.startswith("FREYA_") or k.endswith(("_KEY","_TOKEN","_SECRET","_PASSWORD"))) and len(x)>=8]; v or sys.exit("no secret variables set: source env.sh first"); [print(f) for d in ("traces","submission") for f in sorted(P.Path(d).rglob("*")) if f.is_file() and any(x in f.read_text(errors="ignore") for x in v)]'
    ```
    Any file name printed is a leak. Do not submit that file; tell Hazar. Do not open the file in the terminal.
-4. Check that the exported JSON has no tunnel URL and does carry the `servers[0]` host of that brief's API file. The builder asserts this, so this step is only a manual double check.
+4. Check that the exported JSON has no tunnel URL, carries our mock host, and no longer carries the `servers[0]` host of that brief's API file. The builder asserts this, so this step is only a manual double check.
 
 ## Submission (by 23:00, earlier is better: it is the third tie-break)
 
