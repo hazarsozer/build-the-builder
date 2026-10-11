@@ -99,3 +99,19 @@ Test runs (from the worktree root):
 - `uv run pytest -q` → `562 passed, 6 skipped in 19.34s`
 
 New concern: when the model really did make the first offer for a product but no result had named it (for example the first product right after the today question), the first refused call returns Not-yet and the model must call refused again. That costs one extra tool call, and there is a small risk the model repeats the offer instead of re-reporting. The Not-yet text says to call again if the customer just refused exactly that offer.
+
+---
+
+# Fix round 2 (re-review: items 1-5 ADDRESSED, one new Important)
+
+Commit e8eeacd plus this report section. The ruling was text only, so there is no state change.
+
+- **Change** (multi.py:296-299): the answer to a `refused` with no noted offer used to begin "Not yet: make the offer first ... make it now: <attempt 1 text with amount and date>". It is now:
+  `Not counted yet. If you already made attempt 1 for the <product words> and the customer refused it, call set_product with outcome refused for it again now, before you speak. If you have not made it yet (a no to the today question is not a refusal), make attempt 1 of its plan.`
+  The common case comes first, and the message carries no amount, date or offer wording. State handling is unchanged: the product is marked `offered`, `tried` is not incremented, and the product stays pending.
+- **Tests:** test_multi.py `test_fix1_refusal_before_any_offer_is_not_counted` asserts the exact opening, "before you speak", and "make attempt 1 of its plan". It also asserts there is no number other than "attempt 1" (so no 140, no 2026), no weekday or month names, and no "propose", "lower amount" or "full amount". `test_a9_attempts_counted_in_code_per_refusal` and the `Sim.refuse` helper now key on "Not counted yet.".
+- **Compiled prompts:** unchanged. This text is runtime state-machine output only.
+- **Runs:**
+  - `uv run pytest -q tests/test_multi.py` → `63 passed, 1 skipped in 0.50s`
+  - `uv run pytest -q` → `562 passed, 6 skipped in 19.34s`
+  - Lint is clean for spec-a and spec-b.
