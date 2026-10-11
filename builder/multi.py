@@ -830,6 +830,9 @@ class Multi:
         props.update(xprops)
         desc = ("Report a product's answer. CALL it after EVERY refusal of an offer (refused, before you speak), and when a product "
                 "is agreed or settled (agreed, " + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
+        # one neutral sentence for a reviewer: the api mode goes through the read-only get_account route
+        desc += (" The answer is kept in the call; the call only reads the account and changes no bank record." if mode == "api"
+                 else " The answer is kept in the call and changes no bank record.")
         if mode == "api":
             # api_call body leaves are model-filled only through a {{var}} default naming a variable that is never set
             # (docs/tools-and-code.md "One key decides"); a leaf without default never reached the request (regate-a9-B)

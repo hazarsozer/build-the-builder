@@ -2155,7 +2155,7 @@ HOW TO GET A PROMISE
                               "description": "yes if you have already offered {{floor_text}} in an earlier message"},
         }, ["said", "attempt", "floor_offered"], path="get_account",
             description=("Check a payment day the customer names. CALL it before you answer any day they name (any form, also in pieces "
-                         "or words); say what what_to_do_next says. It records nothing."),
+                         "or words); say what what_to_do_next says. It records nothing: it only reads the account and changes no bank record."),
             pre=self.date_rules() + CHECK_PRE, post="TOOL = %r\n" % CHECK_TOOL + CHECK_POST)
 
     def verified_lead(self):

@@ -174,3 +174,28 @@ def test_labels_are_presentation_only(compiled):
     for nd in wf["nodes"].values():
         for t in nd.get("transitions") or []:
             assert set(t) <= {"target_node", "description", "condition", "is_tool_call"}
+
+
+# ---------------------------------------------------------------- 6. read-only tools say so
+
+def _tool(wf, name):
+    return next(t for t in wf["nodes"]["negotiate"].get("tools") or [] if t["function"]["name"] == name)
+
+
+def test_read_only_tools_say_they_change_no_record():
+    single = C(SPECS["a"], OA, base_url="https://bank.example/v1")
+    d = _tool(single, "check_date")
+    assert d["function"]["parameters"]["properties"]["url"]["default"].endswith("/get_account")
+    assert "changes no bank record" in d["function"]["description"]
+    multi = C(SPECS["dress-B"], OA, base_url="https://bank.example/v1")
+    sp = _tool(multi, "set_product")
+    assert sp["function"]["parameters"]["properties"]["url"]["default"].endswith("/get_account")
+    assert sp["function"]["description"].endswith("the call only reads the account and changes no bank record.")
+
+
+def test_set_product_code_mode_says_no_record():
+    import builder.compile as comp
+    c = comp._Compiler(SPECS["dress-B"], OA, "https://bank.example/v1")
+    c.build()
+    t = c.multi.set_tool(mode="code")
+    assert t["function"]["description"].endswith("The answer is kept in the call and changes no bank record.")
