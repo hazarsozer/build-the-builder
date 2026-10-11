@@ -174,7 +174,7 @@ class Sim:
         msg = None
         for _ in range(n):
             msg = self.say(product_id=pid, outcome="refused")
-            if msg.startswith("Not yet: make the offer first"):  # no offer noted yet: the offer is made, then refused
+            if msg.startswith("Not counted yet."):  # no offer noted yet: the offer is made, then refused
                 msg = self.say(product_id=pid, outcome="refused")
             if "last attempt" in msg:
                 break
@@ -530,7 +530,7 @@ def test_a9_attempts_counted_in_code_per_refusal():
     """A9 item 2: each refused call is one used attempt, counted in mp_state; the band's count is the limit."""
     s = Sim("PUB-13")  # p1 early band: one attempt; p2 late band: two
     msg = s.say(product_id="p1", outcome="refused")  # first call: no offer noted yet (fix round 1, item 3)
-    assert msg.startswith("Not yet: make the offer first") and "uses no attempt" in msg
+    assert msg.startswith("Not counted yet.") and "is not a refusal" in msg
     assert json.loads(s.v["mp_state"])["p"]["p1"]["status"] == "pending"
     msg = s.say(product_id="p1", outcome="refused")
     st = json.loads(s.v["mp_state"])["p"]
@@ -557,7 +557,14 @@ def test_fix1_refusal_before_any_offer_is_not_counted():
     msg = s.say(product_id="p3", outcome="refused")
     p3 = json.loads(s.v["mp_state"])["p"]["p3"]
     assert p3["status"] == "pending" and not p3.get("tried") and "Make attempt" not in msg
-    assert "Not yet: make the offer first" in msg and "140.00" in msg and s.v["mp_phase"] == "open"
+    assert msg.startswith("Not counted yet. If you already made attempt 1 for the car loan and the customer refused it, call set_product")
+    assert "before you speak" in msg and "make attempt 1 of its plan" in msg and s.v["mp_phase"] == "open"
+    # fix round 2: no offer text, so the model is not invited to read the offer out a second time
+    import re
+    assert re.findall(r"\d+", msg.replace("attempt 1", "")) == [], msg  # no amount, no date figure
+    assert "140" not in msg and "2026" not in msg
+    for word in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "October", "November", "propose", "lower amount", "full amount"):
+        assert word not in msg, word
     assert 'A "no" to the today question uses no attempt' in s.w["nodes"]["negotiate"]["task_message"]
     # once the offer is noted (here: the Not-yet answer told the model to make it), a refusal counts
     msg = s.say(product_id="p3", outcome="refused")

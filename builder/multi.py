@@ -293,9 +293,10 @@ def _refuse(st, b):
     if not P.get('offered') and P['status'] == 'pending':
         # a refusal counts only after an offer for this product; "not today" to the first question uses no attempt
         P['offered'] = True
-        return st, ('Not yet: make the offer first. The question about paying today uses no attempt. If you have not made attempt 1 '
-                    'for the ' + P['words'] + ', make it now: ' + P['att'][0] + ' If the customer just refused exactly that offer, call ' +
-                    TOOL + ' with outcome refused for it again.')
+        # no offer text here: in the common case the offer was already spoken and must not be read out again
+        return st, ('Not counted yet. If you already made attempt 1 for the ' + P['words'] + ' and the customer refused it, call ' + TOOL +
+                    ' with outcome refused for it again now, before you speak. If you have not made it yet (a no to the today question '
+                    'is not a refusal), make attempt 1 of its plan.')
     k = int(P.get('tried') or 0) + 1
     P['tried'] = k
     P['offered'] = True
