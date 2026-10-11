@@ -115,3 +115,42 @@ Commit e8eeacd plus this report section. The ruling was text only, so there is n
   - `uv run pytest -q tests/test_multi.py` → `63 passed, 1 skipped in 0.50s`
   - `uv run pytest -q` → `562 passed, 6 skipped in 19.34s`
   - Lint is clean for spec-a and spec-b.
+
+---
+
+# Fix round 3 (CRITICAL live: PUB-B 0/3 on d3677be)
+
+Commits 1e71af9, f1d3250 plus this report section.
+
+## Root cause
+In round 1 (commit 3bd8a4b) I removed the `{{sp_<field>}}` defaults from set_product's body leaves, calling them unneeded template defaults. On the platform an `api_call` body leaf with **no** default never reaches the request. The documented model-filled form is a `{{var}}` default naming a variable that is never set (docs/tools-and-code.md, "One key decides"). As a result, only the baked `customer_id` was sent, `outcome` was empty, and every call answered "Unknown outcome" (regate-a9-B). My first probe had replaced the pre-hook, so it proved only the result channel and never the arguments.
+
+## Change
+- multi.py `ARG_VAR = "sp_"`. In the api branch of `set_tool`, each body leaf gets `default="{{sp_<field>}}"` again (it keeps its type, description and enum). `API_ARGS` still drops any unresolved `{{...}}` value. The docstring records both probes.
+- compile.py:1721 (multi step 4): `Say a product is noted only after a result that starts with "Noted"; after "NOT accepted", "Not counted yet" or any other result, nothing is noted: do what it says. Never read promises back or ask for confirmation yourself.` The system prompt's rule ("never say recorded/registered/saved/booked/done unless the tool result says so") already applies to the multi node, because it is the workflow system prompt.
+- The multi prompt budget test went from 5300 to 5500. spec-b's negotiate task is now 5482 chars; spec-a is unchanged at 4755.
+
+## Probe (chat API, slot probe-hooks, ONE conversation; no simulation)
+- Script: `scratchpad/probe_a9_r3.py`, run from a temporary copy in the worktree and then deleted.
+- Setup:
+  - Seeded a PUB-13 practice session (`/v1/practice/sessions`, customer c_dd5a2fc0-3ad) and verified both identity fields at the bank (all_verified true). `get_account` returned p1 credit_card and p2 personal_loan.
+  - Ran setup and prepare_account of the compiled spec-b offline on those products to get `mp_state`, and passed it as customerVariables.
+  - The tool is the **compiled** spec-b set_product, unmodified, with its real url `/v1/get_account`, SET_PRE and SET_POST.
+- Result (call b17bfc2f):
+  1. "...in full on the 30th of October." The request body was `{"date":"2026-10-30","amount":"full","outcome":"agreed","product_id":"p2","customer_id":...}`. The bank answered 200. The post-hook result was "NOT accepted ... latest date you can accept for it is Friday 23 October 2026". mp_state p2 stayed pending. The agent said: "...the latest date I can accept for the personal loan is Friday, October 23, 2026. Would that date work for you?"
+  2. "Fine, then the 23rd of October." The body was `{"date":"2026-10-23",...,"product_id":"p2"}`. The pre-hook stored **p2 agreed 2026-10-23** in mp_state. The result was "Noted for now ... Next is the credit card ending 6604 ... propose the full amount 300.00 on Friday 16 October 2026". The agent said: "Regarding your credit card ending 6604, could you pay the full amount of 300.00 on Friday, October 16, 2026?"
+- **The full round trip is proven:** model arguments → body → pre-hook state change → post-hook message → spoken.
+
+## Tests
+- test_multi.py `test_set_product_code_needs_no_datetime_and_no_braces` now asserts each body leaf's default is `{{sp_<field>}}`.
+- New `test_fix3_no_sp_variable_is_ever_set`: no extraction, response mapping, hook or code sets an `sp_*` variable, and no `sp_*` is present after prepare_account.
+- New `test_fix3_multi_prompt_noted_only_after_a_noted_result`.
+- Runs:
+  - `uv run pytest -q tests/test_multi.py tests/test_compile.py` → `111 passed, 2 skipped in 0.62s`
+  - `uv run pytest -q` → `564 passed, 6 skipped in 19.41s`
+  - Lint is clean for spec-a and spec-b.
+- Note: commit 1e71af9 alone fails one generalisation test, because its docstring named a brief product. f1d3250 rewords the docstring, and the suite is green from f1d3250 on.
+
+## Concerns
+- The offline Sim feeds the body as already-resolved arguments, so it cannot catch a template or argument-delivery fault. Only a live probe or simulation can. The new test pins the `{{sp_*}}` form, which the live probe verified.
+- The probe-hooks slot now holds this probe workflow (version 5). The seeded PUB-13 practice session c_dd5a2fc0-3ad has one get_account read on its ledger and no writes.
