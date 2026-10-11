@@ -10,3 +10,7 @@ traces/
 .personas.json
 .claude/worktrees/
 .work/
+
+# internal session notes (kept locally)
+HANDOFF.md
+REPORT.md
