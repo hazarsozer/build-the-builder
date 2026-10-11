@@ -46,7 +46,7 @@ from bank import server, tunnel  # noqa: E402
 from builder import cases, fix, sdk, selftest  # noqa: E402
 from builder import compile as comp  # noqa: E402
 from builder import extract as ex  # noqa: E402
-from builder.lint import lint  # noqa: E402
+from builder.lint import lint, reconcile_banned  # noqa: E402
 from builder.redact import scrub  # noqa: E402
 from builder.trace import Trace  # noqa: E402
 from builder.validate import validate  # noqa: E402
@@ -400,6 +400,20 @@ class Build:
         except Exception as e:
             return None, [_err(e)], {}
 
+    def _reconcile(self, spec, stage):
+        """Drop banned_before_verify terms the spec's own required pre-verification sentences contain; traced, never silent."""
+        try:
+            new, removed = reconcile_banned(spec)
+        except Exception as e:
+            self.ev("banned_reconciled", stage=stage, removed=[], error=_err(e))
+            return spec
+        if removed:
+            self.ev("banned_reconciled", stage=stage,
+                    removed=[{k: scrub(str(v))[:200] for k, v in r.items()} for r in removed])
+            self.log("banned_before_verify: removed %s (a required pre-verification sentence says it)" %
+                     ", ".join(repr(r["term"]) for r in removed))
+        return new
+
     def _extract(self):
         spec, errs, info = self._extract_once()
         if spec is None and self.left() - FINAL_RESERVE_S > EXTRACT_RETRY_MIN_S:
@@ -419,6 +433,8 @@ class Build:
         except Exception as e:
             verrs = ["validate crashed: " + _err(e)]
         self.ev("spec_validated", stage="extract", errors=len(verrs), first=[scrub(x)[:300] for x in verrs[:5]])
+        if not verrs:
+            spec = self._reconcile(spec, "extract")
         conf = spec.get("conflicts") if isinstance(spec, dict) else None
         conf = conf if isinstance(conf, list) else []
         self.ev("conflicts", count=len(conf), items=[{"field": c.get("field"), "kept": str(c.get("kept"))[:300]}
@@ -559,6 +575,8 @@ class Build:
             return
         verrs = validate(new, self.openapi)
         self.ev("spec_validated", stage="fix1", errors=len(verrs), first=[scrub(x)[:300] for x in verrs[:5]])
+        if not verrs:
+            new = self._reconcile(new, "fix1")
         cs2 = self._cases(new, now)
         run2, comparable, extra = round2_cases(cs, cs2)
         self.ev("round2_plan", rerun=len(cs), extra=[c["id"] + ":" + str(c.get("scenario")) for c in extra],
