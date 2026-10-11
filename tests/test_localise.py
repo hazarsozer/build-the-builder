@@ -167,6 +167,7 @@ def test_main_localises_turkish_spec(monkeypatch):
         pytest.skip("no Build class")
     b.openapi, b.trace, b.briefs, b._lang = OA, Tr(), [], None
     b.ev = lambda kind, **f: traced.append((kind, f))
+    b.left = lambda: 1000.0
     monkeypatch.setattr(M, "translate_factory", lambda trace: fake_tr)
     s = copy.deepcopy(B)
     s["language"] = TR
@@ -283,10 +284,6 @@ def test_single_product_has_no_readback_part():
 
 TR_PARSE = {"today": "bugün", "tomorrow": "yarın", "the day after tomorrow": "öbür gün", "next week": "gelecek hafta",
             "next Friday": "önümüzdeki Cuma", "this Friday": "bu Cuma"}
-_TR_UNITS = ["bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz"]
-TR_NUMS = _TR_UNITS + ["on"] + ["on " + u for u in _TR_UNITS] + ["yirmi"] + ["yirmi " + u for u in _TR_UNITS] + \
-    ["otuz", "otuz bir"]
-TR_PARSE.update(zip(L.NUMBERS, TR_NUMS))
 
 
 def fake_full(texts, lang):
@@ -309,7 +306,7 @@ NOW = __import__("datetime").date(2026, 10, 11)      # a Sunday
 
 @pytest.mark.parametrize("tr,en", [
     ("16 Ekim", "October 16"), ("Ekim'in 16'sı", "October 16"), ("16 Ekim'de", "October 16"),
-    ("on altı Ekim", "October 16"), ("yarın", "tomorrow"), ("yarına", "tomorrow"), ("bugün", "today"),
+    ("yarın", "tomorrow"), ("yarına", "tomorrow"), ("bugün", "today"),
     ("öbür gün", "the day after tomorrow"), ("cuma günü", "Friday"), ("Cumaya", "Friday"),
     ("önümüzdeki cuma", "next Friday"), ("bu cuma", "this Friday"), ("pazartesi", "Monday"), ("pazar", "Sunday"),
     ("ÖNÜMÜZDEKİ CUMA", "next Friday"), ("gelecek hafta", "next week"),
@@ -370,3 +367,107 @@ def test_english_reader_unchanged():
         before = json.dumps(wf, sort_keys=True)
         L.localise(wf, L.ENGLISH, fake_full)
         assert json.dumps(wf, sort_keys=True) == before
+
+
+# ---------------------------------------------------------------- D2 review fixes
+
+@pytest.mark.parametrize("text,want", [
+    ("Kasım'da bir ödeme yaparım", (None, "vague")),        # "bir" = a, not the 1st
+    ("biraz zor", (None, "none")),
+    ("masanın altında", (None, "none")),
+    ("cuma olmaz, biraz pazarlık edelim", None),            # not Sunday: Friday (after "not"... read below)
+    ("pazarlık yapalım", (None, "none")),
+    ("yarından sonra", None),                                # no confident day from a 3-letter suffix
+])
+def test_review_examples_give_no_wrong_date(text, want):
+    import datetime
+    wf, _ = compiled(A, TR)
+    L.localise(wf, TR, fake_full)
+    rs = reader(wf)
+    got = rs(text, NOW)
+    if want is not None:
+        assert got == want
+    assert got[0] != datetime.date(2026, 10, 18)              # never Sunday from "pazarlık"
+    assert got[0] != datetime.date(2026, 11, 1)               # never Nov 1 from "bir"
+    assert got[0] not in (datetime.date(2026, 10, 12), datetime.date(2026, 10, 13))   # no day from "yarından"
+
+
+def test_number_words_are_not_in_the_call():
+    calls = []
+    L.localise(compiled(A, TR)[0], TR, lambda t, lang: calls.append(list(t)) or fake_full(t, lang))
+    assert "one" not in calls[0] and "sixteen" not in calls[0]
+
+
+def _build(monkeypatch, translator, left=1000.0):
+    from builder import main as M
+    traced = []
+    b = M.Build.__new__(M.Build)
+    b.openapi, b.briefs, b._lang = OA, [], None
+    b.trace = type("T", (), {"event": lambda self, kind, **f: traced.append((kind, f))})()
+    b.ev = lambda kind, **f: traced.append((kind, f))
+    b.left = lambda: left
+    b._l10n_failed = set()
+    monkeypatch.setattr(M, "translate_factory", lambda trace: translator)
+    return M, b, traced
+
+
+def test_failed_translation_is_not_retried(monkeypatch):
+    calls = []
+
+    def boom(texts, lang):
+        calls.append(1)
+        raise RuntimeError("model down")
+    M, b, traced = _build(monkeypatch, boom)
+    s = copy.deepcopy(B)
+    s["language"] = TR
+    en = [t for _, t in L.spoken_strings(comp.compile(s, OA, "http://x/v1"))]
+    for stage in ("selftest1", "selftest2", "final"):
+        wf = b._compile_lint(s, "http://x/v1", stage)
+        assert [t for _, t in L.spoken_strings(wf)] == en
+    assert len(calls) == 1
+    assert any(k == "localise_skipped" for k, _ in traced)
+
+
+def test_translation_is_bounded(monkeypatch):
+    import time
+    M, b, traced = _build(monkeypatch, lambda texts, lang: time.sleep(5) or fake_tr(texts, lang))
+    monkeypatch.setattr(M, "L10N_MAX_S", 0.2)
+    s = copy.deepcopy(B)
+    s["language"] = TR
+    t0 = time.monotonic()
+    wf = b._compile_lint(s, "http://x/v1", "selftest1")
+    assert time.monotonic() - t0 < 3
+    assert not wf["nodes"]["opening"]["on_enter"]["text"].startswith("[TR]")
+    assert any(k == "localise_failed" for k, _ in traced)
+
+
+def test_final_without_time_skips_translation(monkeypatch):
+    calls = []
+    M, b, traced = _build(monkeypatch, lambda t, lang: calls.append(1) or fake_tr(t, lang), left=10.0)
+    s = copy.deepcopy(B)
+    s["language"] = TR
+    wf = b._compile_lint(s, "http://x/v1", "final")
+    assert calls == [] and not wf["nodes"]["opening"]["on_enter"]["text"].startswith("[TR]")
+    assert any(k == "localise_skipped" for k, _ in traced)
+
+
+def test_final_with_cached_translation_needs_no_time(monkeypatch):
+    M, b, traced = _build(monkeypatch, fake_tr, left=1000.0)
+    s = copy.deepcopy(B)
+    s["language"] = TR
+    b._compile_lint(s, "http://x/v1", "selftest1")
+    b.left = lambda: 10.0
+    wf = b._compile_lint(s, "http://x/v1", "final")
+    assert wf["nodes"]["opening"]["on_enter"]["text"].startswith("[TR]")
+
+
+def test_language_detected_from_converted_docx(tmp_path, monkeypatch):
+    docx = pytest.importorskip("docx")
+    d = docx.Document()
+    d.add_paragraph("Müşteriye ödeme tarihini sorun ve bir ödeme sözü alın. Bu çağrı kaydedilmektedir. "
+                    "Müşteri ödeme yapamazsa destek ekibine aktarın.")
+    p = tmp_path / "brief.docx"
+    d.save(str(p))
+    M, b, traced = _build(monkeypatch, fake_tr)
+    b.briefs = [str(p)]
+    assert b.language({})["code"] == "tr"

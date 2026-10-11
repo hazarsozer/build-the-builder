@@ -290,16 +290,14 @@ def apply_readback(wf, t):
 
 # ---------------------------------------------------------------- reading the customer's date words
 
-# Relative-day words and the cardinals 1-31, translated in the same call; mapped back onto the English words the
-# date reader (builder/lib/dates.py _tokens/_mentions) already understands.
+# Relative-day words, translated in the same call; mapped back onto the English words the date reader
+# (builder/lib/dates.py _tokens/_mentions) already understands. Number words are NOT mapped: a cardinal is also an
+# article or the start of other words (Turkish "bir" = one / a, "altinda" = under), which gave confident wrong days.
 RELATIVE = {"today": "today", "tomorrow": "tomorrow", "the day after tomorrow": "day after tomorrow",
             "next week": "next week"}
 MODIFIERS = {"next Friday": "next", "this Friday": "this"}      # the Friday name is stripped from the translation
-_UNITS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
-          "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
-NUMBERS = _UNITS + ["twenty"] + ["twenty-" + u for u in _UNITS[:9]] + ["thirty", "thirty-one"]   # 1..31
-PARSE_SOURCES = list(RELATIVE) + list(MODIFIERS) + NUMBERS
-MAX_SUFFIX = 5      # letters a name may carry after it ("cumaya", "ekimde", "pazartesiye")
+PARSE_SOURCES = list(RELATIVE) + list(MODIFIERS)
+MAX_SUFFIX = 2      # letters a name may carry after it ("cumaya", "ekimde", "pazartesiye"; not "pazarlik")
 MIN_PREFIX = 3      # shorter words match only whole
 
 # Runtime code (also exec'd here, so the table builder and the code node fold text the same way). No braces.
@@ -372,7 +370,6 @@ def parse_table(weekdays, months, parse_tr=None):
             rest = [x for x in w if not (fri and x.startswith(fri[0][:max(MIN_PREFIX, len(fri[0]) - 1)]))]
             if rest and len(rest) < len(w):
                 rows.append((rest, v))
-        rows += [(words(tr[k]), str(i + 1)) for i, k in enumerate(NUMBERS)]
     seen, out = {}, []
     for w, e in rows:
         if not w:
@@ -422,14 +419,7 @@ def check_names(sources, translated):
 
 # ---------------------------------------------------------------- the pass
 
-def localise(wf, lang, translate, trace=None):
-    """Localise `wf` in place for `lang`. translate(list_of_str, lang) -> list_of_str (ONE batched model call for
-    every part not in the cache). Three parts, each validated and applied on its own: the fixed spoken strings,
-    the weekday and month names spoken in dates, the read-back fragments. A part that fails stays English (traced);
-    the language rule is always added. Returns a report dict."""
-    ev = (trace.event if trace is not None else (lambda *a, **k: None))
-    if is_english(lang):
-        return {"localised": 0, "skipped": "english"}
+def _groups(wf):
     items = spoken_strings(wf)
     groups = {"spoken": (list(dict.fromkeys(t for _, t in items)), check)}
     if _wants(wf, "def speak(d):"):
@@ -438,6 +428,26 @@ def localise(wf, lang, translate, trace=None):
         groups["readback"] = (list(READBACK.values()), check)
     if "dates" in groups and _wants(wf, "def _tokens(text):"):
         groups["parse"] = (PARSE_SOURCES, check_words)
+    return items, groups
+
+
+def pending(wf, lang):
+    """How many strings localise(wf, lang) would still send to the model (0: all cached)."""
+    if is_english(lang):
+        return 0
+    _, groups = _groups(wf)
+    return len({t for g in groups.values() for t in g[0] if _key(lang, t) not in _CACHE})
+
+
+def localise(wf, lang, translate, trace=None):
+    """Localise `wf` in place for `lang`. translate(list_of_str, lang) -> list_of_str (ONE batched model call for
+    every part not in the cache). Three parts, each validated and applied on its own: the fixed spoken strings,
+    the weekday and month names spoken in dates, the read-back fragments. A part that fails stays English (traced);
+    the language rule is always added. Returns a report dict."""
+    ev = (trace.event if trace is not None else (lambda *a, **k: None))
+    if is_english(lang):
+        return {"localised": 0, "skipped": "english"}
+    items, groups = _groups(wf)
     allt = list(dict.fromkeys(t for g in groups.values() for t in g[0]))
     todo = [t for t in allt if _key(lang, t) not in _CACHE]
     report = {"language": lang["code"], "strings": len(allt), "from_cache": len(allt) - len(todo), "parts": {}}
