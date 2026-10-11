@@ -359,7 +359,10 @@ def test_g1_no_record_word_in_spoken_templates():
         for quoted in re.findall(r'"([^"]*)"', n["task_message"]):
             assert "record" not in quoted.lower(), (k, quoted)
     neg = w["nodes"]["negotiate"]["task_message"]
-    assert "latest date you can accept" in neg and "Dates you may accept" in neg
+    # A12: the after-deadline wording ("the latest date you can accept") is check_date's result, no longer the prompt's
+    assert "Deadline (latest date you may accept)" in neg
+    pre = [t for t in w["nodes"]["negotiate"]["tools"] if t["function"]["name"] == "check_date"][0]["pre_process_code"]
+    assert "latest date you can accept" in pre
 
 
 def test_g1_lint_errors_on_record_in_spoken_text():
@@ -437,9 +440,11 @@ def test_a9_calendar_rows_carry_the_day_number_in_digits_and_words():
 
 
 def test_a9_day_number_and_cut_off_rules_in_both_templates():
-    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+    for multi, w in ((False, wf()), (True, C(json.load(open("specs/reference/spec-b.json")), OA))):
         t = w["nodes"]["negotiate"]["task_message"]
-        assert '"twenty-sixth"' in t and "first calendar row with that number" in t
+        assert '"twenty-sixth"' in t
+        # A12: one product's day numbers go to check_date in code; several products keep the calendar rows
+        assert ("first calendar row with that number" in t) == multi and ("call check_date" in t) == (not multi)
         assert '"Monday the."' in t and 'say only "Go on."' in t and "uses no attempt" in t
 
 

@@ -47,6 +47,10 @@ EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": 
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
            'say only "Go on." and read it with the next message.')
+# A12 (one product): a named day is judged by check_date in code, never by the model
+CHECK_DAY = ('A day ("the 26th", "twenty-sixth", "Monday the." then "26th.", "next Friday", "tomorrow"): before you answer, call %s with '
+             'their words for it, joined across turns. Never judge a date yourself: say what the result says, use its date in create_promise. '
+             'Their own date, even after a "no", is never a refusal.')
 DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
              'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
 MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?", "how much?"): "That is the <minimum payment / amount> I '
@@ -378,6 +382,7 @@ try:
     vars['band'] = str(f['band']['name'])
     vars['attempts_allowed'] = str(len(f['attempts']))
     vars['deadline_text'] = speak(f['deadline'])
+    vars['deadline_iso'] = f['deadline'].isoformat()
     for i, a in enumerate(f['attempts']):
         vars['attempt' + str(i + 1) + '_text'] = speak(a['date'])
     vars['attempt_plan'] = f['plan']
@@ -779,7 +784,7 @@ try:
         good = str(result.get('status', 'success')) == 'success' and d.get('ok') is True
         if good:
             d['promise_status'] = 'recorded'
-            d['what_to_do_next'] = 'The promise is recorded.'
+            d['what_to_do_next'] = 'The promise is recorded.' + str(vars.get('promise_date_note') or '')
         else:
             n = int(vars.get('promise_fail_n') or 0) + 1
             vars['promise_fail_n'] = n
@@ -819,12 +824,127 @@ try:
         if a is None:
             a = b.get('amount')
         b['amount'] = float(a)
-        dt = vars.get('create_promise_args.promise_date')
+        dt = vars.get('promise_date_used') or vars.get('create_promise_args.promise_date')
         if dt:
             b['date'] = str(dt)[:10]
         pid = vars.get('product_id')
         if pid:
             b['product_id'] = str(pid)
+except Exception:
+    pass
+'''
+
+# A12: one product, a day the customer names. check_date is a read-only api tool (get_account route, like set_product
+# in multi.py); its pre-hook resolves the customer's words (dates.resolve_said) and judges the date by the spec rules
+# (dates.date_verdict), the post-hook makes that the tool result the model reads. The model only speaks the verdict.
+# Body leaves are model-filled through {{cdx_*}} defaults; no cdx_* variable is ever set.
+CHECK_TOOL = "check_date"
+CHECK_PRE = r'''
+def _cd_arg(b, k):
+    v = b.get(k)
+    if v is None or (isinstance(v, str) and v.strip()[:2] == chr(123) * 2):
+        return ''
+    return str(v).strip()
+
+
+def _cd_kind_of(d):
+    if d.isoformat() in CAL['holidays']:
+        return 'a bank holiday, not a business day'
+    if d.weekday() >= 5:
+        return 'a weekend day, not a business day'
+    return 'not a business day'
+
+
+try:
+    b = config.get('body') if isinstance(config, dict) else None
+    if not isinstance(b, dict):
+        b = dict()
+    said = _cd_arg(b, 'said')
+    iso = _cd_arg(b, 'date')[:10]
+    dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
+    d, why = resolve_said(said, today, WW)
+    if d is None and why != 'vague' and re.match(r'^\d{4}-\d{2}-\d{2}$', iso):
+        try:
+            d = datetime.date.fromisoformat(iso)
+        except ValueError:
+            d = None
+    off = None
+    if d is None:
+        kind = 'vague' if why == 'vague' else 'no_day'
+    else:
+        kind, off = date_verdict(d, today, dl, CAL, NBD, AFTER)
+    cur = 'with the amount of your current attempt, as a yes/no question'
+    never = ' Their own date is never a refusal.'
+    if kind == 'ok':
+        msg = ('OK: ' + say_date(d) + ' can be accepted. Propose it ' + cur + ' unless they already gave an amount. '
+               'create_promise date: ' + d.isoformat() + '.')
+    elif kind == 'not_business_day' and off is not None:
+        if NBD == 'previous_business_day' and off == prev_bd(d, CAL):
+            which = 'the business day before it'
+        elif off == next_bd(d, CAL):
+            which = 'the next business day'
+        else:
+            which = 'the latest date you can accept'
+        msg = ('NOT A BUSINESS DAY: ' + say_date(d) + ' is ' + _cd_kind_of(d) + '. Say so and offer ' + which + ', ' + say_date(off) + ', ' + cur + '.' +
+               never + ' If they accept, create_promise date: ' + off.isoformat() + '.')
+    elif kind == 'not_business_day':
+        msg = ('NOT A BUSINESS DAY: ' + say_date(d) + ' is ' + _cd_kind_of(d) + '. Say so and ask for a business day on or before ' + say_date(dl) + '.' + never)
+    elif kind == 'after_deadline' and off is not None:
+        msg = ('AFTER THE DEADLINE: ' + say_date(d) + ' is after the deadline. Say the latest date you can accept is ' + say_date(off) +
+               ' and offer it ' + cur + '.' + never + ' If they accept, create_promise date: ' + off.isoformat() + '.')
+    elif kind == 'after_deadline':
+        msg = ('AFTER THE DEADLINE: ' + say_date(d) + ' is after the deadline. Say it cannot be accepted and ask for a date on or before ' + say_date(dl) + '.' + never)
+    elif kind == 'past':
+        msg = 'IN THE PAST: ' + say_date(d) + ' has already passed. Say so and ask for a date from today on.'
+    elif kind == 'vague':
+        msg = 'NO EXACT DAY: that is a period, not a day. Follow your rule for a vague period.'
+    else:
+        msg = ('NO DAY FOUND in the words given. If the customer named a day, call ' + TOOL + ' again with it as YYYY-MM-DD in date; '
+               'otherwise ask for the exact day.')
+    vars['cd_kind'] = kind
+    vars['cd_date'] = off.isoformat() if off is not None else ''
+    vars['cd_msg'] = msg
+except Exception as e:
+    vars['cd_kind'] = 'error'
+    vars['cd_date'] = ''
+    vars['cd_msg'] = 'There was a technical problem checking the date (' + str(e)[:60] + '). Call ' + TOOL + ' again with the same values.'
+'''
+
+CHECK_POST = r'''
+try:
+    if isinstance(result, dict):
+        result.pop('header', None)
+        result['data'] = dict(ok=True, verdict=str(vars.get('cd_kind') or 'error'), date=str(vars.get('cd_date') or ''),
+                              what_to_do_next=str(vars.get('cd_msg') or 'Call ' + TOOL + ' again with the same values.'))
+except Exception:
+    pass
+'''
+
+# create_promise (one product): the date sent is the one the rules allow. A date that is not acceptable becomes the date
+# date_verdict offers for it (next business day, deadline); a date that is not YYYY-MM-DD becomes check_date's last date.
+PROMISE_DATE_PRE = r'''
+try:
+    vars['promise_date_note'] = ''
+    b = config.get('body') if isinstance(config, dict) else None
+    if isinstance(b, dict):
+        raw = str(b.get('date') or '').strip()[:10]
+        dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
+        try:
+            d = datetime.date.fromisoformat(raw)
+        except ValueError:
+            d = None
+        use = None
+        if d is None:
+            use = str(vars.get('cd_date') or '') or None
+        else:
+            kind, off = date_verdict(d, today, dl, CAL, NBD, AFTER)
+            if kind != 'ok' and off is not None:
+                use = off.isoformat()
+        if use and use != raw:
+            b['date'] = use
+            vars['promise_date_note'] = (' It is recorded for ' + say_date(datetime.date.fromisoformat(use)) +
+                                         ', the date the rules allow: say that date.')
+        vars['promise_date_used'] = str(b.get('date') or '')[:10]
 except Exception:
     pass
 '''
@@ -1561,12 +1681,6 @@ class _Compiler:
     def negotiate_task(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
         banned = neg.get("banned_offers") or []
-        nbd = {"next_business_day": "A weekend day or holiday that is not after the deadline: offer the NEXT business day after it, not the deadline.",
-               "previous_business_day": "A weekend day or holiday that is not after the deadline: offer the business day BEFORE it, not the deadline.",
-               "reject": "A weekend day or holiday: say it is not a business day and ask for a business day."}[neg.get("non_business_day", "next_business_day")]
-        aft = {"offer_deadline": ("A date after the deadline: say the latest date you can accept is the deadline ({{deadline_text}}) and offer it "
-                                  "with the amount of your current attempt. Their own date, even after a \"no\", is never a refusal."),
-               "reject": "A date after the deadline: say it cannot be accepted and ask for a date on or before the deadline ({{deadline_text}})."}[neg.get("after_deadline", "offer_deadline")]
         vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
                  "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
@@ -1597,18 +1711,12 @@ FACTS (computed, use them exactly)
 - Full past-due amount: {{past_due_text}}.
 - Floor (lowest amount you may accept): {{floor_text}}.
 - Deadline (latest date you may accept): {{deadline_text}}.
-- Dates you may accept (business days from today to the deadline): {{allowed_dates_text}}
 - Persuasion plan:
 {{attempt_plan}}
-- Weekday words:
-{{weekday_text}}
-- Calendar:
-{{calendar_text}}
 
 HOW TO GET A PROMISE
 1. The customer names a date or an amount (combine parts said across turns: "twelve"... "fifty" = 1250, "four hundred"... "and twenty" = 420; a short number right after a partial one is the rest of it): never a refusal. Check it:
    - %s
-   - Date must be one of the dates you may accept. %s %s
    - %s
    - %s
    - %s
@@ -1618,7 +1726,7 @@ HOW TO GET A PROMISE
    %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, DATE_ONLY, nbd, aft, vague, DAY_NUMBER, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+            first_ask, DATE_ONLY, CHECK_DAY % CHECK_TOOL, vague, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
             t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
@@ -1828,12 +1936,13 @@ HOW TO GET A PROMISE
             "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_task(),
-            "tools": [self.tool("create_promise", {
+            "tools": [self.check_tool(), self.tool("create_promise", {
                 "product_id": {"default": "{{product_id}}"},
                 "amount": {"description": "Promised amount, a number such as 420.00. From the floor up to the full past-due amount.", "default": "{{promise_amount}}"},
-                "date": {"description": "Promised payment date, YYYY-MM-DD, one of the dates you may accept.", "default": "{{promise_date}}"},
+                "date": {"description": "Promised payment date, YYYY-MM-DD: the date check_date gave, or the date of the plan's offer.", "default": "{{promise_date}}"},
             }, ["amount", "date"], description="Record the payment promise. CALL it only after the customer said yes to your read-back of product, amount and date.",
-                mapping=[{"path": "data.promise_status", "variable": "promise_status"}], post=PROMISE_POST.replace("RETRIES", str(int(retries))))],
+                mapping=[{"path": "data.promise_status", "variable": "promise_status"}], pre=self.date_rules() + PROMISE_DATE_PRE,
+                post=PROMISE_POST.replace("RETRIES", str(int(retries))))],
             "extraction_schema": [{
                 "name": "neg_event", "type": "string", "min_confidence": 0.6,
                 "enum_values": structural[:1] + values + structural[1:],
@@ -1843,6 +1952,25 @@ HOW TO GET A PROMISE
             "max_node_turns": 40, "max_turn_transition": self.latch_gate(self.fallback_close("negotiate", ["refused"])),
             "transitions": tr,
         }
+
+    def date_rules(self):
+        """Prelude (dates, CAL, today) plus the spec's date policies, for the hooks that judge a named date (A12)."""
+        neg = self.s["negotiation"]
+        return (self.prelude() + _const("WW", neg.get("weekday_words") or {}) +
+                "NBD = %r\nAFTER = %r\nTOOL = %r\n" % (neg.get("non_business_day", "next_business_day"),
+                                                     neg.get("after_deadline", "offer_deadline"), CHECK_TOOL))
+
+    def check_tool(self):
+        """check_date (one product): the model passes the customer's words for a day; code returns the verdict."""
+        return self.tool(CHECK_TOOL, {
+            "said": {"type": "string", "default": "{{cdx_said}}",
+                     "description": "The customer's own words for the day, joined across turns, e.g. \"Monday the twenty-sixth\"."},
+            "date": {"type": "string", "default": "{{cdx_date}}",
+                     "description": "The same day as YYYY-MM-DD if you know it; used only when the words name no day."},
+        }, ["said"], path="get_account",
+            description=("Check a payment day the customer names. CALL it before you answer any day they name (any form, also in pieces "
+                         "or words); say what what_to_do_next says. It records nothing."),
+            pre=self.date_rules() + CHECK_PRE, post="TOOL = %r\n" % CHECK_TOOL + CHECK_POST)
 
     def verified_lead(self):
         """Spoken by the engine as identity passes: the thanks, then negotiation.post_verify_sentence word for word."""

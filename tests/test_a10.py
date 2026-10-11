@@ -299,15 +299,28 @@ def test_audit_paid_and_dispute_have_a_model_backup_close():
 
 # ---------------------------------------------------------------- item 2: SELF-04 (corrects, after_deadline)
 
+def _after_deadline_verdict(spec):
+    """A12: the after-deadline answer is check_date's result (code), not prompt text."""
+    w = C(spec, OA)
+    v = {"now": "2026-10-14T11:00", "acct_first_json": json.dumps(CARD)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    t = [x for x in w["nodes"]["negotiate"]["tools"] if x["function"]["name"] == "check_date"][0]
+    exec(t["pre_process_code"], {"vars": v, "config": {"body": {"said": "the 20th of November"}}})
+    return v["cd_msg"]
+
+
 def test_self04_after_deadline_keeps_the_current_attempt_amount():
     for spec in (A, json.load(open(DRESS_A))):
         t = C(spec, OA)["nodes"]["negotiate"]["task_message"]
-        assert ("offer it with the amount of your current attempt. Their own date, even after a \"no\", is never a refusal." in t)
+        m = _after_deadline_verdict(spec)
+        assert "offer it with the amount of your current attempt" in m and "Their own date is never a refusal." in m
+        assert 'Their own date, even after a "no", is never a refusal.' in t
         # A9 rules the candidate-1 build lacked, which the SELF-04 cut-off corrections needed
         assert 'say only "Go on."' in t and "never ask them to name an amount" in t
     s = json.loads(json.dumps(A))
     s["negotiation"]["after_deadline"] = "reject"
-    assert "current attempt" not in C(s, OA)["nodes"]["negotiate"]["task_message"].split("A date after the deadline")[1][:200]
+    assert "current attempt" not in _after_deadline_verdict(s)
 
 
 # ---------------------------------------------------------------- item 2: SELF-11 (injection persona broke role)
