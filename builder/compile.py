@@ -88,6 +88,9 @@ CB_DAY_WORDS = {"today": "today", "next_business_day": "the next business day", 
 # ---------------------------------------------------------------- text helpers
 
 _PH = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# a sentence of sympathy ("I am sorry to hear that", "my condolences"): an event's fixed sentence that says one is
+# the call's only one (OUT-03/04: a prompted extra sentence plus the fixed one read as two)
+SYMPATHY = re.compile(r"\b(?:sorry|condolences?|sympath\w*)\b", re.I)
 
 
 def tpl(s):
@@ -1448,8 +1451,11 @@ class _Compiler:
                         {"logic": "and", "conditions": [eq(eid + "_seen", "yes"), eq(eid + "_offered", "no")]})))
             elif act == "transfer":
                 values.append(eid)
-                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s."
-                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid)) if stage == "negotiate" else ""
+                # MRW-07: "I'll take the instalment amount" (accepting the agent's lower offer) once fired a
+                # lower-instalments transfer; taking an offer is an agreement, never a request for something new
+                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s. Accepting an amount or a date "
+                          "the agent offered, even by its kind (\"I'll take the instalment\", \"the minimum is fine\"), is NOT %s: it is continue."
+                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid, eid)) if stage == "negotiate" else ""
                 desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, trig, extra, not_it)) if subj(who, trig) != trig else ("%s: %s.%s %s" % (eid, trig, extra, not_it)))
                 t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
@@ -1550,15 +1556,20 @@ class _Compiler:
             self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
-        steps = ["Exactly one short sentence of sympathy."]
+        say = ev.get("say") or ""
+        # the brief allows one sentence of sympathy per call: a fixed sentence that already says it is that one
+        sympathy = bool(SYMPATHY.search(say))
+        steps = [] if sympathy else ["Exactly one short sentence of sympathy."]
         if account:
             # nothing about the debt was said yet: the verification thanks, then the event's own sentence
             steps = ["Say %s." % q(self.verified_lead().strip())]
-        if ev.get("say"):
-            steps.append("Say %s." % q(tpl(ev["say"])))
+        if say:
+            steps.append("Say %s.%s" % (q(tpl(say)), " This is your one sentence of sympathy: add no other, before or after it."
+                                        if sympathy and not account else ""))
         if banned and not account:
             steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
-        steps.append("Offer to connect them with %s, as a yes/no question." % team)
+        if "?" not in say:  # a fixed sentence that is a question already makes the offer
+            steps.append("Offer to connect them with %s, as a yes/no question." % team)
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
                   "not have that information), then ask once more whether they want to be connected. Do this only once."]
         answer += ["Rule (%s): say %s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])))
