@@ -49,6 +49,52 @@ def safe_opening(sentence, verbatim=False):
     return " ".join(out), need
 
 
+# Only record* about a promise (or its payment, date, amount) is rephrased; any other use ("our records show", "for the
+# record", "this call is being recorded") keeps its meaning and is left for lint to flag.
+_PROMISE_NOUN = r"(?:promises?|payments?|dates?|amounts?|payment\s+dates?|payment\s+plans?|arrangements?)"
+_DET = r"(?:a|an|the|your|any|each|every|this|that|these|those|its|their|our)"
+# "a recorded promise" -> "a promise"
+_REC_DET = re.compile(r"\b(%s)\s+recorded\s+(?=%s\b)" % (_DET, _PROMISE_NOUN), re.I)
+# "we have recorded your promise" -> "we have taken your promise"; "record the promise" -> "take the promise"
+_REC_VERB = re.compile(r"\b(record(?:s|ed|ing)?)(\s+(?:%s\s+)?%s\b)" % (_DET, _PROMISE_NOUN), re.I)
+_TAKE = {"record": "take", "records": "takes", "recorded": "taken", "recording": "taking"}
+# "the promise is (already) recorded" is NOT rewritten: "noted" before success still claims the promise exists, so
+# the sentence is kept and lint flags it
+
+
+def safe_pre_success(text):
+    """Text spoken before a promise can be recorded, without record* words about the promise and with the same
+    meaning (the honesty check reads any "record*" before a successful create_promise literally). Returns
+    (text, changed). Only promise phrasings are rewritten: "A recorded promise cannot ..." -> "A promise cannot ...",
+    "we have recorded your promise" -> "we have taken your promise". A passive claim ("the promise is recorded") is
+    kept: rewording it ("noted") would still claim the promise exists, so lint flags it. Every other record* word is
+    kept (lint flags it)."""
+    if not text or not _RECORD.search(text):
+        return text or "", False
+    t = _REC_DET.sub(lambda m: m.group(1) + " ", text)
+
+    def verb(m):
+        w = m.group(1)
+        before = re.findall(r"(\w+)\s*$", t[:m.start()])
+        if before and re.fullmatch(_DET, before[0], re.I):  # a noun ("our records ..."), not the verb
+            return m.group(0)
+        out = _TAKE[w.lower()]
+        return (out[0].upper() + out[1:] if w[0].isupper() else out) + m.group(2)
+    t = _REC_VERB.sub(verb, t)
+    return t, t != text
+
+
+def never_say_words(spec):
+    """spec.never_say: words or phrases the brief forbids in every sentence of the call."""
+    w = spec.get("never_say") if isinstance(spec, dict) else None
+    return [x.strip() for x in w if isinstance(x, str) and x.strip()] if isinstance(w, list) else []
+
+
+def never_say_re(word):
+    """The word or phrase in any form: its last word may take an ending (guarantee -> guaranteed, lawsuit -> lawsuits)."""
+    return re.compile(r"\b%s\w*" % r"\s+".join(re.escape(p) for p in word.split()), re.I)
+
+
 def required_pre_verify_sentences(spec):
     """(where, text) for what the agent must speak to the customer before identity is verified: the opening, the
     confirm question, the security questions and the decline explanation (not third-party or hint text)."""
@@ -56,7 +102,8 @@ def required_pre_verify_sentences(spec):
     op, idn = op if isinstance(op, dict) else {}, idn if isinstance(idn, dict) else {}
     out = []
     if isinstance(op.get("first_sentence"), str):
-        out.append(("opening.first_sentence", safe_opening(op["first_sentence"])[0]))
+        # the sentence as spoken: rephrased, or word for word when the brief requires it (opening.verbatim)
+        out.append(("opening.first_sentence", safe_opening(op["first_sentence"], bool(op.get("verbatim")))[0]))
     if isinstance(op.get("confirm_question"), str):
         out.append(("opening.confirm_question", op["confirm_question"]))
     for i, q in enumerate(idn.get("questions") if isinstance(idn.get("questions"), list) else []):
@@ -240,4 +287,20 @@ def lint(workflow, spec):
 
     # 5. no nulls anywhere
     _nulls(workflow, "workflow", errs)
+
+    # 6. spec.never_say: no fixed text the agent speaks uses a forbidden word (engine lines, farewells, quoted
+    # sentences in prompts). A quoted string that is only the word itself is the prompt's own never-say list.
+    for word in never_say_words(spec):
+        rx = never_say_re(word)
+        for k, n in nodes.items():
+            spoken = []
+            if (n.get("on_enter") or {}).get("type") == "tts":
+                spoken.append(n["on_enter"].get("text", ""))
+            if k.startswith("close_"):
+                spoken.append(farewell_of(n))
+            spoken += [t for t in re.findall(r'"([^"]*)"', n.get("task_message") or "") if not rx.fullmatch(t.strip())]
+            for t in spoken:
+                m = rx.search(t or "")
+                if m:
+                    errs.append("node %s: fixed text says never-say %r: %r" % (k, m.group(0), t[:80]))
     return errs

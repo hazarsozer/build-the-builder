@@ -215,9 +215,8 @@ def test_g2_extra_call_variable_in_prompts_code_and_test_variables():
     w = C(s, OA)
     assert "{{company_name}}" in w["nodes"]["opening"]["on_enter"]["text"]
     assert "{{company_name}}" in w["system_prompt"]
-    assert "company_name" in w["test_variables"] and w["test_variables"]["customer_id"] == "c_test"
-    for k in ("first_name", "last_name", "title", "now"):
-        assert k not in w["test_variables"]
+    assert w["test_variables"]["company_name"] == "Example Ltd" and w["test_variables"]["customer_id"] == "c_test"
+    assert set(w["test_variables"]) == set(s["call_variables"])
     assert [p for p in lint(w, s) if not p.startswith("warning:")] == []
     # code nodes read it from vars: a farewell that names the customer
     v = {"title": "Ms", "last_name": "Okafor", "company_name": "Okafor Joinery"}
@@ -226,7 +225,9 @@ def test_g2_extra_call_variable_in_prompts_code_and_test_variables():
 
 
 def test_g2_reference_test_variables_unchanged():
-    assert C(A, OA)["test_variables"] == {"customer_id": "c_test"}
+    # A19: every call variable has a dashboard sample; a call passes all of them, so the samples never win
+    assert C(A, OA)["test_variables"] == {"customer_id": "c_test", "first_name": "Dana", "last_name": "Reyes",
+                                          "title": "Ms", "now": "2026-10-14T10:00"}
 
 
 def test_g2_cases_seed_extra_variables():

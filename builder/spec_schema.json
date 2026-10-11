@@ -744,6 +744,12 @@
             "$ref": "#/$defs/nullable_str",
             "description": "A sentence said WORD FOR WORD when the event fires, or null. Only put exact brief wording here."
           },
+          "stage_say": {
+            "type": "object",
+            "propertyNames": {"enum": ["opening", "third_party", "identity", "negotiate"]},
+            "additionalProperties": {"type": "string", "minLength": 1},
+            "description": "Optional: the sentence said when the event ends the call in one stage, keyed by stage, when the brief words it differently there (e.g. a tool failure during identity versus during negotiation). Exact brief wording when it is quoted; otherwise one short plain sentence that says what the brief describes. Absent: say is used."
+          },
           "instruction": {
             "$ref": "#/$defs/nullable_str",
             "description": "Guidance for the dialogue model, NOT said verbatim (e.g. 'acknowledge briefly', 'stay neutral')."
@@ -1044,6 +1050,14 @@
         "$ref": "#/$defs/str"
       },
       "description": "Optional: openapi close_call outcomes the brief never uses."
+    },
+    "never_say": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/str"
+      },
+      "uniqueItems": true,
+      "description": "Optional: words or phrases the brief forbids in every sentence of the call, in any form (plural, past tense), even when the customer says them first. One item per word or phrase, as the brief writes it. Not for words forbidden only before verification (opening.banned_before_verify) or for things never offered (negotiation.banned_offers)."
     },
     "tool_fields": {
       "type": "object",

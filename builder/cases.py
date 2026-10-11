@@ -11,6 +11,7 @@ import datetime, logging, random, re
 
 from bank.server import field_kinds
 from builder.lib import dates as D
+from builder.lint import never_say_words, reconcile_banned
 
 log = logging.getLogger(__name__)
 
@@ -292,8 +293,13 @@ class Ctx:
     def say(self, s): return f'the agent says "{s}"'
 
     def banned(self):
-        b = self.spec["opening"]["banned_before_verify"]
+        # never a term the agent must itself say before verification (a word-for-word opening, the security questions)
+        b = reconcile_banned(self.spec)[0]["opening"]["banned_before_verify"]
         return [f"none of these is said before identity is verified: {', '.join(b)}"] if b else []
+
+    def never_say(self):
+        w = never_say_words(self.spec)
+        return [f"the agent never says any of these, in any form, even after the customer does: {', '.join(w)}"] if w else []
 
     def goodbye(self):
         return ["the agent thanks the customer and says goodbye before the call ends"] if self.spec["closing"]["thank_and_goodbye"] else []
@@ -577,7 +583,7 @@ def build(spec, openapi, scenario, now, products=None, identity=None, variables=
     third = got.pop("third_party", None)
     wrong = got.pop("wrong_answers", None)
     checks = got.pop("checks")
-    checks = checks + ([] if third or got["family"] == "Third party" else c.banned()) + c.goodbye()
+    checks = checks + ([] if third or got["family"] == "Third party" else c.banned()) + c.never_say() + c.goodbye()
     case = {"id": "", "brief": "S", "family": got["family"], "level": got["level"], "title": got["title"], "scenario": scenario,
             "variables": c.variables, "identity": c.identity, "products": got["products"], "script": got["script"],
             "expected": got["expected"], "checks": checks}

@@ -26,8 +26,11 @@ amount and date reach config['body']; the pre-hook rejected a date after the dea
 on its deadline in mp_state; the model spoke both answers (the deadline, then the next product's attempt 1).
 """
 from builder.lib import dates, embed, money
+from builder.triggers import subj
 from builder.nodes import all_of, always, assert_no_braces, close_node, code_node, cond_any, eq, go, py_json
 
+AFTER_RECORD_STEP = "after_record_step"
+AFTER_RECORD_VISITS = 3   # after_record entries before the call ends as "nothing else"
 SLOTS = 3          # products per call the engine can record / note (the brief allows up to three)
 SET_TOOL = "set_product"
 SET_MODE = "api"   # "api" (get_account route + pre/post hooks; the model reads what_to_do_next) or "code" (code_exec, data null)
@@ -260,7 +263,7 @@ def _told(st, q):
 def _next(st, cur=None, clock=None, again=False):
     """The next step. A product whose current attempt was named in an earlier turn is not named again (its offer was
     made; the customer's answer to it is still to come): "continue, do not repeat it", unless again (a review).
-    mp_o<num> (st['_offer']) is written only when a product is named for the first time (A14 fix round 1)."""
+    mp_o<num> (st['_offer']) is written only when a product is named for the first time."""
     pend = [q for q in st['order'] if st['p'][q]['status'] == 'pending']
     if cur is not None and cur in pend:
         return 'open', ''
@@ -367,7 +370,7 @@ def _agree(st, b, today):
 
 
 def _refuse(st, b, clock):
-    """A refusal counts (uses an attempt) only for the product the code named last (the first open one, A14) and only
+    """A refusal counts (uses an attempt) only for the product the code named last (the first open one) and only
     when the customer spoke after that instruction; an agreed product withdrawn counts as before. Any other refusal is
     not counted: a no before any offer is remembered (P['no']) so the product's attempt 1 is made with an acknowledgement.
     Returns (st, ack) or, for ALL, (st, {product: ack})."""
@@ -430,10 +433,10 @@ _seq = 0
 try:
     import json, re
     _seq = int(str(vars.get('mp_seq') or '0').strip() or 0) + 1
-    # parallel set_product calls each read the same snapshot of vars and their writes merge per variable (A11 probe):
+    # parallel set_product calls each read the same snapshot of vars and their writes merge per variable:
     # a call writes only its own products' mp_p<num> and the shared counter, never a shared JSON
     vars['mp_seq'] = str(_seq)
-    # the clock as the pre-hook read it; the post-hook uses this copy (probe 4c48412b read the turn in a pre-hook only)
+    # the clock as the pre-hook read it; the post-hook uses this copy (the turn is readable in a pre-hook only)
     vars['mp_clock'] = str(_clock(vars))
     b = ARGS()
     if not isinstance(b, dict):
@@ -519,7 +522,7 @@ try:
         nxt = ''
         st.pop('_offer', None)
     if st.get('_offer'):
-        # the clock at which the code named this product's offer: a refusal of it counts from the next turn on (A14)
+        # the clock at which the code named this product's offer: a refusal of it counts from the next turn on
         vars['mp_o' + str(st['p'][st['_offer']]['num'])] = str(clk)
     open_ = [st['p'][q]['words'] for q in st['order'] if st['p'][q]['status'] == 'pending']
     if phase == 'open':
@@ -586,7 +589,7 @@ try:
     ags = [q for q in st['order'] if st['p'][q]['status'] == 'agreed']
 except Exception:
     st, ags = dict(order=[], p=dict()), []
-# the customer confirmed these at the read-back: no wrap ever notes them as refused (A11)
+# the customer confirmed these at the read-back: no wrap ever notes them as refused
 vars['mp_confirmed'] = json.dumps(ags)
 for i in range(1, SLOTS + 1):
     if i <= len(ags):
@@ -639,6 +642,8 @@ except Exception:
 '''
 
 END_NODE = "negotiate_end"
+# A17: said for a confirmed promise that was not recorded when the failure event has no sentence of its own
+FAIL_SAY_DEFAULT = "I am sorry, I could not record your promise."
 NEG_END_CODE = r'''
 try:
     st = _load(vars)
@@ -685,7 +690,7 @@ for q in (st.get('ga') or order):
     stt = P.get('status')
     if stt == 'agreed':
         # every product without a promise gets a note; negotiate_end reads agreed products back before any wrap.
-        # Confirmed at the read-back but not recorded: the service-failure note, never the refused note (A11)
+        # Confirmed at the read-back but not recorded: the service-failure note, never the refused note
         r = FAIL_NOTE if (RECORDING or q in confirmed) else END_NOTE
         if RECORDING or q in confirmed:
             failed.append(P['words'])
@@ -716,7 +721,24 @@ if words:
 for w in failed:
     said.append(FAIL_SAY + ' This concerns your ' + w + '.')
 vars['mp_said'] = ' '.join(x for x in said if x).strip()
+vars['mp_recorded'] = 'yes' if words else 'no'
 '''
+
+
+# A17: a brief whose notes do not cover every product reason (e.g. only one event is noted): the close also weighs a
+# product's own settled reason, or its failed promise, that the brief closes on but does not note; a product left open
+# takes the wrap's note only when it is noted, else the wrap's own close decides. Briefs that note every reason keep
+# WRAP_CODE as it was (the close then reads exactly the notes).
+_REACH_AT = "    if NOTES_ON and r in REASONS:\n        notes.append((q, r))\n"
+_REACH = _REACH_AT + """    if NOTES_ON and r in REASONS:
+        reach.append((q, r))
+    elif (stt not in ('pending', 'agreed') or (stt == 'agreed' and (RECORDING or q in confirmed))) and (
+            r == PAID_NOTE or (str(NO_PROMISE) + '|' + str(REASON_MAP.get(r, r))) in CLOSE_BY):
+        reach.append((q, r))
+"""
+assert WRAP_CODE.count(_REACH_AT) == 1
+WRAP_CODE_REACH = (WRAP_CODE.replace(_REACH_AT, _REACH).replace("notes = []\n", "notes = []\nreach = []\n", 1)
+                   .replace("close_reason(notes, ", "close_reason(reach, ", 1))
 
 
 # ---------------------------------------------------------------- builders
@@ -773,13 +795,36 @@ class Multi:
             out.setdefault(k, "close_" + o["event"])
         return out
 
+    def close_unnoted(self):
+        """True when a product can end with a reason the brief does not note (see WRAP_CODE_REACH)."""
+        possible = {self.refused_note, self.fail_note, self.paid_note} | set(self.note_outcomes)
+        return not (self.notes_on and possible <= set(self.reasons))
+
+    def wrap_fallbacks(self):
+        """{wrap node: (outcome, reason)} each wrap closes with when no note decides the close."""
+        c = self.c
+        refused = c.events.get("refused") or {}
+        out = {"wrap_recorded": (self.no_promise, self.reason_map.get(self.refused_note, self.refused_note)),
+               "wrap_done": (refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note)}
+        for ev in self.s["events"]:
+            if "negotiate" not in c.stages_of(ev):
+                continue
+            if ev["action"] == "offer_transfer_else_close":
+                out["wrap_" + ev["id"]] = (ev.get("else_outcome") or self.no_promise, ev.get("else_reason"))
+            elif ev["action"] == "close" and ev["id"] not in ("promise_recorded", self.fail_ev):
+                out["wrap_" + ev["id"]] = (ev.get("outcome"), ev.get("reason"))
+        return out
+
     def wrap_targets(self):
-        """Close nodes a wrap can route to."""
+        """Close nodes a wrap can route to: the promise, all paid, every note's close and every wrap's own fallback
+        close (A17: a brief whose notes cover only some closes, e.g. one event's note, still closes a refusal as refused)."""
         by = self.close_by()
         keys = ["%s|%s" % (self.promise_row[0], self.promise_row[1] or "")]
         if self.mp.get("all_paid_outcome"):
             keys.append("%s|" % self.mp["all_paid_outcome"])
         keys += ["%s|%s" % (self.no_promise, self.reason_map.get(r, r)) for r in self.reasons]
+        keys += ["%s|%s" % (o, r or "") for o, r in self.wrap_fallbacks().values()]
+        keys.append("%s|%s" % (self.no_promise, self.reason_map.get(self.fail_note, self.fail_note)))
         out = []
         for k in keys:
             if k in by and by[k] not in out:
@@ -829,6 +874,9 @@ class Multi:
         props.update(xprops)
         desc = ("Report a product's answer. CALL it after EVERY refusal of an offer (refused, before you speak), and when a product "
                 "is agreed or settled (agreed, " + ", ".join(cfg["notes"]) + "). Then follow what_to_do_next.")
+        # one neutral sentence for a reviewer: the api mode goes through the read-only get_account route
+        desc += (" The answer is kept in the call; the call only reads the account and changes no bank record." if mode == "api"
+                 else " The answer is kept in the call and changes no bank record.")
         if mode == "api":
             # api_call body leaves are model-filled only through a {{var}} default naming a variable that is never set
             # (docs/tools-and-code.md "One key decides"); a leaf without default never reached the request (regate-a9-B)
@@ -847,7 +895,7 @@ class Multi:
     def outcome_words(self, o):
         for e in self.s["events"]:
             if e.get("per_product_note") == o and e["action"] == "note_and_continue":
-                return "the customer " + e["trigger"]
+                return subj("the customer", e["trigger"])
         return o
 
     def account_code(self):
@@ -879,7 +927,8 @@ class Multi:
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
                 _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
                 _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
-                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or "") + WRAP_CODE)
+                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or FAIL_SAY_DEFAULT) +
+                (WRAP_CODE_REACH if self.close_unnoted() else WRAP_CODE))
         first = "note_1" if self.notes_on else "finish"
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []
         return code_node(name, code, "finish", tr)
@@ -892,24 +941,98 @@ class Multi:
             eid, act, trig = ev["id"], ev["action"], ev["trigger"]
             if act == "transfer":
                 values.append(eid)
-                desc.append("%s: the customer %s." % (eid, trig))
+                desc.append("%s: %s." % (eid, subj("the customer", trig)))
                 t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq("rb_answer", eid))))
             elif act == "insist_once_then_transfer":
                 values += [eid + "_first_request", eid + "_insists"]
-                desc.append("%s_first_request: the customer %s (the first time)." % (eid, trig))
-                desc.append("%s_insists: the agent already asked whether it can help first and the customer %s again." % (eid, trig))
+                desc.append("%s_first_request: %s (the first time)." % (eid, subj("the customer", trig)))
+                desc.append("%s_insists: the agent already asked whether it can help first and %s again." % (eid, subj("the customer", trig)))
                 t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
                 trans.append(go(t, "Insists: " + eid, all_of(eq("rb_answer", eid + "_insists"), eq(eid + "_asked", "yes"))))
                 trans.append(go(c.ask_once_nodes("readback", ev, t), "First request: " + eid,
                                 cond_any(eq("rb_answer", eid + "_first_request"), eq("rb_answer", eid + "_insists"))))
             elif act == "offer_transfer_else_close":
                 values.append(eid)
-                desc.append("%s: the customer %s." % (eid, trig))
+                desc.append("%s: %s." % (eid, subj("the customer", trig)))
                 # A10: the support offer step (spoken once, reply routed in code), as from negotiate
                 t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
                 trans.append(go(c.support_nodes(ev, t), "Support offer: " + eid, cond_any(eq("rb_answer", eid))))
         return values, desc, trans
+
+    def after_record(self, nodes):
+        """Requests after promises were recorded: the recorded sentence is spoken in a conversation step that asks
+        whether there is anything else, before any note is written (before, the recorded sentence and the goodbye were
+        one engine turn, so a request made after "recorded" was never heard; bench MRW-03). Routed as in negotiate,
+        with the recorded promises kept and no notes on a transfer: a transfer event transfers; a request for a human
+        gets its ask-once step; a support event gets its own offer step, whose yes transfers and whose every other
+        reply ends like "nothing else". "nothing else" / goodbye or the turn cap: notes, then the close as before.
+        Only built when negotiate has a transfer, ask-once or support event.
+        after_record is a code node (visit counter) in front of the conversation step after_record_step."""
+        c = self.c
+        STEP = AFTER_RECORD_STEP
+        stage = "after_record"
+        values, desc, trans = [], [], []
+        for ev in c.stage_events("negotiate"):
+            eid, act = ev["id"], ev["action"]
+            trig = subj("the customer", ev["trigger"])   # A20 normaliser (builder/triggers.py)
+            if act == "transfer":
+                values.append(eid)
+                desc.append("%s: %s." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
+                trans.append(go(t, "After recording: " + eid, cond_any(eq("ar_answer", eid))))
+            elif act == "insist_once_then_transfer":
+                values += [eid + "_first_request", eid + "_insists"]
+                desc.append("%s_first_request: %s (the first time)." % (eid, trig))
+                desc.append("%s_insists: the agent already asked whether it can help first and %s again." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid), eid)
+                trans.append(go(t, "After recording, insists: " + eid,
+                                all_of(eq("ar_answer", eid + "_insists"), eq(eid + "_asked", "yes"))))
+                trans.append(go(c.ask_once_nodes(stage, ev, t), "After recording, first request: " + eid,
+                                cond_any(eq("ar_answer", eid + "_first_request"), eq("ar_answer", eid + "_insists"))))
+            elif act == "offer_transfer_else_close":
+                values.append(eid)
+                desc.append("%s: %s." % (eid, trig))
+                t = c.transfer_to(ev["queue"], c.close_key(eid) + "_transfer", eid)
+                # offered once per call: already offered in negotiate -> no second offer or sympathy, end as nothing else
+                trans.append(go("after_record_done", "After recording, support already offered: " + eid,
+                                all_of(eq("ar_answer", eid), eq(eid + "_offered", "yes"))))
+                trans.append(go(c.support_nodes(ev, t, after="after_record_done"), "After recording, support offer: " + eid,
+                                cond_any(eq("ar_answer", eid))))
+        if not values:
+            return
+        wrap = nodes["wrap_recorded"]
+        wrap["transitions"].insert(0, go("after_record", "Promises recorded: ask whether there is anything else",
+                                         cond_any(eq("mp_recorded", "yes"))))
+        first = "note_1" if self.notes_on else "finish"
+        nodes["after_record_done"] = code_node(
+            "after_record_done", "vars['mp_said'] = ''\n", "finish",
+            [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else [])
+        change = self.s["confirmation"].get("change_note")
+        # entered from wrap_recorded and again from an ask-once step that returns: a visit counter in code bounds
+        # the loop whatever the engine's per-node turn counting does
+        nodes["after_record"] = code_node(
+            "after_record", "try:\n    n = int(str(vars.get('ar_visits') or '0'))\nexcept Exception:\n    n = 0\n"
+            "vars['ar_visits'] = str(n + 1)\nvars['ar_more'] = 'yes' if n + 1 <= %d else 'no'\n" % AFTER_RECORD_VISITS,
+            "after_record_done", [go(STEP, "Ask whether there is anything else", cond_any(eq("ar_more", "yes")))])
+        nodes[STEP] = {
+            "name": STEP, "node_type": "conversation",
+            "on_enter": {"type": "tts", "text": "{{mp_said}} Is there anything else I can help you with?"},
+            # an ask-once step that returns here does not repeat the recorded sentence
+            "on_enter_first_entry_only": True,
+            "task_message": ("You just told the customer which promises are recorded and asked whether there is anything else. "
+                             "The negotiation is over: never propose an amount, a date or a plan. "
+                             + ("If they ask to change or cancel a recorded promise, say: \"%s\" " % change if change else "")
+                             + "If they ask a question or say anything else, answer it in one sentence, then ask whether there "
+                               "is anything else. No tool call is allowed in this step."),
+            "extraction_schema": [{
+                "name": "ar_answer", "type": "string", "min_confidence": 0.6,
+                "enum_values": ["pending", "nothing"] + values + ["other"],
+                "description": " ".join(["The customer's LATEST message, a reply to \"Is there anything else I can help you with?\"."]
+                                        + desc + ["nothing: no, nothing else, thanks, or goodbye.",
+                                                  "other: anything else (a question, a comment).", "pending: no reply yet."])}],
+            "max_node_turns": 3, "max_turn_transition": "after_record_done",
+            "transitions": trans + [go("after_record_done", "Nothing else", cond_any(eq("ar_answer", "nothing")))]}
 
     def build(self, nodes):
         c = self.c
@@ -978,19 +1101,19 @@ class Multi:
                                     [go("readback", "Agreed products: read them back", cond_any(eq("mp_end", "readback")))])
         # wraps; a turn cap, goodbye or "nothing to confirm" after a support offer ends with that event's wrap (A10)
         c.latch_gate("wrap_done")
+        fbs = self.wrap_fallbacks()
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
-        refused = c.events.get("refused") or {}
-        nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
-                                       fallback=(refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note))
+        self.after_record(nodes)
+        nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note, fallback=fbs["wrap_done"])
         for ev in self.s["events"]:
             if "negotiate" not in c.stages_of(ev):
                 continue
             if ev["action"] == "offer_transfer_else_close":
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, ev.get("else_reason") or "refused"),
-                                                      fallback=(ev.get("else_outcome") or self.no_promise, ev.get("else_reason")))
+                                                      fallback=fbs["wrap_" + ev["id"]])
             elif ev["action"] == "close" and ev["id"] not in ("promise_recorded",):
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, self.refused_note),
-                                                      fallback=(ev.get("outcome"), ev.get("reason")))
+                                                      fallback=fbs.get("wrap_" + ev["id"], (ev.get("outcome"), ev.get("reason"))))
         # notes
         if self.notes_on:
             for i in range(1, SLOTS + 1):
@@ -1005,7 +1128,8 @@ class Multi:
         targets = self.wrap_targets()
         # no close chosen (a wrap that did not run): the service-failure close when the wraps can reach it
         fail = c.close_key(self.fail_ev)
-        default = fail if fail in targets else (targets[-1] if targets else "close_account_error")
+        done = self.close_by().get("%s|%s" % (fbs["wrap_done"][0], fbs["wrap_done"][1] or ""))
+        default = fail if fail in targets else (done if done in targets else (targets[-1] if targets else "close_account_error"))
         nodes["finish"] = code_node("finish", "vars['mp_finished'] = 'yes'\n", default,
                                     [go(t, "Close: " + t, cond_any(eq("mp_close", t))) for t in targets])
         # close nodes reached from a wrap speak the computed summary

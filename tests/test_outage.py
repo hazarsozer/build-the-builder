@@ -186,9 +186,14 @@ def entry_states(w, x):
         out.append(u1)
     if x in reach(w, "prepare_account", without={"readback"}):
         out.append(u2)
-    if "readback" in n and x in reach(w, "readback") - reach(w, "prepare_account", without={"readback"}):
+    after_only = (reach(w, "after_record") - reach(w, "readback", without={"after_record"})) if "after_record" in n else set()
+    if "readback" in n and x in reach(w, "readback") - reach(w, "prepare_account", without={"readback"}) - after_only:
         # several products: the read-back is entered only after the set tool wrote it
         out.append(dict(u2, mp_phase="readback", mp_readback="Product 1: 420.00 on 16 October. Do you confirm?"))
+    if "after_record" in n and x in reach(w, "after_record") - reach(w, "prepare_account", without={"after_record"}):
+        # A18: after_record is entered only after wrap_recorded wrote the recorded sentence (mp_recorded == yes)
+        out.append(dict(u2, mp_phase="confirmed", mp_recorded="yes", mp_said="Your promise for your credit card is recorded.",
+                        mp_close="close_promise_recorded"))
     return out
 
 
@@ -229,20 +234,29 @@ def walk(w, x, v):
         cur = route(node, v)
 
 
-def close_body(w, v):
-    """The close_call body the engine sends at the end of the call: a field whose default is one unresolved
-    placeholder is dropped; then the pre-hook runs."""
+def close_request(w, v):
+    """The close_call request the engine sends at the end of the call. A field whose default is one unresolved
+    placeholder is filled by one model call (probe 3a362703: it guessed an outcome); here the guess is the enum's
+    first value and "guessed" for a reason. Then the pre-hook runs. Returns (url, body)."""
     t = [t for t in w["tools"] if t["function"]["name"] == "close_call"][0]
+    props = t["function"]["parameters"]["properties"]
     body = {}
-    for f, p in t["function"]["parameters"]["properties"]["body"]["properties"].items():
+    for f, p in props["body"]["properties"].items():
         d = p.get("default")
         m = PH.fullmatch(d) if isinstance(d, str) else None
         if m and m.group(1) not in v:
+            body[f] = (p.get("enum") or ["guessed"])[0]
             continue
         body[f] = str(v[m.group(1)]) if m else d
-    cfg = {"body": body}
+    cfg = {"url": props["url"]["default"], "body": body}
     exec(t["pre_process_code"], {"config": cfg, "vars": dict(v), "result": None})
-    return cfg["body"]
+    return cfg["url"], cfg["body"]
+
+
+def close_body(w, v):
+    """The body close_call records at the bank: none when the pre-hook kept the request on the read-only route."""
+    url, body = close_request(w, v)
+    return body if url.endswith("/close_call") else {}
 
 
 def is_close(node):
@@ -352,14 +366,16 @@ def test_graph_has_no_dead_end_or_uncapped_loop(spec_key):
 
 @pytest.mark.parametrize("spec_key", sorted(SPECS))
 def test_close_call_prehook_drops_an_empty_reason(spec_key):
+    """A21 item 7: the values come from the close node's vars (never the body the engine or the model filled)."""
     w = C(SPECS[spec_key], OA)
     pre = [t for t in w["tools"] if t["function"]["name"] == "close_call"][0]["pre_process_code"]
-    for body, want in [({"outcome": "no_promise", "reason": ""}, {"outcome": "no_promise"}),
-                       ({"outcome": "no_promise", "reason": "refused"}, {"outcome": "no_promise", "reason": "refused"}),
-                       ({"outcome": "promise", "reason": "service_error"}, {"outcome": "promise"})]:
-        cfg = {"body": dict(body)}
-        exec(pre, {"config": cfg, "vars": {}, "result": None})
-        assert cfg["body"] == want, body
+    for vs, want in [({"outcome": "no_promise", "reason": ""}, {"outcome": "no_promise"}),
+                     ({"outcome": "no_promise", "reason": "refused"}, {"outcome": "no_promise", "reason": "refused"}),
+                     ({"outcome": "promise", "reason": "service_error"}, {"outcome": "promise"})]:
+        cfg = {"url": "x", "body": {"customer_id": "c1", "outcome": "not_verified", "reason": "failed"}}
+        exec(pre, {"config": cfg, "vars": dict(vs, close_ready="yes"), "result": None})
+        assert cfg["body"] == dict(want, customer_id="c1"), vs
+        assert cfg["url"].endswith("/close_call")
 
 
 @pytest.mark.parametrize("spec_key", sorted(SPECS))

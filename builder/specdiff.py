@@ -26,7 +26,7 @@ IGNORE_TOP = {"sources", "facts", "conflicts", "examples", "custom_code", "extra
 IGNORE_EVENT_KEYS = {"trigger", "instruction"}
 # Lists whose disagreement is merged by union: extra items only make the agent stricter.
 UNION_LISTS = {"opening.confirm_accept", "opening.confirm_reject",
-               "opening.banned_before_verify", "negotiation.banned_offers"}
+               "opening.banned_before_verify", "negotiation.banned_offers", "never_say"}
 # Scalar lists whose order matters; every other scalar list is compared as a set.
 ORDERED_SCALAR_LISTS = {"bands[*].days_late"}
 # Value assumed when an optional key is absent (schema "Default when absent").
@@ -36,6 +36,7 @@ DEFAULTS = {
     "multi_product.notes.timing": "immediate",
     "say_rules[*].stages": ["any"],
     "opening.verbatim": False,
+    "never_say": [],
 }
 
 _BRACKET = re.compile(r"\[[^\[\]]*\]")

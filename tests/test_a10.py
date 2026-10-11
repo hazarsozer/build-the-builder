@@ -264,12 +264,13 @@ def test_self06_replay_answer_with_a_question_is_checked_not_declined():
 def test_identity_decline_without_new_answer_still_closes():
     w = C(A, OA)
     n = w["nodes"]
-    v = {"id_event": "declined", "id_partial": "", "id_partial_spent": "14 March 1988"}
+    # A21: a decline closes only after the one explanation was spoken
+    v = {"id_event": "declined", "id_partial": "", "id_partial_spent": "14 March 1988", "id_explain_said": "yes"}
     k = route(n["identity"], v)
     exec(_code(n[k]), {"vars": v})
     assert route(n[k], v) == "close_declined"
     # parts the gate already sent back once do not send it back again
-    v = {"id_event": "declined", "id_partial": "14 March"}
+    v = {"id_event": "declined", "id_partial": "14 March", "id_explain_said": "yes"}
     exec(_code(n["id_decline_gate"]), {"vars": v})
     assert route(n["id_decline_gate"], v) == "identity"
     v["id_event"] = "declined"

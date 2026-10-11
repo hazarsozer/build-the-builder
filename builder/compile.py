@@ -20,33 +20,42 @@ import re
 import sys
 
 from builder.lib import dates, embed, money
-from builder.lint import lint, safe_opening
-from builder import multi as multi_mod
+from builder.lint import SPOKEN_BEFORE_SUCCESS, lint, never_say_words, safe_opening, safe_pre_success
+from builder import labels, layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
-from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
+from builder.triggers import verb_led, bare_trigger, sentence, split_trigger, subj, trigger_rest
+from builder.nodes import (FILL_CODE, all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
                            cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
 # "any" means the customer's own stages; a third party is only covered when a spec names it.
 ANY_STAGES = ["opening", "identity", "negotiate"]
+# conversation steps before the customer is verified (no offer can come up there)
+PRE_VERIFY_NODES = {"opening", "identity", "third_party", "id_explain"}
 # Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
 STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
                "negotiate": {"create_promise"}, "any": set()}
 STAGE_TOOLS_ALL = set().union(*STAGE_TOOLS.values())
 PROMISE_FIELDS = ("product_id", "amount", "date")
-# Call variables every brief so far has; any other spec.call_variables entry is declared in test_variables.
-STANDARD_VARS = ("customer_id", "first_name", "last_name", "title", "now")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
-               "readback": "rb_answer"}
+               "readback": "rb_answer", "after_record": "ar_answer"}
+AFTER_RECORD = "after_record"   # multi: the step after promises were recorded (multi.Multi.after_record)
 # Value a stage's extraction variable is reset to when the conversation comes back to it.
 EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": "continue", "negotiate": "continue",
-                   "readback": "pending"}
+                   "readback": "pending", "after_record": "pending"}
 # L1 (PUB-06): an amount said once is pointed back to, never offered again.
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
+# A21: the simulator often cuts a turn mid-phrase; "Go on." once per run of cut-offs, then the pending question again
+# (an agent that says only "Go on." looks stuck and the customer hangs up)
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
-           'say only "Go on." and read it with the next message.')
+           'say only "Go on." and read it with the next message. Never twice in a row: after your own "Go on.", ask your last question again in a few words.')
+# negotiate: small talk with nothing about paying is no refusal either (it used up the persuasion plan in PUB-05); the
+# re-ask names no figure or date, so it never reads as a second offer
+NEG_CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") or small talk with nothing about paying is not an answer or a refusal '
+               'and uses no attempt: after a cut-off say only "Go on." and read it with the next message, never twice in a row; '
+               'otherwise ask about your current offer again in a few words, no amount or date ("So, can you do that?").')
 # A12 (one product): a named day is judged by check_date in code, never by the model
 CHECK_DAY = ('A day the customer names themselves ("the 26th", "twenty-sixth", "next Friday", "tomorrow"): before you answer, call %s with their latest words for it '
              '(a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th."). Never judge a date yourself: say what the result says, use its date in create_promise. '
@@ -79,6 +88,13 @@ LEAD_IN = {
     "callback": "Thank you, we will call back then.",
     "wrong_number": "I apologise for the inconvenience.",
 }
+# A17: verify_identity failing (an HTTP error skips the post-hook, so no what_to_do_next reaches the model)
+ID_FAIL_CLOSE = "close_identity_service_error"
+TECH_AT = "        elif technical:\n"
+TECH_COUNT = "            vars['id_tech_n'] = str(int(str(vars.get('id_tech_n') or '0')) + 1)\n"
+ID_TOOL_FAIL = ('If a verify_identity call fails (an error such as "API request failed" instead of a result): nothing was checked and it is '
+                'NOT a wrong answer. Call verify_identity again at once with the same field and answer, before you speak and without '
+                'asking the customer again. If it fails a second time, the call ends automatically: do not say goodbye yourself.')
 NUM = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
 ORD = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
 CB_DAY_WORDS = {"today": "today", "next_business_day": "the next business day", "next_day": "tomorrow",
@@ -88,6 +104,9 @@ CB_DAY_WORDS = {"today": "today", "next_business_day": "the next business day", 
 # ---------------------------------------------------------------- text helpers
 
 _PH = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# a sentence of sympathy ("I am sorry to hear that", "my condolences"): an event's fixed sentence that says one is
+# the call's only one (OUT-03/04: a prompted extra sentence plus the fixed one read as two)
+SYMPATHY = re.compile(r"\b(?:sorry|condolences?|sympath\w*)\b", re.I)
 
 
 def tpl(s):
@@ -123,20 +142,8 @@ def with_article(s):
     return ("an " if s[:1].lower() in "aeiou" else "a ") + s
 
 
-def bare_trigger(t):
-    """A trigger without its subject ("The customer asks X." -> "asks X")."""
-    t = re.sub(r"^(?:the customer|the person)\s+", "", (t or "").strip().rstrip(". "), flags=re.I)
-    return t[:1].lower() + t[1:]
-
-
 def team_words(queue):
     return "a colleague" if queue == "general" else "our " + queue.replace("_", " ") + " team"
-
-
-def subj(who, trigger):
-    """'the person says X' when the trigger starts with a verb, else the trigger alone."""
-    w = (trigger.split() or [""])[0].lower()
-    return (who + " " + trigger) if (w.endswith("s") or w == "still") and w not in ("this", "is") else trigger
 
 
 def stages_of(ev):
@@ -205,7 +212,7 @@ try:
             parts.append('on the next business day, ' + speak(next_bd(today, CAL)) + ', ' + win)
             tm = today + datetime.timedelta(days=1)
             if next_bd(today, CAL) != tm and 'next_day' not in CB['days']:
-                # A15 (IDS-08): "tomorrow" is a holiday or a weekend day; the model silently booked the next business day
+                # "tomorrow" is a holiday or a weekend day; the model silently booked the next business day
                 notes.append('Tomorrow, ' + speak(tm) + ', is not a business day, so tomorrow is outside the window.')
         elif kind == 'next_day':
             parts.append('tomorrow, ' + speak(today + datetime.timedelta(days=1)) + ', ' + win)
@@ -389,7 +396,7 @@ try:
     vars['deadline_iso'] = f['deadline'].isoformat()
     for i, a in enumerate(f['attempts']):
         vars['attempt' + str(i + 1) + '_text'] = speak(a['date'])
-    # A12 fix 3/4: the plan attempts' dates and amount kinds, in order; check_date counts one as proposed only once the
+    # the plan attempts' dates and amount kinds, in order; check_date counts one as proposed only once the
     # model says it has reached that attempt, and adds the dates its own results tell the model to offer
     vars['offer_dates'] = ','.join(a['date'].isoformat() for a in f['attempts'])
     vars['offer_amounts'] = ','.join(a['amount'] for a in f['attempts'])
@@ -762,7 +769,7 @@ try:
             vars['id_partial_field'] = ''
         if not (incomplete or technical) and d.get('verified') is False and d.get('ok') is not False and d.get('all_verified') is not True \
                 and not (hint and hint in HINTS):
-            # A15: the brief's own limit (identity.max_wrong, wrong_scope), counted here; the bank's count wins when lower
+            # the spec's own limit (identity.max_wrong, wrong_scope), counted here; the bank's count wins when lower
             key = 'id_wrong_' + (str(vars.get('id_field_cur') or '') if SCOPE == 'per_question' else 'all')
             n = int(str(vars.get(key) or '0')) + 1
             vars[key] = str(n)
@@ -783,6 +790,7 @@ try:
         elif d.get('ok') is False:
             d['what_to_do_next'] = 'The answer could not be read. This is NOT a wrong answer. Ask the customer to repeat it (' + UNREADABLE + '). Then call verify_identity again.'
         elif d.get('verified') is True:
+            vars['id_ok_' + str(vars.get('id_field_cur') or '')] = 'yes'   # the decline gate re-asks the first open question
             d['what_to_do_next'] = 'This answer is correct. ' + NEXT_Q + ' ' + NOT_YET
         elif str(left) == '0':
             d['what_to_do_next'] = 'That was the last wrong answer allowed. The check has ended. Do not ask anything else.'
@@ -793,20 +801,53 @@ except Exception:
     pass
 '''
 
+# A21: the opening's ask counter. A not-confirmed reply uses one ask; the last one closes as unclear, the others go back
+# to the opening (its extraction reset, so a stale value is not counted twice). Chatter never comes here.
+TP_TURN_CAP = 20   # third_party's turn cap (a safety net only)
+OPENING_ASK = "opening_ask"
+OPENING_CHATTER = 5   # extra opening turns for chatter, on top of the asks (the turn cap still ends the step)
+OPENING_ASK_CODE = r'''
+n = int(str(vars.get('op_asks') or '0')) + 1
+vars['op_asks'] = str(n)
+vars['op_gate'] = 'close' if n >= %d else 'again'
+vars['line_status'] = %r
+'''
+
 # A10: the support hold node's own turn counter before the customer's first reply is this value (probe, fix round 1).
 SUPPORT_TURNS_SEEN = 0
 
 # A10: identity's decline route. A message whose extracted answer parts are new (not the parts the last checked call
 # used, not the parts this gate already sent back) carries an answer: back to identity to check it, once per parts.
+# A21: a decline closes only after the one explanation was given. The flag id_explained is set in code when this gate
+# sends a decline to id_explain, which speaks the explanation and the open question (tts, fix round 1); it is also set
+# when the extractor saw the agent give it on its own (id_explain_said). A cut-off message read as a decline in
+# PUB-03/PUB-07 closed the call before any explanation.
 ID_DECLINE_GATE = r'''
+if str(vars.get('id_explain_said') or '') == 'yes':
+    vars['id_explained'] = 'yes'
 part = str(vars.get('id_partial') or '').strip()
 if part and part != str(vars.get('id_partial_spent') or '').strip() and part != str(vars.get('id_gate_part') or ''):
     vars['id_gate_part'] = part
     vars['id_event'] = 'continue'
     vars['id_gate'] = 'answer'
+elif str(vars.get('id_explained') or '') != 'yes':
+    vars['id_explained'] = 'yes'
+    vars['id_event'] = 'continue'
+    ask = ASKS[-1][1]
+    for fld, a in ASKS:
+        if str(vars.get('id_ok_' + fld) or '') != 'yes':
+            ask = a
+            break
+    try:
+        vars['id_ask_text'] = _fill(ask)
+    except Exception:
+        vars['id_ask_text'] = ask
+    vars['id_explain_reply'] = 'pending'
+    vars['id_gate'] = 'explain'
 else:
     vars['id_gate'] = 'close'
 '''
+ID_EXPLAIN = "id_explain"
 
 PROMISE_POST = r'''
 try:
@@ -818,7 +859,7 @@ try:
             result['data'] = d
         good = str(result.get('status', 'success')) == 'success' and d.get('ok') is True
         if vars.get('promise_reject') or str(vars.get('promise_sent') or '') != 'yes':
-            # A12: the pre-hook kept the call off the bank (the request went to get_account): never recorded
+            # the pre-hook kept the call off the bank (the request went to get_account): never recorded
             result['data'] = d = dict(ok=False, recorded=False, promise_status='rejected',
                                       what_to_do_next=str(vars.get('promise_reject') or NOT_CHECKED))
         elif good:
@@ -943,13 +984,13 @@ try:
     said = _cd_arg(b, 'said')
     iso = _cd_arg(b, 'date')[:10]
     dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
-    # A12 fix 4: only dates the agent has really proposed count as offers: the plan attempts it says it has reached
+    # only dates the agent has really proposed count as offers: the plan attempts it says it has reached
     # (attempt), and the dates an earlier result told it to offer. A date the customer names first is a new date.
     pd = [x for x in str(vars.get('offer_dates') or '').split(',') if x]
     pk = str(vars.get('offer_amounts') or '').split(',')
     m = re.match(r'\s*(\d+)', _cd_arg(b, 'attempt'))
     n = min(int(m.group(1)), len(pd)) if m else 0
-    # A12 fix 5: a "current" attempt amount is the floor once the model says it offered it, else the full amount
+    # a "current" attempt amount is the floor once the model says it offered it, else the full amount
     fo = _cd_arg(b, 'floor_offered').lower().strip(' .!') in ('yes', 'y', 'true')
     offered = set(pd[:n]) | set(x for x in str(vars.get('cd_offered') or '').split(',') if x)
     prefer = []
@@ -989,7 +1030,7 @@ try:
             msg = ('NO DAY FOUND in the words given. If the customer named a day, call ' + TOOL + ' again with it as YYYY-MM-DD in date; '
                    'otherwise ask for the exact day.')
     else:
-        kind, off, bad, todo = _cd_judge(d, dl)
+        kind, off, bad, next_step = _cd_judge(d, dl)
         if kind == 'ok' and d.isoformat() in offered:
             i = max([j for j in range(n) if pd[j] == d.isoformat()] or [n - 1])
             msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. Do not propose it again. ' + _rb(i, d) + ', then record (create_promise date: ' + d.isoformat() + ').')
@@ -997,10 +1038,10 @@ try:
             msg = ('NEW DATE: ' + say_date(d) + ' can be accepted. You have not offered it: do not offer it now. ' + _rb(max(n, 1) - 1, d) +
                    '. This is not a question about paying and not a new offer. After a yes, record (create_promise date: ' + d.isoformat() + ').')
         elif kind == 'past':
-            msg = 'IN THE PAST: ' + bad + '. Say so and ' + todo + '.'
+            msg = 'IN THE PAST: ' + bad + '. Say so and ' + next_step + '.'
         else:
             head = dict(after_deadline='AFTER THE DEADLINE', today_closed='TOO LATE FOR TODAY').get(kind, 'NOT A BUSINESS DAY')
-            first = 'Say ' + todo[4:] if todo.startswith('say ') else 'Say so and ' + todo
+            first = 'Say ' + next_step[4:] if next_step.startswith('say ') else 'Say so and ' + next_step
             msg = head + ': ' + bad + '. ' + first + (cur if off is not None else '') + '.' + never
             if off is not None:
                 msg += ' If they accept, create_promise date: ' + off.isoformat() + '.'
@@ -1030,6 +1071,9 @@ except Exception:
 # pre-hook, after it accepted the date, points the request at create_promise (PROMISE_URL). Any rejection, any request
 # it cannot read and any exception keep the call on SAFE_URL with a body of customer_id only, and PROMISE_POST answers
 # "NOT RECORDED: ...". Pre-hooks may rewrite the whole request (docs/tools-and-code.md; probes 5b110990, A12 fix 2).
+# The bank ledger records that get_account. It is harmless here: these tools live only in steps after load_account,
+# whose only way in is identity's "All answers verified" edge (test_a21 checks the graph), and the graded checks only
+# count get_account before verification. close_call's guard runs before verification too, so it uses NOT_SENT_URL.
 NOT_CHECKED = "NOT RECORDED: the date could not be checked; ask the customer for the day again."
 OFF_BANK = r'''
 def _off_bank(msg):
@@ -1061,14 +1105,14 @@ try:
             _off_bank('NOT RECORDED: the date was not given as YYYY-MM-DD. Call ' + TOOL + ' with the customer\'s day, '
                       'say the date it gives, read it back and ask again.')
         else:
-            kind, off, bad, todo = _cd_judge(d, dl)
+            kind, off, bad, next_step = _cd_judge(d, dl)
             if kind == 'ok':
                 config['url'] = PROMISE_URL
                 b['date'] = raw
                 vars['promise_date_used'] = raw
                 vars['promise_sent'] = 'yes'
             else:
-                _off_bank('NOT RECORDED: ' + bad + '; ' + todo + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
+                _off_bank('NOT RECORDED: ' + bad + '; ' + next_step + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
                           '. Say this date, read it back and ask again.')
 except Exception:
     try:
@@ -1153,11 +1197,38 @@ except Exception:
     pass
 '''
 
+# A21 item 7: close_call sends only the outcome and reason a close node wrote in code, and only once a close node ran
+# (close_ready). Probe 3a362703 (slot probe-hooks): the end_of_call run fills an unset {{outcome}} with one model call
+# (it guessed no_promise; PUB-03 ac424c99 and PUB-13 9ce9db6c sent guessed outcomes after a hang-up), then runs this
+# pre-hook, which may rewrite url and body. It fails CLOSED: the tool's own url is NOT_SENT_URL, a reserved .invalid
+# host that never resolves; only a ready close points it at close_call (CLOSE_URL). Otherwise (a hang-up before any
+# close, or a call the model made itself) nothing reaches any bank: a hang-up sends no outcome (A8 ruling).
+# Not get_account (fix round 1): the bank ledger records every get_account, and graded checks count it ("never called"
+# for a third party, "after both security questions"). Probe 525bc2e7: the .invalid request fails at DNS in 0.02 s
+# with no ledger entry (an unknown path on the bank host also recorded nothing, but depends on that host's routing).
+NOT_SENT_URL = "https://close-call-not-sent.invalid/close_call"
 CLOSE_PRE = r'''
 try:
     b = config.get('body')
-    if isinstance(b, dict) and (b.get('outcome') in REASONLESS or not b.get('reason')):
-        b.pop('reason', None)
+    cid = b.get('customer_id') if isinstance(b, dict) else None
+    config['url'] = NOT_SENT_URL
+    config['body'] = dict(customer_id=cid or vars.get('customer_id'))
+    out = str(vars.get('outcome') or '')
+    if str(vars.get('close_ready') or '') == 'yes' and out:
+        body = dict(customer_id=cid or vars.get('customer_id'), outcome=out)
+        reason = str(vars.get('reason') or '')
+        if reason and out not in REASONLESS:
+            body['reason'] = reason
+        config['body'] = body
+        config['url'] = CLOSE_URL
+except Exception:
+    pass
+'''
+CLOSE_POST = r'''
+try:
+    if str(vars.get('close_ready') or '') != 'yes' and isinstance(result, dict):
+        result.pop('header', None)
+        result['data'] = dict(ok=False, what_to_do_next='Not now: the call is not finished; continue the conversation.')
 except Exception:
     pass
 '''
@@ -1179,6 +1250,9 @@ class _Compiler:
         # A15: events a band fires by itself as get_account returns (bands[].event): never listened for in speech
         self.account_events = list(dict.fromkeys(b["event"] for b in spec["bands"] if b.get("event") in self.events))
         self.fail_ev = spec["confirmation"].get("failure_event") or ""
+        # A17: the service-failure event also covers identity (verify_identity failing twice): the engine routes it
+        # from the tool's own failure count, never from the customer's words
+        self.id_fail = "identity" in stages_of(self.events.get(self.fail_ev) or {})
         self.nodes = {}
         self.transfers = {}   # (queue, close) -> node key
         self.latched = set()  # close/wrap nodes that redirect to a support event's else-close once its offer was made
@@ -1317,7 +1391,7 @@ class _Compiler:
 
     def stage_events(self, stage):
         skip = set(STRUCTURAL.get(stage, set()))
-        if stage == "negotiate":
+        if stage == "negotiate" or (stage == "identity" and self.id_fail):
             skip.add(self.fail_ev)
         skip |= set(self.account_events)
         return [e for e in self.s["events"] if stage in stages_of(e) and e["id"] not in skip
@@ -1330,7 +1404,13 @@ class _Compiler:
         for e in self.stage_events(stage):
             if e["action"] in TRANSFER_ACTIONS:
                 trig |= _words(e["trigger"])
-        return [b for b in self.s["negotiation"].get("banned_offers") or [] if not (_words(b) & trig)]
+        return [b for b in self.banned_all() if not (_words(b) & trig)]
+
+    def banned_all(self):
+        """The spec's banned offers, worded for the live model: it never sees the brief, so "not in this brief"
+        becomes "not in your instructions"."""
+        return [re.sub(r"\b(?:this|the) brief\b", "your instructions", b)
+                for b in self.s["negotiation"].get("banned_offers") or []]
 
     def counted_close(self, stage, ev):
         """A close event that must happen N>1 times: extraction cannot count, so the dialogue model calls it."""
@@ -1375,6 +1455,14 @@ class _Compiler:
         parts.append(self.thanks(named))
         return " ".join(parts)
 
+    def id_fail_farewell(self):
+        """A17: the identity service-failure close speaks the failure event's own sentence for identity (stage_say),
+        else its say, else its fixed sentence; the generic apology only when the spec stores none."""
+        fe = self.events[self.fail_ev]
+        say = ((fe.get("stage_say") or {}).get("identity") or fe.get("say")
+               or (self.s["third_party"].get("fixed_sentences") or {}).get(self.fail_ev))
+        return " ".join([code_tpl(say) if say else "I am sorry, there was a technical problem.", self.thanks(False)])
+
     def thanks(self, named):
         if self.s.get("closing", {}).get("thank_and_goodbye", True) is not False:
             return "Thank you for your time, " + self.s["address_as"] + ". Goodbye." if named else "Thank you for your time. Goodbye."
@@ -1408,9 +1496,10 @@ class _Compiler:
             times = ev.get("times") or 1
             if self.counted_close(stage, ev):
                 nth = "" if ("second" in trig or "twice" in trig) else " (for the %s time)" % ORD.get(times, str(times))
+                said = subj("the customer", trig)
                 trans.append({"target_node": self.latch_gate(self.end_target(stage, eid)), "is_tool_call": True,
-                              "description": "Call this when the customer %s%s. The goodbye is spoken automatically." % (trig, nth),
-                              "condition": {"operator": "matches_intent", "description": "The customer %s%s" % (trig, nth)}})
+                              "description": "Call this when %s%s. The goodbye is spoken automatically." % (said, nth),
+                              "condition": {"operator": "matches_intent", "description": sentence("the customer", trig) + nth}})
                 continue
             extra = (" It must be the %s time; an earlier time is NOT %s." % (ORD.get(times, str(times)), eid)
                      if times > 1 and "second" not in trig and "twice" not in trig else "")
@@ -1448,9 +1537,14 @@ class _Compiler:
                         {"logic": "and", "conditions": [eq(eid + "_seen", "yes"), eq(eid + "_offered", "no")]})))
             elif act == "transfer":
                 values.append(eid)
-                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s."
-                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid)) if stage == "negotiate" else ""
-                desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, trig, extra, not_it)) if subj(who, trig) != trig else ("%s: %s.%s %s" % (eid, trig, extra, not_it)))
+                # MRW-07: "I'll take the instalment amount" (accepting the agent's lower offer) once fired a
+                # lower-instalments transfer; taking an offer is an agreement, never a request for something new
+                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s. Accepting an amount or a date "
+                          "the agent offered, even by its kind (\"I'll take the instalment\", \"the minimum is fine\"), is NOT %s: it is continue."
+                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid, eid)) if stage == "negotiate" else ""
+                own, pred, _ = split_trigger(trig)
+                desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, pred, extra, not_it)) if not own and verb_led(pred)
+                            else ("%s: %s.%s %s" % (eid, subj(who, trig), extra, not_it)))
                 t = self.transfer_to(ev["queue"], self.close_key(eid), eid)
                 trans.append(go(t, "Transfer: " + eid, cond_any(eq(EXTRACT_VAR[stage], eid))))
             else:  # close, note_and_continue (single product: close)
@@ -1461,8 +1555,8 @@ class _Compiler:
                     # A10 audit: a missed extraction must not leave the model persuading a customer who disputes or
                     # has paid; the model can end the call itself (the extraction normally routes before it speaks)
                     trans.append({"target_node": self.end_target(stage, eid), "is_tool_call": True,
-                                  "description": "Call this when the customer %s. The goodbye is spoken automatically." % trig.rstrip(". "),
-                                  "condition": {"operator": "matches_intent", "description": "The customer %s" % trig.rstrip(". ")}})
+                                  "description": "Call this when %s. The goodbye is spoken automatically." % subj("the customer", trig),
+                                  "condition": {"operator": "matches_intent", "description": sentence("the customer", trig)}})
         desc.append(self.not_events(stage))
         return values, desc, trans
 
@@ -1473,7 +1567,10 @@ class _Compiler:
         if not trig:
             return ""
         default = "not_confirmed" if stage == "opening" else "continue"
-        return ("These are NOT any transfer or close event (value %s): the person %s." % (default, "; or ".join(trig)))
+        # verb-led triggers share the leading "the person"; one with its own subject keeps it
+        said = [(bare_trigger(t) if i and not split_trigger(t)[0] and verb_led(bare_trigger(t)) else subj("the person", t))
+                for i, t in enumerate(trig)]
+        return ("These are NOT any transfer or close event (value %s): %s." % (default, "; or ".join(said)))
 
     def ask_once_nodes(self, stage, ev, transfer):
         """insist_once_then_transfer: a code node sets <id>_asked, then a conversation node speaks the ask-once line
@@ -1498,7 +1595,7 @@ class _Compiler:
                 "name": eid + "_reply", "type": "string", "min_confidence": 0.6, "enum_values": ["pending", "insists", "other"],
                 "description": ("The LATEST message, a reply to %s. insists: %s still %s (says yes, repeats it, or refuses help). "
                                 "other: anything else (accepts help, answers a question, asks something). pending: no reply yet."
-                                % (q(say), who, ev["trigger"]))}],
+                                % (q(say), who, bare_trigger(ev["trigger"])))}],
             "max_node_turns": 2, "max_turn_transition": back,
             "transitions": [go(transfer, "Insists: " + eid, cond_any(eq(eid + "_reply", "insists"))),
                             go(back, "Back to the conversation", cond_any(eq(eid + "_reply", "other")))]}
@@ -1527,41 +1624,50 @@ class _Compiler:
         """The brief's instruction without recording words (the hold step speaks before any promise)."""
         return re.sub(r"\brecord(?:s|ed)? (?:the|a) promise\b", "take their payment date and amount", text or "", flags=re.I)
 
-    def support_nodes(self, ev, transfer, account=False):
+    def support_nodes(self, ev, transfer, account=False, after=None):
         """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it and reads the reply:
         a yes transfers; a date or an amount the customer names returns to negotiate (<id>_back); a human request goes to
         that event's ask-once step; a question is answered in one sentence and the offer asked once more (first reply
-        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close."""
+        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close.
+        after=<node>: the offer made after promises were recorded (multi after_record): its own nodes, and every
+        non-yes reply (a named payment too) goes to <node>, never back to the negotiation or to the else-close."""
         eid = ev["id"]
-        offer, hold, back = eid + "_offer", eid + "_hold", eid + "_back"
+        sfx = "_" + AFTER_RECORD if after else ""
+        offer, hold, back = eid + "_offer" + sfx, eid + "_hold" + sfx, eid + "_back"
         if offer in self.nodes:
             return offer
-        end = self.account_end(ev) if account else self.end_target("negotiate", eid)
+        end = after or (self.account_end(ev) if account else self.end_target("negotiate", eid))
         reply = eid + "_reply"
         code = "vars[%r] = 'yes'\nvars[%r] = 'pending'\nvars[%r] = %r\n" % (eid + "_offered", reply, eid + "_rule", self.support_rule(ev, True))
-        if self.multi:  # reached from the read-back as well: negotiation is open again
+        if self.multi and not after:  # reached from the read-back as well: negotiation is open again
             code += "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n"
         self.nodes[offer] = code_node(offer, code, hold)
         reset = "vars['neg_event'] = 'continue'\nvars[%r] = 'pending'\n" % reply
         if self.multi:
             reset += ("vars['mp_msg'] = 'The customer named a date or an amount after the support offer. Make no offer of your own; "
                       "check what they named and call %s for that product.'\n" % multi_mod.SET_TOOL)
-        if not account:
+        if not account and not after:
             self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
-        steps = ["Exactly one short sentence of sympathy."]
+        say = ev.get("say") or ""
+        # the brief allows one sentence of sympathy per call: a fixed sentence that already says it is that one
+        sympathy = bool(SYMPATHY.search(say))
+        steps = [] if sympathy else ["Exactly one short sentence of sympathy."]
         if account:
             # nothing about the debt was said yet: the verification thanks, then the event's own sentence
             steps = ["Say %s." % q(self.verified_lead().strip())]
-        if ev.get("say"):
-            steps.append("Say %s." % q(tpl(ev["say"])))
-        if banned and not account:
-            steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
-        steps.append("Offer to connect them with %s, as a yes/no question." % team)
+        say_step = ["Say %s.%s" % (q(tpl(say)), " This is your one sentence of sympathy: add no other, before or after it."
+                                   if sympathy and not account else "")] if say else []
+        cannot = (["Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned)]
+                  if banned and not account else [])
+        if "?" in say:  # a fixed sentence that is a question already makes the offer: it ends the turn
+            steps += cannot + say_step
+        else:
+            steps += say_step + cannot + ["Offer to connect them with %s, as a yes/no question." % team]
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
                   "not have that information), then ask once more whether they want to be connected. Do this only once."]
-        answer += ["Rule (%s): say %s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])))
+        answer += ["Rule (%s): say %s%s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])), trigger_rest(r["trigger"]))
                    for r in self.s.get("say_rules", []) if {"any", "negotiate"} & set(r.get("stages") or ["any"])]
         # a request for a human keeps its own ask-once handling (brief rules apply after the offer too)
         values, routes, hdesc = [], [], []
@@ -1569,23 +1675,29 @@ class _Compiler:
             if h["action"] == "insist_once_then_transfer":
                 v = h["id"] + "_request"
                 values.append(v)
-                hdesc.append("%s: they %s." % (v, h["trigger"].rstrip(". ")))
+                hdesc.append("%s: %s." % (v, subj("the customer", h["trigger"])))
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
-                routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
+                routes.append(go(self.ask_once_nodes(AFTER_RECORD if after else "negotiate", h, t), eid + ": " + v,
+                                 cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
-        situation = ("the customer " + bare_trigger(ev["trigger"])) if not account else (
+        situation = subj("the customer", ev["trigger"]) if not account else (
             "the account shows: " + bare_trigger(ev["trigger"]) + ". The product concerned: {{product_words}}")
-        pay = go(end if account else back, eid + (": the customer names a payment, none is taken" if account else ": the customer names a payment"),
+        pay = go(end if account or after else back,
+                 eid + (": the customer names a payment, none is taken" if account or after else ": the customer names a payment"),
                  cond_any(eq(reply, "names_payment")))
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
             "on_enter": {"type": "llm"},
             "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
                              "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
-                             "The brief's rule for this situation: %s\nNo tool call is allowed in this step."
+                             "%s\nNo tool call is allowed in this step."
                              % (situation,
                                 "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
-                                "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
+                                "\n".join(answer),
+                                # after recording a named date or amount ends the call (no new promise): the brief's
+                                # take-their-payment rule would contradict the routing
+                                "The promises are already recorded: no new promise is taken in this step." if after else
+                                "The rule for this situation: " + tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
             "extraction_schema": [{
                 "name": reply, "type": "string", "min_confidence": 0.6,
                 "enum_values": ["pending", "accepted", "names_payment", "declined", "question"] + values + ["other"],
@@ -1631,7 +1743,7 @@ class _Compiler:
         for ev in self.stage_events(stage):
             if ev["action"] == "offer_transfer_else_close":
                 out.append({"name": ev["id"] + "_seen", "type": "string", "min_confidence": 0.6, "enum_values": ["yes", "no"],
-                            "description": "yes if anywhere in the conversation the customer %s. Otherwise no." % ev["trigger"]})
+                            "description": "yes if anywhere in the conversation %s. Otherwise no." % subj("the customer", ev["trigger"])})
         return out
 
     def event_guidance(self, stage):
@@ -1639,23 +1751,24 @@ class _Compiler:
         for ev in self.stage_events(stage):
             ins = (ev.get("instruction") or "").strip()
             if ev["action"] == "insist_once_then_transfer":
-                lines.append("If %s: the ask-once question is spoken automatically." % (
-                    subj("the customer" if stage == "negotiate" else "the person", ev["trigger"])))
+                lines.append("If %s: the ask-once question is spoken automatically.%s" % (
+                    subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), trigger_rest(ev["trigger"])))
             elif ev["action"] == "offer_transfer_else_close" and stage == "negotiate":
                 lines.append("If %s: the offer of %s is made automatically; never make it yourself and make no persuasion attempt. "
-                             "Offer status: {{%s_rule}}" % ("the customer " + bare_trigger(ev["trigger"]),
+                             "Offer status: {{%s_rule}}" % (subj("the customer", ev["trigger"]),
                                                             team_words(ev["queue"]).replace("our ", "the "), ev["id"]))
             elif ev["action"] == "offer_transfer_else_close":
                 extra = (" This comes before persuasion: make no persuasion attempt."
                          if ev.get("overrides_persuasion") and "persuasion" not in ins else "")
-                lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s" % (subj("the customer", ev["trigger"]), ins, extra))
+                lines.append("If %s: %s Make this offer only ONCE in the call; never repeat it.%s%s" % (subj("the customer", ev["trigger"]), ins, extra, trigger_rest(ev["trigger"])))
             elif self.counted_close(stage, ev):
-                lines.append("If the customer %s: call transition_to_%s.%s" % (ev["trigger"], self.end_target(stage, ev["id"]), (" " + ins) if ins else ""))
+                lines.append("If %s: call transition_to_%s.%s%s" % (subj("the customer", ev["trigger"]), self.end_target(stage, ev["id"]),
+                                                                   trigger_rest(ev["trigger"]), (" " + ins) if ins else ""))
             elif self.backup_close(stage, ev):
-                lines.append("If %s: %sThen call transition_to_%s." % (subj("the customer", ev["trigger"]).rstrip(". "),
-                                                                                (ins + " ") if ins else "", self.end_target(stage, ev["id"])))
+                lines.append("If %s: %s%sThen call transition_to_%s." % (subj("the customer", ev["trigger"]), (trigger_rest(ev["trigger"]).strip() + " ") if trigger_rest(ev["trigger"]) else "",
+                                                                                  (ins + " ") if ins else "", self.end_target(stage, ev["id"])))
             elif ins:
-                lines.append("If %s: %s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins))
+                lines.append("If %s: %s%s" % (subj("the customer" if stage == "negotiate" else "the person", ev["trigger"]), ins, trigger_rest(ev["trigger"])))
         return lines
 
     def backup_close(self, stage, ev):
@@ -1665,7 +1778,7 @@ class _Compiler:
                 and ev["id"] != self.fail_ev and (ev.get("times") or 1) == 1)
 
     def say_lines(self, stage):
-        return ["If the person %s: say %s, then continue." % (r["trigger"], q(tpl(r["say"])))
+        return ["If %s: say %s, then continue.%s" % (subj("the person", r["trigger"]), q(tpl(r["say"])), trigger_rest(r["trigger"]))
                 for r in rules_for(self.s.get("say_rules", []), stage, key="stages")]
 
     def extra(self, stage):
@@ -1687,7 +1800,8 @@ class _Compiler:
     # ---- prompts
     def system_prompt(self):
         s, neg = self.s, self.s["negotiation"]
-        banned = neg.get("banned_offers") or []
+        # the line ends with "any term not given in your instructions": a banned offer saying the same is dropped
+        banned = [b for b in self.banned_all() if not re.fullmatch(r"any (?:other )?term(?: that is)? not (?:given )?in your instructions", b.strip(), re.I)]
         lines = [
             "You are %s, on an outbound phone call for %s. Speak English. One or two short sentences per turn. Be polite and calm." % (s["assistant_identity"], s["bank_name"]),
             "Address the customer as %s." % self.addr,
@@ -1704,11 +1818,60 @@ class _Compiler:
                   "- When a tool result contains what_to_do_next, follow it."]
         if neg.get("never_ask_how_much"):
             lines.append('- Never ask "how much can you pay?".')
+        if self.never_say_line():
+            lines.append("- " + self.never_say_line())
         ex = self.extra("any")
         if ex:
-            lines.append("Rules from the brief:")
+            lines.append("Rules:")
             lines += ["- " + l for l in ex]
         return "\n".join(lines)
+
+    def never_say_line(self):
+        """spec.never_say as one prompt line; also appended to every conversation step (STW-05: the word was in the
+        global prompt only, and the model echoed the customer's word in a negotiate reply)."""
+        words = never_say_words(self.s)
+        if not words:
+            return ""
+        return ("Never say %s, in any form (plural, past tense), in any sentence, even when the customer says it first: "
+                "answer without repeating the word." % join_or(q(w) for w in words))
+
+    def safe_before_success(self, nodes):
+        """Fixed sentences spoken before a promise can be recorded (the engine line and every quoted sentence of the
+        opening, identity and negotiate steps, e.g. confirmation.change_note) say no record* word, as safe_opening does
+        for the opening: "A recorded promise cannot be changed" -> "A promise cannot be changed". A first sentence the
+        brief requires word for word (opening.verbatim) is left as it is."""
+        op = self.s["opening"]
+        keep = op["first_sentence"] if op.get("verbatim") and op.get("first_sentence") else None
+
+        def fix(text):
+            if keep and keep in text:
+                return keep.join(fix(p) for p in text.split(keep))
+            return safe_pre_success(text)[0]
+
+        for k in SPOKEN_BEFORE_SUCCESS:
+            n = nodes.get(k)
+            if not n:
+                continue
+            if (n.get("on_enter") or {}).get("type") == "tts" and isinstance(n["on_enter"].get("text"), str):
+                n["on_enter"]["text"] = fix(n["on_enter"]["text"])
+            if isinstance(n.get("task_message"), str):
+                n["task_message"] = re.sub(r'"([^"]*)"', lambda m: '"%s"' % fix(m.group(1)), n["task_message"])
+
+    def add_never_say(self, nodes):
+        """Every conversation step repeats the never-say words; every step after verification (where an offer can
+        come up) also repeats the banned offers. The global prompt alone was not enough (STW-05)."""
+        words = self.never_say_line()
+        banned = self.banned_all()   # A20: "this brief" -> "your instructions"
+        offers = "Never offer %s." % join_or(dict.fromkeys(with_article(b) for b in banned)) if banned else ""
+        for k, n in nodes.items():
+            if n.get("node_type") != "conversation" or not isinstance(n.get("task_message"), str):
+                continue
+            pre = k in PRE_VERIFY_NODES or k.endswith(tuple("_" + p for p in PRE_VERIFY_NODES))  # e.g. human_hold_opening
+            # a step that already answers a request for a banned offer ("say you cannot offer it") keeps its own line
+            add = [words] + ([] if pre or "cannot offer" in n["task_message"] else [offers])
+            add = [a for a in add if a and a not in n["task_message"]]
+            if add:
+                n["task_message"] = n["task_message"].rstrip() + "\n" + "\n".join(add)
 
     def banned_words(self):
         return join_or([q(w) for w in self.s["opening"].get("banned_before_verify", [])])
@@ -1723,9 +1886,11 @@ class _Compiler:
                                                   join_or([q(a) for a in op.get("confirm_reject", [])], "and")),
             "- If the person asks a question (who is calling, is this a robot, is this a scam), answer it briefly, then ask again: %s" % q(cq),
             "- If they do not confirm, ask %s again. You may ask it %s times in total." % (q(cq), NUM.get(op.get("max_asks", 2), str(op.get("max_asks", 2)))),
+            "- Small talk with no answer uses no ask: reply in a few words, then ask again.",
+            "- " + CUT_OFF,
         ]
         lines += ["- " + l for l in self.event_guidance("opening") + self.say_lines("opening")]
-        lines.append(bullet_block("Rules from the brief:", self.extra("opening")))
+        lines.append(bullet_block("Rules:", self.extra("opening")))
         lines.append("No tool call is allowed in this step.")
         return "\n".join(l for l in lines if l)
 
@@ -1748,6 +1913,7 @@ class _Compiler:
             "Ask when %s can be reached." % self.addr,
             "Callback window: {{callback_rules}}",
             "- Combine parts said across turns (a day, then a time) before acting.",
+            "- " + CUT_OFF,
             '- If they give a day and time inside the window, call schedule_callback with date as YYYY-MM-DD and time as HH:MM (24 hour). "Tomorrow morning around eleven" means 11:00 on the next day.',
             "- If what they offer is outside the window, say you can only call back %s, and ask %s for another time. Do not schedule anything outside the window."
             % (self.cb_summary(), "once" if retries == 1 else "up to %s times" % NUM.get(retries, str(retries))),
@@ -1756,7 +1922,7 @@ class _Compiler:
         ]
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
         lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
-        lines.append(bullet_block("Rules from the brief:", self.extra("third_party")))
+        lines.append(bullet_block("Rules:", self.extra("third_party")))
         lines.append("Never call schedule_callback with a time outside the window.")
         return "\n".join(l for l in lines if l)
 
@@ -1815,17 +1981,20 @@ class _Compiler:
             'If the customer corrects themselves in the same message ("the 21st, sorry, I mean the 20th"): use the corrected value and call verify_identity once.',
             "Before all answers are verified: never say why you are calling. Never say %s, the product or an amount. "
             "Do not tell the customer how many wrong answers are left." % self.banned_words(),
-            "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time."
-            % q(idn["decline_explanation"]),
+            "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time. "
+            "Small talk is not a refusal: never explain for it; ask your question again in a few words." % q(idn["decline_explanation"]),
         ]
-        lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
+        if self.id_fail:
+            lines.append(ID_TOOL_FAIL)
+        # the cut-off rule is a bullet with the other situations, as in the opening and third-party steps
+        lines += ["- " + l for l in [CUT_OFF] + self.event_guidance("identity") + self.say_lines("identity")]
         lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
-        lines.append(bullet_block("Rules from the brief:", self.extra("identity")))
+        lines.append(bullet_block("Rules:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
 
     def negotiate_task(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
-        banned = neg.get("banned_offers") or []
+        banned = self.banned_all()
         vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
                  "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
@@ -1843,8 +2012,8 @@ class _Compiler:
             too_much = "The customer says the full amount is too much: do not offer a lower amount; treat it as a refusal."
         if neg.get("never_ask_how_much"):
             too_much += " Never ask how much they can pay; you propose every amount."
-        refuse = ("A flat refusal or a non-answer (including \"no\" to paying today with no date and no amount, refusing the floor, refusing the deadline) "
-                  "uses one persuasion attempt of the plan. Make the next one. Never repeat an offer the customer already refused.")
+        refuse = ("A flat refusal or an evasive reply about paying (\"I can't\", \"not now\", \"no\" to paying today with no date and no amount, refusing the floor, "
+                  "refusing the deadline) uses one persuasion attempt of the plan. Make the next one. Never repeat an offer the customer already refused.")
         if self.has("refused"):
             refuse += " When all attempts in the plan are used and the customer still refuses, call transition_to_close_refused."
         first_ask = tpl(neg["first_ask"])
@@ -1871,7 +2040,7 @@ HOW TO GET A PROMISE
    %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, DATE_ONLY, CHECK_DAY % CHECK_TOOL, vague, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+            first_ask, DATE_ONLY, CHECK_DAY % CHECK_TOOL, vague, NEG_CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
             t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
@@ -1882,7 +2051,7 @@ HOW TO GET A PROMISE
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
-        t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
+        t += "\n" + bullet_block("RULES", self.extra("negotiate"))
         return t.rstrip()
 
     # ---- nodes
@@ -1910,6 +2079,10 @@ HOW TO GET A PROMISE
         max_asks = op.get("max_asks", 2)
         accept = join_or([a for a in op.get("confirm_accept", [])])
         reject = join_or(op.get("confirm_reject", []))
+        # A21: a code counter counts the asks; small talk or a cut-off message (chatter) is no ask (PUB-02: two turns of
+        # small talk closed the call as unclear before the person had answered at all)
+        self.nodes[OPENING_ASK] = code_node(OPENING_ASK, OPENING_ASK_CODE % (max_asks, EXTRACT_DEFAULT["opening"]), "opening",
+                                            [go(unclear, "Still not confirmed after the last ask", cond_any(eq("op_gate", "close")))])
         return {
             "name": "opening", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": first + " " + tpl(op["confirm_question"])},
@@ -1917,22 +2090,22 @@ HOW TO GET A PROMISE
             "task_message": self.opening_task(),
             "extraction_schema": [{
                 "name": "line_status", "type": "string", "min_confidence": 0.6,
-                "enum_values": ["pending", "confirmed", "third_party"] + values + ["not_confirmed"],
+                "enum_values": ["pending", "confirmed", "third_party"] + values + ["chatter", "not_confirmed"],
                 "description": " ".join(
                     ["Who is on the line, judged from the person's LATEST message.",
                      "confirmed: they said %s, confirming they are the customer." % accept,
                      "third_party: someone else answered (spouse, relative, colleague) and the customer is a person they know."]
                     + desc +
-                    ["not_confirmed: anything else that does not confirm (%s, a question, an unclear answer)." % reject,
+                    ["chatter: only small talk, or a message cut off mid-phrase, with no answer to the question and no question back.",
+                     "not_confirmed: anything else that does not confirm (%s, a question, an unclear answer)." % reject,
                      "pending: no message yet."]),
             }] + self.seen_vars("opening"),
-            "max_node_turns": max_asks + 1, "max_turn_transition": unclear,
+            "max_node_turns": max_asks + 1 + OPENING_CHATTER, "max_turn_transition": unclear,
             "transitions": [
                 go("identity", "Confirmed", cond_any(eq("line_status", "confirmed"))),
                 go("third_party", "Someone else answered", cond_any(eq("line_status", "third_party"))),
             ] + trans + [
-                go(unclear, "Still not confirmed after the last ask", all_of(
-                    eq("line_status", "not_confirmed"), gt("opening.total_turns", max_asks - 1))),
+                go(OPENING_ASK, "Not confirmed: count the ask", cond_any(eq("line_status", "not_confirmed"))),
             ],
         }
 
@@ -1957,7 +2130,8 @@ HOW TO GET A PROMISE
                 "enum_values": ["continue"] + values,
                 "description": " ".join(desc + ["continue: anything else."]),
             }] + self.seen_vars("third_party"),
-            "max_node_turns": 12, "max_turn_transition": no_cb,
+            # A21: 20, not 12 (PUB-02: twelve cut-off turns used the cap); the no-callback close is driven by its event
+            "max_node_turns": TP_TURN_CAP, "max_turn_transition": no_cb,
             "transitions": tr + trans,
         }
 
@@ -1979,7 +2153,7 @@ HOW TO GET A PROMISE
         not_yet = "Do not mention %s yet." % (join_or(self.s["opening"].get("banned_before_verify", []), "or") or "why you are calling")
         post = ("import json\n" + _const("HINTS", idn.get("non_counting_hints") or {}) + "UNREADABLE = %r\nNEXT_Q = %r\nNOT_YET = %r\n"
                 % (unreadable, next_q, not_yet) + "MAX_WRONG = %d\nSCOPE = %r\n" % (idn["max_wrong"], idn.get("wrong_scope", "total"))
-                + VERIFY_POST)
+                + (VERIFY_POST.replace(TECH_AT, TECH_AT + TECH_COUNT) if self.id_fail else VERIFY_POST))
         pre = "import json\n" + _const("FORMATS", {x["field"]: {k: v for k, v in x.items() if k in ("format", "length", "date_order")} for x in qs}) + VERIFY_PRE
         answer_desc = "; ".join("%s: %s" % (x["field"], self.format_short(x)) for x in qs)
         failed = self.fallback_close("identity", ["failed"])
@@ -1988,8 +2162,21 @@ HOW TO GET A PROMISE
             # A10 (SELF-06): a decline extracted from a message that also carries an unchecked answer goes back to
             # identity once, so the answer is checked (a third wrong answer then closes as failed, not declined)
             gate = "id_decline_gate"
-            self.nodes[gate] = code_node(gate, ID_DECLINE_GATE, self.close_key("declined"),
-                                         [go("identity", "The message carried an answer to check", cond_any(eq("id_gate", "answer")))])
+            asks = [[x["field"], code_tpl(x["ask"])] for x in qs]
+            self.nodes[gate] = code_node(gate, "import json, re\n" + _const("ASKS", asks) + FILL_CODE + ID_DECLINE_GATE, self.close_key("declined"),
+                                         [go("identity", "The message carried an answer to check", cond_any(eq("id_gate", "answer"))),
+                                          go(ID_EXPLAIN, "The one explanation was not given yet", cond_any(eq("id_gate", "explain")))])
+            expl = tpl(idn["decline_explanation"])
+            self.nodes[ID_EXPLAIN] = {
+                "name": ID_EXPLAIN, "node_type": "conversation",
+                "on_enter": {"type": "tts", "text": expl + " {{id_ask_text}}"},
+                "task_message": ("You said %s and asked the security question again. Do not explain again. "
+                                 "No tool call is allowed in this step." % q(expl)),
+                "extraction_schema": [{
+                    "name": "id_explain_reply", "type": "string", "min_confidence": 0.5, "enum_values": ["pending", "replied"],
+                    "description": "replied: the person sent any message after the agent's explanation. pending: no reply yet."}],
+                "max_node_turns": 2, "max_turn_transition": "identity",
+                "transitions": [go("identity", "Back to the security questions", cond_any(eq("id_explain_reply", "replied")))]}
             for t in trans:
                 if t["target_node"] == self.close_key("declined") and not t.get("is_tool_call"):
                     t["target_node"] = gate
@@ -2011,8 +2198,12 @@ HOW TO GET A PROMISE
                 "description": " ".join(desc + ["continue: anything else, including a first refusal. A partial answer (only part of a date, "
                                                 "some of the digits), \"give me a second\", a self-correction or a question back is continue, never a refusal. "
                                                 "A message that gives an answer to the security question (in digits or in words, right or wrong) is continue, "
-                                                "never a decline, even if it also complains or asks what the call is about."]),
-            }, {
+                                                "never a decline, even if it also complains or asks what the call is about. "
+                                                "A message cut off mid-phrase, or only small talk with no refusal words, is continue, never declined."]),
+            }] + ([{
+                "name": "id_explain_said", "type": "string", "min_confidence": 0.6, "enum_values": ["no", "yes"],
+                "description": "yes if an earlier agent message in this conversation said %s. Otherwise no." % q(idn["decline_explanation"]),
+            }] if self.has("declined") else []) + [{
                 "name": "id_partial", "type": "string", "min_confidence": 0.5,
                 "description": ("The parts of the answer to the security question currently being asked, as said so far across the customer's "
                                 "messages, combined in the order said (e.g. \"14 March\" then \"1988\" gives \"14 March 1988\"; \"44\" then \"10\" gives \"4410\"). "
@@ -2027,7 +2218,9 @@ HOW TO GET A PROMISE
             "transitions": [
                 go("load_account", "All answers verified", is_true("id_all", *self.resp_vars("verify_identity", "all_verified"))),
                 go(failed, "Too many wrong answers", cond_any(eq("id_left", "0"), *[eq(x, "0") for x in self.resp_vars("verify_identity", "wrong_answers_left")])),
-            ] + trans,
+            ] + ([go(ID_FAIL_CLOSE, "verify_identity failed again after one retry", cond_any(
+                {"logic": "and", "conditions": [eq("verify_identity_response.status", "error"), gt("verify_identity_failure_count", "1")]},
+                gt("id_tech_n", "1")))] if self.id_fail else []) + trans,
         }
 
     def account_nodes(self):
@@ -2077,7 +2270,7 @@ HOW TO GET A PROMISE
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else [])
-        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") is never cannot_pay_or_too_much: it is continue."]
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that the amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") or only small talk is never cannot_pay_or_too_much: it is continue."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         retries = conf.get("retries", 1)
@@ -2096,7 +2289,8 @@ HOW TO GET A PROMISE
             ev = self.events["refused"]
             tr.append({"target_node": self.latch_gate(self.close_key("refused")), "is_tool_call": True,
                        "description": "Call this when every persuasion attempt in the plan has been made and the customer still refuses. The goodbye is spoken automatically.",
-                       "condition": {"operator": "matches_intent", "description": "Customer: " + ev["trigger"]}})
+                       "condition": {"operator": "matches_intent",
+                                     "description": sentence("the customer", ev["trigger"]) + "." + trigger_rest(ev["trigger"])}})
         return {
             "name": "negotiate", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
@@ -2154,7 +2348,7 @@ HOW TO GET A PROMISE
                               "description": "yes if you have already offered {{floor_text}} in an earlier message"},
         }, ["said", "attempt", "floor_offered"], path="get_account",
             description=("Check a payment day the customer names. CALL it before you answer any day they name (any form, also in pieces "
-                         "or words); say what what_to_do_next says. It records nothing."),
+                         "or words); say what what_to_do_next says. It records nothing: it only reads the account and changes no bank record."),
             pre=self.date_rules() + CHECK_PRE, post="TOOL = %r\n" % CHECK_TOOL + CHECK_POST)
 
     def verified_lead(self):
@@ -2212,7 +2406,7 @@ HOW TO RUN THE CALL
    - %(cut_off)s
    - Amount: from the product's floor up to its full amount. %(date_only)s
    - %(too_much)s
-3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Only the product the last result (or step 1) told you to offer counts; report a no about another product too: it uses no attempt. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
+3. A flat refusal or an evasive reply about paying for the current product ("I can't", "not now", refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Only the product the last result (or step 1) told you to offer counts; report a no about another product too: it uses no attempt. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
    %(mentioned)s
 4. As soon as a product is settled, call %(tool)s:
    - agreed, with the amount (a number, or full / floor) and the date (YYYY-MM-DD). If the customer names one date (and amount) for every product not yet settled, call it once with product_id ALL.
@@ -2220,8 +2414,8 @@ HOW TO RUN THE CALL
    Its result (what_to_do_next) names the next product. Say a product is noted only after a result that says "Noted" for it; after "NOT accepted", "Not counted" or any other result, nothing is noted: do what it says. A result that says a product is still open ("NOT every product is settled", "Still open"): nothing is noted for it and the call is not over; never say noted, recorded or goodbye, continue with that product. Never read promises back or ask for confirmation yourself. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded or registered.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
-            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF, date_only=DATE_ONLY,
-            notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
+            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=NEG_CUT_OFF, date_only=DATE_ONLY,
+            notes="".join("\n   - %s, when %s; then continue with the other products." % (o, self.multi.outcome_words(o)) for o in notes))
         for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
             t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
         if conf.get("change_note"):
@@ -2232,14 +2426,14 @@ HOW TO RUN THE CALL
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
-        t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
+        t += "\n" + bullet_block("RULES", self.extra("negotiate"))
         return t.rstrip()
 
     def negotiate_multi_node(self):
         banned = self.banned_for("negotiate")
         values, desc, trans = self.event_values("negotiate")
         structural = ["continue", "cannot_pay_or_too_much"] + (["discount_request"] if banned else []) + ["goodbye"]
-        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") is never cannot_pay_or_too_much: it is continue."]
+        sdesc = ["cannot_pay_or_too_much: they say they cannot pay (today or at all) or that an amount is too much, without asking for anything else. A message cut off mid-phrase (\"you tell me what the\", \"Monday the.\") or only small talk is never cannot_pay_or_too_much: it is continue."]
         if banned:
             sdesc.append("discount_request: they ask for %s." % join_or(with_article(b) for b in banned))
         sdesc.append("goodbye: they only say goodbye or end the conversation (\"thank you, goodbye\"), with no date, amount, refusal or question.")
@@ -2292,8 +2486,14 @@ HOW TO RUN THE CALL
         t = self.tool("close_call", {
             "outcome": {"enum": enum, "default": "{{outcome}}", "description": "How the call ended: one of " + ", ".join(enum) + "."},
             "reason": {"default": "{{reason}}", "description": "Reason by outcome. " + rdesc},
-        }, ["outcome"], description="Record how the call ended.", pre="import json\n" + _const("REASONLESS", reasonless) + CLOSE_PRE)
+        }, ["outcome"], description=("Records how the call ended. Run by the system at the end of the call; the assistant must "
+                                     "never call it."),
+            pre="import json\n" + _const("REASONLESS", reasonless) + "NOT_SENT_URL = %r\nCLOSE_URL = %r\n" % (
+                NOT_SENT_URL, self.base + "/close_call") + CLOSE_PRE, post=CLOSE_POST)
         t["config"]["alwaysRunsAt"] = ["end_of_call"]
+        url = t["function"]["parameters"]["properties"]["url"]
+        assert url.get("default") == self.base + "/close_call", url
+        url["default"] = NOT_SENT_URL   # fail closed: only a ready close is sent to close_call
         return t
 
     def build(self):
@@ -2311,23 +2511,27 @@ HOW TO RUN THE CALL
             n["negotiate"] = self.negotiate_node()
             n["retry_promise"] = self.retry_node()
             self.build_closes()
+        if self.id_fail:
+            # its own node: a several-product call rewrites the event's close to speak the wrap's summary
+            n[ID_FAIL_CLOSE] = close_node(ID_FAIL_CLOSE, *self.fail_close(), self.id_fail_farewell())
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
-        test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
-        # call variables beyond the usual ones (e.g. a company name): declared with an empty default, so a call
-        # that does not pass one never speaks a raw placeholder
-        for name in self.s.get("call_variables", []):
-            if name not in STANDARD_VARS and name not in test_vars:
-                test_vars[name] = ""
-        return {
+        self.safe_before_success(n)
+        self.add_never_say(n)
+        wf = {
             "initial_node": "setup",
             "system_prompt": self.system_prompt(),
             "nodes": n,
             "global_nodes": {},
             "tools": [self.close_call_tool()],
-            "test_variables": test_vars,
         }
+        # dashboard presentation only (builder/labels.py, builder/layout.py): step and edge labels, samples for the
+        # call variables, node positions
+        labels.describe(wf)
+        wf["test_variables"] = layout.sample_call_variables(self.s, wf)
+        layout.place(wf)
+        return wf
 
 
 def prune_unreachable(nodes, start):
