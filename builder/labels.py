@@ -25,6 +25,7 @@ CODE_PURPOSE = [
     (r"setup", "Reads the call variables (customer, clock) and sets safe defaults for the call."),
     (r"setup_retry", "Runs the call setup once more if the first run did not finish."),
     (r"prepare_account", "Works out the facts of every overdue product (amounts, dates, offer plan) from the account data."),
+    (r"opening_ask", "Counts a confirmation ask the person did not answer (small talk is not counted); after the last one, closes the call as unclear."),
     (r"id_decline_gate", "Sends a decline back to the identity check when it carried an answer to check, or before the one explanation was given; otherwise closes the call."),
     (r"record_plan", "Lists the confirmed promises to record, one slot per product."),
     (r"readback_reset", "Reopens the negotiation after the customer did not confirm the read-back."),

@@ -172,3 +172,60 @@ def test_no_explanation_flag_without_a_declined_event():
     n = wf(s)["nodes"]
     assert "id_decline_gate" not in n
     assert not [x for x in n["identity"]["extraction_schema"] if x["name"] == "id_explain_said"]
+
+
+# ---------------------------------------------------------------- 3. opening: chatter is no ask
+
+def test_opening_chatter_value_and_prompt():
+    n = wf()["nodes"]["opening"]
+    x = n["extraction_schema"][0]
+    assert "chatter" in x["enum_values"] and x["enum_values"][-1] == "not_confirmed"
+    assert "chatter: only small talk, or a message cut off mid-phrase, with no answer to the question and no question back." in x["description"]
+    # chatter routes nowhere: the node stays and asks again
+    assert not [t for t in n["transitions"] if "chatter" in json.dumps(t["condition"])]
+    assert CUT_OFF in n["task_message"] and "Small talk with no answer uses no ask: reply in a few words, then ask again." in n["task_message"]
+    assert n["max_node_turns"] == 2 + 1 + 5 and n["max_turn_transition"] == "close_unclear"
+
+
+def test_pub02_replay_two_small_talk_turns_do_not_close():
+    """9a7b8c8e: "I've had such a long day at work today", then "The traffic was absolutely terrible ... it took me",
+    both not_confirmed, closed as unclear after 2 turns. As chatter they use no ask; the confirmation then goes on."""
+    e = Engine()
+    assert e.user(line_status="chatter") == "opening"
+    assert e.user(line_status="chatter") == "opening"
+    assert e.user(line_status="confirmed") == "identity"
+
+
+def test_opening_two_unanswered_asks_still_close_as_unclear():
+    e = Engine()
+    assert e.user(line_status="not_confirmed") == "opening"
+    assert e.v["line_status"] == "pending" and e.v["op_asks"] == "1"
+    assert e.user(line_status="chatter") == "opening"
+    assert e.user(line_status="chatter") == "opening"
+    assert e.user(line_status="not_confirmed") == "close_unclear"
+    v = {}
+    exec(_code(e.n["close_unclear"]), {"vars": v})
+    assert (v["outcome"], v["reason"]) == ("not_reached", "unclear")
+
+
+def test_opening_extraction_miss_after_an_ask_is_not_counted_twice():
+    e = Engine()
+    e.user(line_status="not_confirmed")
+    assert e.user() == "opening" and e.v["op_asks"] == "1"   # a failed extraction keeps the reset value
+
+
+def test_opening_chatter_is_bounded_by_the_turn_cap():
+    e = Engine()
+    for _ in range(7):
+        assert e.user(line_status="chatter") == "opening"
+    assert e.user(line_status="chatter") == "close_unclear"
+
+
+def test_opening_max_asks_follows_the_spec():
+    import copy
+    s = copy.deepcopy(A)
+    s["opening"]["max_asks"] = 3
+    e = Engine(s)
+    assert e.user(line_status="not_confirmed") == "opening"
+    assert e.user(line_status="not_confirmed") == "opening"
+    assert e.user(line_status="not_confirmed") == "close_unclear"

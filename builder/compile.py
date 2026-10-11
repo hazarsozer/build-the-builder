@@ -800,6 +800,17 @@ except Exception:
     pass
 '''
 
+# A21: the opening's ask counter. A not-confirmed reply uses one ask; the last one closes as unclear, the others go back
+# to the opening (its extraction reset, so a stale value is not counted twice). Chatter never comes here.
+OPENING_ASK = "opening_ask"
+OPENING_CHATTER = 5   # extra opening turns for chatter, on top of the asks (the turn cap still ends the step)
+OPENING_ASK_CODE = r'''
+n = int(str(vars.get('op_asks') or '0')) + 1
+vars['op_asks'] = str(n)
+vars['op_gate'] = 'close' if n >= %d else 'again'
+vars['line_status'] = %r
+'''
+
 # A10: the support hold node's own turn counter before the customer's first reply is this value (probe, fix round 1).
 SUPPORT_TURNS_SEEN = 0
 
@@ -1832,6 +1843,8 @@ class _Compiler:
                                                   join_or([q(a) for a in op.get("confirm_reject", [])], "and")),
             "- If the person asks a question (who is calling, is this a robot, is this a scam), answer it briefly, then ask again: %s" % q(cq),
             "- If they do not confirm, ask %s again. You may ask it %s times in total." % (q(cq), NUM.get(op.get("max_asks", 2), str(op.get("max_asks", 2)))),
+            "- Small talk with no answer uses no ask: reply in a few words, then ask again.",
+            "- " + CUT_OFF,
         ]
         lines += ["- " + l for l in self.event_guidance("opening") + self.say_lines("opening")]
         lines.append(bullet_block("Rules:", self.extra("opening")))
@@ -2022,6 +2035,10 @@ HOW TO GET A PROMISE
         max_asks = op.get("max_asks", 2)
         accept = join_or([a for a in op.get("confirm_accept", [])])
         reject = join_or(op.get("confirm_reject", []))
+        # A21: a code counter counts the asks; small talk or a cut-off message (chatter) is no ask (PUB-02: two turns of
+        # small talk closed the call as unclear before the person had answered at all)
+        self.nodes[OPENING_ASK] = code_node(OPENING_ASK, OPENING_ASK_CODE % (max_asks, EXTRACT_DEFAULT["opening"]), "opening",
+                                            [go(unclear, "Still not confirmed after the last ask", cond_any(eq("op_gate", "close")))])
         return {
             "name": "opening", "node_type": "conversation",
             "on_enter": {"type": "tts", "text": first + " " + tpl(op["confirm_question"])},
@@ -2029,22 +2046,22 @@ HOW TO GET A PROMISE
             "task_message": self.opening_task(),
             "extraction_schema": [{
                 "name": "line_status", "type": "string", "min_confidence": 0.6,
-                "enum_values": ["pending", "confirmed", "third_party"] + values + ["not_confirmed"],
+                "enum_values": ["pending", "confirmed", "third_party"] + values + ["chatter", "not_confirmed"],
                 "description": " ".join(
                     ["Who is on the line, judged from the person's LATEST message.",
                      "confirmed: they said %s, confirming they are the customer." % accept,
                      "third_party: someone else answered (spouse, relative, colleague) and the customer is a person they know."]
                     + desc +
-                    ["not_confirmed: anything else that does not confirm (%s, a question, an unclear answer)." % reject,
+                    ["chatter: only small talk, or a message cut off mid-phrase, with no answer to the question and no question back.",
+                     "not_confirmed: anything else that does not confirm (%s, a question, an unclear answer)." % reject,
                      "pending: no message yet."]),
             }] + self.seen_vars("opening"),
-            "max_node_turns": max_asks + 1, "max_turn_transition": unclear,
+            "max_node_turns": max_asks + 1 + OPENING_CHATTER, "max_turn_transition": unclear,
             "transitions": [
                 go("identity", "Confirmed", cond_any(eq("line_status", "confirmed"))),
                 go("third_party", "Someone else answered", cond_any(eq("line_status", "third_party"))),
             ] + trans + [
-                go(unclear, "Still not confirmed after the last ask", all_of(
-                    eq("line_status", "not_confirmed"), gt("opening.total_turns", max_asks - 1))),
+                go(OPENING_ASK, "Not confirmed: count the ask", cond_any(eq("line_status", "not_confirmed"))),
             ],
         }
 
