@@ -48,13 +48,14 @@ def opening_warnings(sentence):
 _VERBATIM_WORDS = re.compile(r"\bword[ -]for[ -]word\b|\bverbatim\b|\bexact(?:ly| words?)\b", re.I)
 # Conservative on purpose (review of e32b29a): a missed rule stays a prompt rule as before; a wrongly moved one
 # would be spoken on every call.
-_OPENING_PLACE = re.compile(r"\bopening\b(?!\s+offers?\b)|\b(?:first|second|third) sentence\b(?!\s+of\s+your\s+(?:answer|reply|response)\b)|"
+_OPENING_PLACE = re.compile(r"\bopening\b(?!\s+offers?\b)|\b(?:first|second|third) sentence\b(?!\s+of\b(?!\s+the\s+(?:opening|greeting|call)\b))|"
                             r"\bgreeting\b|\b(?:start|beginning) of (?:the|every|each) call\b", re.I)
 _NEGATION = re.compile(r"\b(?:do not|don't|never|avoid|must not|no longer|not|without|instead|rather than|except)\b", re.I)
 # another moment or listener than the opening to the customer (read outside the quote). "after the first sentence"
 # is the placement this matcher exists for (bench strict-wording), so it alone does not count as "after".
 _OTHER_MOMENT = re.compile(r"voicemail|answering machine|message|third[- ]part|someone else|for them|\bafter\b|"
-                           r"\bbefore\b|confirm|verif|identity", re.I)
+                           r"\bbefore\b|confirm|verif|identity|spouse|relative|family|partner|closing|farewell|"
+                           r"negotiation|\boffer|each turn|attempt", re.I)
 _AFTER_FIRST = re.compile(r"\b(?:right |just |directly |immediately )?after the first sentence\b", re.I)
 _CONDITION = re.compile(r"\b(?:if|when|whenever|unless|only|asked|in case|once)\b", re.I)
 _QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”')

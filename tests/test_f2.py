@@ -59,6 +59,9 @@ def test_rule_shapes_detected():
         ("opening", 'Right after the first sentence, say this second sentence word for word: "One two three four."'),
         ("opening", 'At the start of the call, say verbatim: "One two three four."'),
         ("opening", 'In the greeting, say word for word: "One two three four"'),  # period added
+        ("opening", 'Say exactly "One two three four." in the opening.'),
+        ("opening", 'Right after the first sentence of the call, say exactly "One two three four."'),
+        ("opening", 'The second sentence of the opening must be exactly "One two three four."'),
         ("opening", 'Say exactly "One two three four." as the second opening sentence.'),
         ("opening", "In the opening, say word for word: “One two three four.”"),
     ]
@@ -83,6 +86,12 @@ def test_rule_shapes_detected():
         ("opening", 'In the opening, say word for word: "Hello [name], this is your bank."'),
         ("opening", 'In the opening, say word for word: "Hello {{first_name}}, this is your bank."'),
         ("opening", 'Say exactly "We value your call." as the opening offer.'),
+        # review round 3: other moments, and "Nth sentence of" something other than the opening / greeting / call
+        ("opening", 'Right after the first sentence of the closing, say exactly "Thank you for your time today."'),
+        ("opening", 'The second sentence of the closing must be exactly "We appreciate your business today."'),
+        ("opening", 'In the opening of the negotiation, say exactly "Let us find a plan together."'),
+        ("opening", 'At the start of the call to a spouse, say word for word "Please pass on our message."'),
+        ("opening", 'The second sentence of the reply must be exactly "We appreciate your business today."'),
         # review round 2: other negations, and other moments or listeners than the opening to the customer
         ("opening", 'For voicemail, the first sentence must be exactly "This is Freya Bank, please call us back."'),
         ("opening", 'Voicemail message, word for word, as the greeting: "This is Freya Bank, please call us back."'),
