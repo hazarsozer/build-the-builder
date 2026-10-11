@@ -1,0 +1,13 @@
+{
+  "team": "<team name>",
+  "members": [
+    "<member 1>",
+    "<member 2>"
+  ],
+  "repo": "https://github.com/<owner>/<repo>",
+  "commit": "<40-character commit sha>",
+  "run_command": "python3 builder/build.py {case_folder} {mock_url}",
+  "workflow": "submission/final-<name>.workflow.json",
+  "trace": "traces/<UTC time>-final-<name>.md",
+  "mock_url": "https://your-mock.your-subdomain.workers.dev"
+}

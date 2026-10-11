@@ -2,7 +2,7 @@
 
     set -a; source env.sh; set +a
     uv run python -m builder.main <brief files or dirs...> [--slot NAME] [--openapi PATH] [--no-selftest]
-                                  [--budget-min 27] [--now ISO] [--out-dir submission/]
+                                  [--budget-min 27] [--now ISO] [--out-dir submission/] [--mock-url URL]
 
 Steps (design spec §4 and the Task 8 rulings):
   t=0      trace start; our mock bank starts and the Cloudflare tunnel comes up in a background thread,
@@ -18,8 +18,15 @@ Steps (design spec §4 and the Task 8 rulings):
   fix      otherwise, and with > 12 min left: one short LLM session edits the spec, each change with a brief quote
            (builder.fix); re-validate, recompile, round 2 on cases generated the same way. The spec with the best pass
            count on the comparable cases is kept (a tie keeps round 1's spec).
-  final    compile with the openapi servers[0] URL; assert the workflow JSON has no trycloudflare URL and does have the
-           servers[0] host; save_workflow(<slot>); export to <out-dir>/<slot>.workflow.json; write <slot>.spec.json.
+  final    compile with the openapi servers[0] URL, or with --mock-url (mock_base below); assert the workflow JSON has
+           no trycloudflare URL and does have that host (with --mock-url: and not the servers[0] host);
+           save_workflow(<slot>); export to <out-dir>/<slot>.workflow.json; write <slot>.spec.json.
+
+--mock-url URL: the final (exported) workflow calls this mock instead of servers[0] (the organisers' final runs the
+phone agent against each team's own mock). https only, no trycloudflare, no query, fragment or credentials. Joining
+rule (mock_base): the path of servers[0] (e.g. /v1) is appended to the mock URL unless the mock URL already ends with
+it, so https://m.workers.dev and https://m.workers.dev/v1 both give tools at https://m.workers.dev/v1/<tool>. The
+self-test is unchanged: it still runs against our local bank through the tunnel. Traced in `start` and `saved`.
 
 Hard stop: at --budget-min minus FINAL_RESERVE_S, whatever is running is abandoned and the best spec so far goes to
 the final step. Every phase is wrapped: once a spec exists, a crash anywhere still ends in a saved, exported agent.
@@ -279,6 +286,30 @@ def _err(e):
     return scrub("%s: %s" % (type(e).__name__, e))[:600]
 
 
+def check_mock_url(url):
+    """--mock-url: an https URL with a host, no trycloudflare, no credentials, query, fragment or whitespace.
+    Returns it without a trailing slash; ValueError otherwise."""
+    u = urlparse(str(url or "").strip())
+    if u.scheme != "https" or not u.hostname:
+        raise ValueError("mock URL must be https://<host>[/path]: %r" % url)
+    if "trycloudflare" in str(url).lower():
+        raise ValueError("mock URL must not be a trycloudflare tunnel: %r" % url)
+    if u.query or u.fragment or u.username or u.password or re.search(r"\s", str(url).strip()) or "?" in url or "#" in url:
+        raise ValueError("mock URL must have no credentials, query, fragment or spaces: %r" % url)
+    return str(url).strip().rstrip("/")
+
+
+def mock_base(official, mock_url):
+    """Tool base URL for --mock-url: the servers[0] path (e.g. /v1) appended to the mock URL unless the mock URL
+    already ends with it. https://m.dev + servers[0] https://bank/v1 -> https://m.dev/v1; https://m.dev/v1 -> the same;
+    https://m.dev/api -> https://m.dev/api/v1."""
+    mock = check_mock_url(mock_url)
+    path = urlparse(official).path.rstrip("/")
+    if not path or urlparse(mock).path.rstrip("/").endswith(path):
+        return mock
+    return mock + path
+
+
 # ---------------------------------------------------------------------------------------------------------- build
 
 class Build:
@@ -350,7 +381,7 @@ class Build:
             oa_error = e
         self.ev("start", briefs=self.briefs, slot=self.slot, git_commit=git_commit(), model=sdk.model_name(),
                 openapi=str(oa_path) if oa_path else None, budget_min=a.budget_min, selftest=not a.no_selftest,
-                now=a.now, out_dir=str(self.out_dir), argv=sys.argv[1:])
+                now=a.now, out_dir=str(self.out_dir), argv=sys.argv[1:], mock_url=getattr(a, "mock_url", None))
         if oa_error is not None:
             self.ev("no_openapi", error=_err(oa_error))
             self.log("no openapi: %s" % _err(oa_error))
@@ -682,20 +713,27 @@ class Build:
 
     def _final(self, spec, label):
         official = self.openapi["servers"][0]["url"]
-        host = urlparse(official).netloc
+        mock = getattr(self.a, "mock_url", None)
+        base = mock_base(official, mock) if mock else None
+        host = urlparse(base or official).netloc
         self.out_dir.mkdir(parents=True, exist_ok=True)
         spec_path = self.out_dir / ("%s.spec.json" % self.slot)
         spec_path.write_text(json.dumps(spec, indent=1))
-        wf = self._compile_lint(spec, None, "final")
+        wf = self._compile_lint(spec, base, "final")
         text = json.dumps(wf)
         if "trycloudflare" in text:
             raise RuntimeError("final workflow contains a trycloudflare URL; not saving it")
         if not host or host not in text:
-            raise RuntimeError("final workflow does not contain the official host %r; not saving it" % host)
+            raise RuntimeError("final workflow does not contain the %s host %r; not saving it"
+                               % ("mock" if mock else "official", host))
+        off_host = urlparse(official).netloc
+        if mock and off_host and off_host != host and off_host in text:
+            raise RuntimeError("final workflow still contains the servers[0] host %r; not saving it" % off_host)
         saved = self._save(self.slot, wf)
         self.final.update(workflow_id=saved["workflow_id"], agent_id=saved["agent_id"])
+        extra = {"base_url": base} if mock else {}
         self.ev("saved", slot=self.slot, workflow_id=saved["workflow_id"], agent_id=saved["agent_id"],
-                url_kind="official", spec=label)
+                url_kind="mock" if mock else "official", spec=label, **extra)
         path = self.out_dir / ("%s.workflow.json" % self.slot)
         bounded(lambda: freya.export_workflow(saved["workflow_id"], str(path)), FREYA_CALL_S)
         self.final.update(exported=True, export=str(path))
@@ -703,6 +741,13 @@ class Build:
         print(json.dumps({"slot": self.slot, "workflow_id": saved["workflow_id"], "agent_id": saved["agent_id"],
                           "export": str(path)}), flush=True)
         return 0
+
+
+def _mock_url_arg(s):
+    try:
+        return check_mock_url(s)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
 
 
 def parse_args(argv=None):
@@ -715,6 +760,8 @@ def parse_args(argv=None):
     ap.add_argument("--budget-min", type=float, default=27.0, help="hard stop, minutes (default 27)")
     ap.add_argument("--now", help="call variable `now` for self-test cases (ISO, e.g. 2026-10-14T11:00)")
     ap.add_argument("--out-dir", default=str(ROOT / "submission"), help="export folder (default submission/)")
+    ap.add_argument("--mock-url", type=_mock_url_arg, help="the final (exported) workflow calls this https mock instead of "
+                    "the openapi servers[0] URL; servers[0]'s path (/v1) is appended unless the URL already ends with it")
     ap.add_argument("--trace-dir", default=str(ROOT / "traces"), help=argparse.SUPPRESS)
     return ap.parse_args(argv)
 
