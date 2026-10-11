@@ -495,6 +495,31 @@ def _mentions(tk):
     return keep
 
 
+# a span of time counted from a day ("two weeks from today", "a week today", "ten days from the 20th")
+_SPAN_W = ('day', 'days', 'week', 'weeks', 'fortnight', 'fortnights', 'month', 'months')
+
+
+def _offset(tk, pos, kind, val):
+    """True when the day mentioned at pos is only the anchor of a relative phrase, not the day meant: "the day after
+    the 20th", "sometime after the 20th", "before Friday", "two weeks from today", "a week today". The words name no
+    day this module resolves (final-review-2 I4), so the caller falls back to the model's own date."""
+    n = len(tk)
+
+    def W(j):
+        return tk[j][1] if 0 <= j < n and tk[j][0] == 'w' else None
+
+    if kind == 'vague' or (kind == 'rel' and val == 2):
+        return False   # a period stays vague; "the day after tomorrow" is resolved as a day of its own
+    j = pos - 1
+    while W(j) in ('the', 'on', 'this', 'coming'):
+        j -= 1
+    if W(j) in ('after', 'before'):
+        return True
+    if W(j) == 'from' and any(W(k) in _SPAN_W for k in range(j - 3, j)):
+        return True
+    return kind == 'rel' and W(pos - 1) in _SPAN_W
+
+
 def resolve_said(text, today, ww=None, prefer=None):
     """The exact day the customer's words name: (date, '') or (None, why) with why 'vague' (a period, no day),
     'invalid' (no such date) or 'none' (no day in the words). The LAST day or period mentioned wins (a correction:
@@ -508,6 +533,8 @@ def resolve_said(text, today, ww=None, prefer=None):
     years = [v for k, v in tk if k == 'card' and 2000 <= v <= 2100]
     strong = [m for m in ms if m[1] != 'weak']
     pos, kind, val = strong[-1] if strong else (ms[-1][0], 'vague', None)
+    if _offset(tk, pos, kind, val):
+        return None, 'none'
     if kind == 'iso':
         try:
             return datetime.date(val[0], val[1], val[2]), ''

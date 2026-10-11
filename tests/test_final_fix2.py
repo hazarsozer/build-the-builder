@@ -236,6 +236,33 @@ def test_i3_cases_expect_the_next_business_day_after_the_cutoff():
     assert fl and not any("14 October" in c for c in fl["checks"])
 
 
+# ---------------------------------------------------------------- I4: relative phrases name no day
+
+def test_i4_relative_phrases_resolve_to_no_day():
+    import datetime as dt
+    from builder.lib.dates import resolve_said
+    t = dt.date(2026, 10, 14)
+    for said in ("two weeks from today", "a week today", "within a week from today", "three days from today",
+                 "the day after the 20th", "sometime after the 20th", "before Friday", "after Friday",
+                 "a week from the 20th", "two days after Friday", "not before Friday"):
+        assert resolve_said(said, t) == (None, "none"), said
+    # plain days and the phrases the module does resolve are unchanged
+    for said, d in (("today", t), ("the 20th", dt.date(2026, 10, 20)), ("Friday", dt.date(2026, 10, 16)),
+                    ("from Friday", dt.date(2026, 10, 16)), ("on the 20th", dt.date(2026, 10, 20)),
+                    ("the day after tomorrow", dt.date(2026, 10, 16)), ("the Friday after next", dt.date(2026, 10, 30)),
+                    ("after the 20th, no, the 23rd", dt.date(2026, 10, 23))):
+        assert resolve_said(said, t) == (d, ""), said
+
+
+def test_i4_check_date_uses_the_models_date_for_a_relative_phrase():
+    from tests.test_a12 import account, check
+    w, v = account("2026-10-14T11:00")
+    d = check(w, v, "two weeks from today", date="2026-10-28")
+    assert d["date"] == "2026-10-28" and "14 October" not in json.dumps(d)
+    d = check(w, v, "the day after the 20th", date="2026-10-21")
+    assert d["date"] == "2026-10-21"
+
+
 def test_i2_reference_specs_have_no_stage_variants():
     stages = ("_opening", "_identity", "_negotiate", "_third_party")
     for s in (A, B):
