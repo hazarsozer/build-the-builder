@@ -1317,7 +1317,13 @@ class _Compiler:
         for e in self.stage_events(stage):
             if e["action"] in TRANSFER_ACTIONS:
                 trig |= _words(e["trigger"])
-        return [b for b in self.s["negotiation"].get("banned_offers") or [] if not (_words(b) & trig)]
+        return [b for b in self.banned_all() if not (_words(b) & trig)]
+
+    def banned_all(self):
+        """The spec's banned offers, worded for the live model: it never sees the brief, so "not in this brief"
+        becomes "not in your instructions"."""
+        return [re.sub(r"\b(?:this|the) brief\b", "your instructions", b)
+                for b in self.s["negotiation"].get("banned_offers") or []]
 
     def counted_close(self, stage, ev):
         """A close event that must happen N>1 times: extraction cannot count, so the dialogue model calls it."""
@@ -1575,7 +1581,7 @@ class _Compiler:
             "on_enter": {"type": "llm"},
             "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
                              "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
-                             "The brief's rule for this situation: %s\nNo tool call is allowed in this step."
+                             "The rule for this situation: %s\nNo tool call is allowed in this step."
                              % (situation,
                                 "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
                                 "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
@@ -1681,7 +1687,8 @@ class _Compiler:
     # ---- prompts
     def system_prompt(self):
         s, neg = self.s, self.s["negotiation"]
-        banned = neg.get("banned_offers") or []
+        # the line ends with "any term not given in your instructions": a banned offer saying the same is dropped
+        banned = [b for b in self.banned_all() if not re.fullmatch(r"any (?:other )?term(?: that is)? not (?:given )?in your instructions", b.strip(), re.I)]
         lines = [
             "You are %s, on an outbound phone call for %s. Speak English. One or two short sentences per turn. Be polite and calm." % (s["assistant_identity"], s["bank_name"]),
             "Address the customer as %s." % self.addr,
@@ -1700,7 +1707,7 @@ class _Compiler:
             lines.append('- Never ask "how much can you pay?".')
         ex = self.extra("any")
         if ex:
-            lines.append("Rules from the brief:")
+            lines.append("Rules:")
             lines += ["- " + l for l in ex]
         return "\n".join(lines)
 
@@ -1719,7 +1726,7 @@ class _Compiler:
             "- If they do not confirm, ask %s again. You may ask it %s times in total." % (q(cq), NUM.get(op.get("max_asks", 2), str(op.get("max_asks", 2)))),
         ]
         lines += ["- " + l for l in self.event_guidance("opening") + self.say_lines("opening")]
-        lines.append(bullet_block("Rules from the brief:", self.extra("opening")))
+        lines.append(bullet_block("Rules:", self.extra("opening")))
         lines.append("No tool call is allowed in this step.")
         return "\n".join(l for l in lines if l)
 
@@ -1750,7 +1757,7 @@ class _Compiler:
         ]
         lines += ["- " + l for l in self.event_guidance("third_party") + self.say_lines("third_party")]
         lines += ["- " + l for l in self.extra_lines("schedule_callback", ("date", "time"))]
-        lines.append(bullet_block("Rules from the brief:", self.extra("third_party")))
+        lines.append(bullet_block("Rules:", self.extra("third_party")))
         lines.append("Never call schedule_callback with a time outside the window.")
         return "\n".join(l for l in lines if l)
 
@@ -1814,12 +1821,12 @@ class _Compiler:
         ]
         lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
         lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
-        lines.append(bullet_block("Rules from the brief:", self.extra("identity")))
+        lines.append(bullet_block("Rules:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
 
     def negotiate_task(self):
         neg, conf = self.s["negotiation"], self.s["confirmation"]
-        banned = neg.get("banned_offers") or []
+        banned = self.banned_all()
         vague = {"ask_once_then_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): ask once for the exact day. If they still give no day, propose the deadline.',
                  "propose_deadline": 'A vague period ("next week", "end of the month", "when my salary comes"): propose the deadline.',
                  "ask_until_exact": 'A vague period ("next week", "end of the month", "when my salary comes"): ask for the exact day.'}[neg.get("vague_date", "ask_once_then_deadline")]
@@ -1876,7 +1883,7 @@ HOW TO GET A PROMISE
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
-        t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
+        t += "\n" + bullet_block("RULES", self.extra("negotiate"))
         return t.rstrip()
 
     # ---- nodes
@@ -2226,7 +2233,7 @@ HOW TO RUN THE CALL
             other.append("If asked for %s: say you cannot offer it." % join_or(with_article(b) for b in self.banned_for("negotiate")))
         other += self.say_lines("negotiate")
         t += "\n" + bullet_block("OTHER SITUATIONS", other)
-        t += "\n" + bullet_block("RULES FROM THE BRIEF", self.extra("negotiate"))
+        t += "\n" + bullet_block("RULES", self.extra("negotiate"))
         return t.rstrip()
 
     def negotiate_multi_node(self):

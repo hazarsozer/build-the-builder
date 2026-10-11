@@ -39,12 +39,19 @@ def bare_trigger(t):
     return split_trigger(t)[1]
 
 
+_LEAD = re.compile(r"^((?:after|before|once|when) [^,]+), ((?:the customer|the person|they) .+)$")
+
+
 def subj(who, trigger):
     """A trigger as a clause for "If ..."/"when ...": its own subject, else `who` when it starts with a verb,
-    else the trigger alone ("asks X" -> "the person asks X"; "After X, the customer says Y." -> "after X, ...")."""
+    else the trigger alone ("asks X" -> "the person asks X"). A leading time clause moves to the end:
+    "After X, the customer says Y." -> "the customer says Y (after X)"."""
     s, p, _ = split_trigger(trigger)
     if s:
         return s + " " + p
+    m = _LEAD.match(p)
+    if m:
+        return "%s (%s)" % (m.group(2), m.group(1))
     return (who + " " + p) if verb_led(p) else p
 
 

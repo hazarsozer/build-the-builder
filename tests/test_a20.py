@@ -44,7 +44,7 @@ def texts(wf):
     ("The person says the customer has died.", "the customer", "the person says the customer has died", ""),
     ("asks for a human or a person", "the person", "the person asks for a human or a person", ""),
     ("After identity is verified, the customer says that they do not want to talk.", "the customer",
-     "after identity is verified, the customer says that they do not want to talk", ""),
+     "the customer says that they do not want to talk (after identity is verified)", ""),
     ("Asked \"Is this a scam?\".", "the person", "asked \"Is this a scam?\"", ""),
     ("The customer asks a question the tools cannot answer. Do not invent figures, dates or reasons.", "the person",
      "the customer asks a question the tools cannot answer", "Do not invent figures, dates or reasons."),
@@ -94,3 +94,40 @@ def test_no_internal_labels_in_export(name, base_url):
 def test_no_internal_labels_in_any_fixture(compiled):
     name, _, wf = compiled
     assert sorted(set(INTERNAL.findall(json.dumps(wf)))) == [], name
+
+
+# ---------------------------------------------------------------- 3. no "brief" the live model never sees
+
+def test_prompts_never_mention_the_brief(compiled):
+    name, _, wf = compiled
+    hits = [t[max(0, m.start() - 40):m.end() + 20] for t in texts(wf)
+            for m in re.finditer(r"\bbrief\b(?!ly)", t, re.I)]
+    assert hits == [], name
+
+
+def test_rules_heading_is_plain(compiled):
+    _, _, wf = compiled
+    neg = wf["nodes"]["negotiate"]["task_message"]
+    assert "RULES FROM THE BRIEF" not in neg
+    assert all("Rules from the brief" not in t for t in texts(wf))
+
+
+def test_banned_offer_clause_not_doubled(compiled):
+    """'any term that is not in this brief, or any term not given in your instructions': said once."""
+    _, _, wf = compiled
+    line = next(l for l in wf["system_prompt"].split("\n") if l.startswith("- Never offer"))
+    assert line.count("your instructions") == 1, line
+
+
+def test_not_talk_edge_reads_cleanly():
+    wf = C(SPECS["dress-B"], OA, base_url="https://bank.example/v1")
+    tr = [t for t in wf["nodes"]["negotiate"]["transitions"] if t.get("target_node") == "wrap_not_talk"]
+    assert tr and tr[0]["description"] == ("Call this when the customer says for the second time that they do not want to talk "
+                                           "(after identity is verified). The goodbye is spoken automatically.")
+    assert "If the customer says for the second time that they do not want to talk (after identity is verified): call transition_to_wrap_not_talk." \
+        in wf["nodes"]["negotiate"]["task_message"]
+
+
+def test_spec_a_negotiate_within_budget():
+    for bu in (None, "https://bank.example/v1"):
+        assert len(C(SPECS["a"], OA, base_url=bu)["nodes"]["negotiate"]["task_message"]) <= 4800
