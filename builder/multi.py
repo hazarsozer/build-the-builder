@@ -695,7 +695,7 @@ for q in (st.get('ga') or order):
         r = stt
     if NOTES_ON and r in REASONS:
         notes.append((q, r))
-outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK, REASON_MAP, PAID_NOTE)
+outcome, reason = close_reason(notes, len(recorded), None, RULE, ALL_PAID, FALLBACK, REASON_MAP, PAID_NOTE, PROMISE, NO_PROMISE)
 key = str(outcome) + '|' + str(reason or '')
 vars['mp_close'] = CLOSE_BY.get(key, CLOSE_BY.get('*'))
 for i in range(1, SLOTS + 1):
@@ -748,6 +748,12 @@ class Multi:
         self.refused_note = self.note_for(c.events.get("refused"), "refused")
         fe = c.events.get(self.fail_ev) or {}
         self.fail_note = fe.get("per_product_note") or "service_error"
+        # the brief's own outcome names, never literals (A15: insurance renamed promise to promise_to_pay)
+        prow = next((o for o in self.s["outcomes"] if o["event"] == "promise_recorded"), None)
+        pev = c.events.get("promise_recorded") or {}
+        self.promise_row = ((prow["outcome"], prow.get("reason")) if prow else
+                            (pev.get("outcome") or "promise", pev.get("reason")))
+        self.no_promise = (c.events.get("refused") or {}).get("outcome") or "no_promise"
 
     def note_for(self, ev, default):
         if not ev:
@@ -770,10 +776,10 @@ class Multi:
     def wrap_targets(self):
         """Close nodes a wrap can route to."""
         by = self.close_by()
-        keys = ["promise|"]
+        keys = ["%s|%s" % (self.promise_row[0], self.promise_row[1] or "")]
         if self.mp.get("all_paid_outcome"):
             keys.append("%s|" % self.mp["all_paid_outcome"])
-        keys += ["no_promise|" + self.reason_map.get(r, r) for r in self.reasons]
+        keys += ["%s|%s" % (self.no_promise, self.reason_map.get(r, r)) for r in self.reasons]
         out = []
         for k in keys:
             if k in by and by[k] not in out:
@@ -852,7 +858,7 @@ class Multi:
         fe = c.events.get(self.fail_ev) or {}
         by = self.close_by()
         targets = self.wrap_targets()
-        fb = fallback or ("no_promise", self.reason_map.get(self.refused_note, self.refused_note))
+        fb = fallback or (self.no_promise, self.reason_map.get(self.refused_note, self.refused_note))
         fb_key = "%s|%s" % (fb[0], fb[1] or "")
         by_used = {k: v for k, v in by.items() if v in targets}
         by_used["*"] = by.get(fb_key) if by.get(fb_key) in targets else (targets[-1] if targets else "close_account_error")
@@ -871,7 +877,8 @@ class Multi:
                 "NOTES_ON = %s\n" % self.notes_on + _const("REASONS", self.reasons) +
                 "RULE = %r\nALL_PAID = %r\n" % (self.mp.get("no_promise_reason", "first_non_paid_note"), self.mp.get("all_paid_outcome") or "") +
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
-                _const("FALLBACK", list(fb)) + _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
+                _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
+                _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
                 "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or "") + WRAP_CODE)
         first = "note_1" if self.notes_on else "finish"
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []
@@ -974,13 +981,13 @@ class Multi:
         nodes["wrap_recorded"] = self.wrap("wrap_recorded", self.refused_note, recording=True)
         refused = c.events.get("refused") or {}
         nodes["wrap_done"] = self.wrap("wrap_done", self.refused_note,
-                                       fallback=(refused.get("outcome") or "no_promise", refused.get("reason") or self.refused_note))
+                                       fallback=(refused.get("outcome") or self.no_promise, refused.get("reason") or self.refused_note))
         for ev in self.s["events"]:
             if "negotiate" not in c.stages_of(ev):
                 continue
             if ev["action"] == "offer_transfer_else_close":
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, ev.get("else_reason") or "refused"),
-                                                      fallback=(ev.get("else_outcome") or "no_promise", ev.get("else_reason")))
+                                                      fallback=(ev.get("else_outcome") or self.no_promise, ev.get("else_reason")))
             elif ev["action"] == "close" and ev["id"] not in ("promise_recorded",):
                 nodes["wrap_" + ev["id"]] = self.wrap("wrap_" + ev["id"], self.note_for(ev, self.refused_note),
                                                       fallback=(ev.get("outcome"), ev.get("reason")))
@@ -1007,5 +1014,5 @@ class Multi:
             ev = c.events.get(eid) or {}
             outcome, reason = ev.get("outcome"), ev.get("reason")
             if ev.get("action") == "offer_transfer_else_close":
-                outcome, reason = ev.get("else_outcome") or "no_promise", ev.get("else_reason")
+                outcome, reason = ev.get("else_outcome") or self.no_promise, ev.get("else_reason")
             nodes[t] = close_node(t, outcome, reason or "", "{mp_said} " + c.thanks(named=True))
