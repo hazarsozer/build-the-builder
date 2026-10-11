@@ -20,7 +20,7 @@ import re
 import sys
 
 from builder.lib import dates, embed, money
-from builder.lint import lint, never_say_words, safe_opening
+from builder.lint import SPOKEN_BEFORE_SUCCESS, lint, never_say_words, safe_opening, safe_pre_success
 from builder import multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
@@ -1741,6 +1741,28 @@ class _Compiler:
         return ("Never say %s, in any form (plural, past tense), in any sentence, even when the customer says it first: "
                 "answer without repeating the word." % join_or(q(w) for w in words))
 
+    def safe_before_success(self, nodes):
+        """Fixed sentences spoken before a promise can be recorded (the engine line and every quoted sentence of the
+        opening, identity and negotiate steps, e.g. confirmation.change_note) say no record* word, as safe_opening does
+        for the opening: "A recorded promise cannot be changed" -> "A promise cannot be changed". A first sentence the
+        brief requires word for word (opening.verbatim) is left as it is."""
+        op = self.s["opening"]
+        keep = op["first_sentence"] if op.get("verbatim") and op.get("first_sentence") else None
+
+        def fix(text):
+            if keep and keep in text:
+                return keep.join(fix(p) for p in text.split(keep))
+            return safe_pre_success(text)[0]
+
+        for k in SPOKEN_BEFORE_SUCCESS:
+            n = nodes.get(k)
+            if not n:
+                continue
+            if (n.get("on_enter") or {}).get("type") == "tts" and isinstance(n["on_enter"].get("text"), str):
+                n["on_enter"]["text"] = fix(n["on_enter"]["text"])
+            if isinstance(n.get("task_message"), str):
+                n["task_message"] = re.sub(r'"([^"]*)"', lambda m: '"%s"' % fix(m.group(1)), n["task_message"])
+
     def add_never_say(self, nodes):
         """Every conversation step repeats the never-say words; every step after verification (where an offer can
         come up) also repeats the banned offers. The global prompt alone was not enough (STW-05)."""
@@ -2361,6 +2383,7 @@ HOW TO RUN THE CALL
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
+        self.safe_before_success(n)
         self.add_never_say(n)
         test_vars = {"customer_id": "c_test"} if "customer_id" in self.s.get("call_variables", []) else {}
         # call variables beyond the usual ones (e.g. a company name): declared with an empty default, so a call
