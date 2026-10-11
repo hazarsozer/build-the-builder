@@ -42,6 +42,54 @@ def opening_warnings(sentence):
     return ["opening says %r before the person is confirmed" % m.group(1) for m in _BANNED_OPENING.finditer(rest)]
 
 
+# F2 (bench strict-wording): a sentence the brief requires word for word in the opening can land in an extra rule
+# ("Right after the first sentence, say this second sentence word for word: "...""). The opening is spoken from fixed
+# text, so the rule never takes effect; the compiler speaks the sentence in the opening and drops the rule.
+_VERBATIM_WORDS = re.compile(r"\bword[ -]for[ -]word\b|\bverbatim\b|\bexact(?:ly| words?)\b", re.I)
+# Conservative on purpose (review of e32b29a): a missed rule stays a prompt rule as before; a wrongly moved one
+# would be spoken on every call.
+_OPENING_PLACE = re.compile(r"\bopening\b(?!\s+offers?\b)|\b(?:first|second|third) sentence\b(?!\s+of\b(?!\s+the\s+(?:opening|greeting|call)\b))|"
+                            r"\bgreeting\b|\b(?:start|beginning) of (?:the|every|each) call\b", re.I)
+_NEGATION = re.compile(r"\b(?:do not|don't|never|avoid|must not|no longer|not|without|instead|rather than|except)\b", re.I)
+# another moment or listener than the opening to the customer (read outside the quote). "after the first sentence"
+# is the placement this matcher exists for (bench strict-wording), so it alone does not count as "after".
+_OTHER_MOMENT = re.compile(r"voicemail|answering machine|message|third[- ]part|someone else|for them|\bafter\b|"
+                           r"\bbefore\b|confirm|verif|identity|spouse|relative|family|partner|closing|farewell|"
+                           r"negotiation|\boffer|each turn|attempt", re.I)
+_AFTER_FIRST = re.compile(r"\b(?:right |just |directly |immediately )?after the first sentence\b", re.I)
+_CONDITION = re.compile(r"\b(?:if|when|whenever|unless|only|asked|in case|once)\b", re.I)
+_QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”')
+_PLACEHOLDER = re.compile(r"\[|\]|\{\{|\}\}")
+
+
+def opening_verbatim_rules(spec):
+    """[(rule, sentence)]: extra rules of stage opening that require one quoted sentence word for word in the
+    opening, with no negation and no condition anywhere in the rule. Rule order is brief order; a sentence is listed
+    once (a later rule for the same sentence comes with None)."""
+    out, seen = [], set()
+    for r in spec.get("extra_rules", []) or []:
+        text = r.get("text") or ""
+        if r.get("stage") != "opening" or _NEGATION.search(text) or _CONDITION.search(text):
+            continue
+        outside = _QUOTED.sub(" ", text)
+        if _OTHER_MOMENT.search(_AFTER_FIRST.sub(" ", outside)):
+            continue
+        if not (_VERBATIM_WORDS.search(text) and _OPENING_PLACE.search(outside)):
+            continue
+        quoted = [(m.group(1) or m.group(2)).strip() for m in _QUOTED.finditer(text)]
+        quoted = [x for x in quoted if len(x.split()) >= 3]
+        if len(quoted) != 1 or _PLACEHOLDER.search(quoted[0]):
+            continue  # several quotes (which one is unclear) or a placeholder: leave the rule as it is
+        if not re.search(r"[.!?]$", quoted[0]):
+            quoted[0] += "."
+        if quoted[0] not in seen:
+            seen.add(quoted[0])
+            out.append((r, quoted[0]))
+        else:
+            out.append((r, None))  # a second rule for the same sentence: dropped, nothing added
+    return out
+
+
 def safe_opening(sentence, verbatim=False):
     """Rephrase a recording notice to the safe sentence. Returns (text, changed).
     A sentence the brief requires word for word (opening.verbatim) is returned untouched."""
@@ -224,6 +272,10 @@ def lint(workflow, spec):
     # as rendered (a {first_name} in it is spoken as {{first_name}})
     first_rx = _as_spoken(first) if verbatim and first else None
     checked = first_rx.sub(" ", text, count=1) if first_rx else text
+    # F2: word-for-word opening sentences moved from extra rules are exempt like the verbatim first sentence
+    moved = [_as_spoken(x) for _, x in opening_verbatim_rules(spec) if x]
+    for rx in moved:
+        checked = rx.sub(" ", checked, count=1)
     # a placeholder the compiler did not render is read out literally ("Hello {first_name}")
     for k, n in nodes.items():
         m = _RAW_PH.search((n.get("on_enter") or {}).get("text") or "") if (n.get("on_enter") or {}).get("type") == "tts" else None
@@ -237,6 +289,9 @@ def lint(workflow, spec):
         for t in spoken:
             if first_rx:
                 t = first_rx.sub(" ", t or "")
+            if k == "opening":   # F2: the moved sentences are exempt in the opening line only
+                for rx in moved:
+                    t = rx.sub(" ", t or "")
             if _RECORD.search(t or ""):
                 errs.append("node %s: spoken text says %r before a promise is recorded: %r" % (k, _RECORD.search(t).group(0), t[:80]))
     for word in op.get("banned_before_verify", []):
