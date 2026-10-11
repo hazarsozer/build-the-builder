@@ -178,3 +178,61 @@ The rejection changes the hook mechanics (request rewrite), so I re-probed:
 1. **A rejected create_promise still shows as a `create_promise` call** in the Freya tool list. The bank sees only a get_account. A literal check such as "create_promise called exactly once" (cases.py:300) or a judge counting tool calls could count it. It happens only when the model skips check_date or sends an unallowed date.
 2. **Item 4 deviates from the ruling** (see the table). Upside: it obeys brief A rule 19 and stays generic. Downside: if the judge expects after-hours "today" to be refused, PUB cases at 19:30 that say "today" would differ. One spec line flips it.
 3. **"not" handling is local.** It looks back only over a few filler words. "not on the Friday but the Thursday" works; "I said it's not going to be Friday, Thursday" also works. A long negated clause before the day may not be caught.
+
+---
+
+# Fix round 2 (the create_promise guard fails closed)
+
+Commit 2ee331d, plus this report section.
+
+## Design: fail closed by default, not only in the except branch
+
+Both one-product promise tools now carry the **read-only `/get_account` as their own url**:
+- `safe_route()`, compile.py:2030, asserts at compile time that the url was `<base>/create_promise` before switching it. This covers item 4.
+- It applies to the model's `create_promise` in negotiate (:1998) and to the engine-run `retry_promise` (:2158).
+
+Only a pre-hook that has **accepted** the date points the request at `PROMISE_URL` and sets `promise_sent = yes`. So a request reaches `/create_promise` only through that one accepted branch, and every other outcome stays on the read-only route:
+- a rejection;
+- a body that is not a dict;
+- an unreadable `deadline_iso`;
+- any exception;
+- a pre-hook that never runs at all.
+
+| # | Fix | Where |
+|---|---|---|
+| 1 | The `except` branch calls `_off_bank(NOT_CHECKED)`: `promise_reject` = "NOT RECORDED: the date could not be checked; ask the customer for the day again.", url = `SAFE_URL`, body = `{customer_id}`. That call has its own guard. | compile.py:964 `NOT_CHECKED`, :965 `OFF_BANK`, :976 `PROMISE_DATE_PRE` |
+| 2 | A body that is not a dict is rejected and rerouted the same way. | `PROMISE_DATE_PRE` |
+| 3 | `RETRY_PRE` goes to `PROMISE_URL` only when `promise_sent == yes` and `promise_date_used` is set (the guard's accepted date). It then sends exactly that date. Otherwise it calls `_off_bank`. It never falls back to the raw `create_promise_args.promise_date`. A retry kept off the bank gets no `data.ok`, so `retry_ok` is never true and the node takes its failure close. | compile.py:825 |
+| 4 | The baked `SAFE_URL`/`PROMISE_URL` constants (`routes()`, :2023) replace the url read from config, so a config without a url is rerouted too. | `OFF_BANK`, `routes()` |
+
+**PROMISE_POST** (:785) reports "recorded" only when `promise_sent == yes` and no rejection is set. Otherwise it answers `rejected` with `promise_reject` or `NOT_CHECKED`. A call whose pre-hook never ran therefore returns a get_account answer and can never be read as recorded.
+
+## Tests
+
+- **tests/test_a12.py:**
+  - `test_fix2_promise_tools_default_to_the_read_only_route`: both tools default to get_account. A post-hook with no pre-hook run returns rejected.
+  - `test_fix2_unreadable_deadline_keeps_a_holiday_off_the_bank`, with `deadline_iso` missing, "", "garbage", "2026-13-45" or 42. Neither a holiday date nor an otherwise acceptable date goes to /create_promise; the result is rejected with NOT_CHECKED.
+  - `test_fix2_non_dict_body_is_rejected_and_rerouted`, with body None, a string, a list or an int.
+  - `test_fix2_config_without_url_is_still_rerouted`: a rejection lands on get_account; an accepted date lands on /create_promise.
+  - `test_fix2_retry_reuses_only_a_date_the_guard_accepted`. Three cases are kept off the bank: no guard run (raw holiday arg), a guard rejection, and a `promise_date_used` without the sent mark. After an accepted date, the retry sends that date.
+- **Updated** for the new contract (the guard must run and accept before "recorded"):
+  - `test_hooks.test_promise_posthook_records_on_ok` sets `promise_sent`, and also asserts that without it the call is rejected.
+  - In `test_generalise`, the extra-field tests (m1, g3 ×2, g4) give the pre-hook a readable deadline, or give the retry/post the guard's accepted state.
+- **Runs:**
+  - `uv run pytest -q tests/test_a12.py` → 33 passed.
+  - `uv run pytest -q` → **675 passed, 6 skipped in 21.73s**.
+
+## Probe
+
+I tried the same create_promise-only probe as in fix round 1, on probe-hooks versions 11-14:
+- **Version 11 ran "record A" (date 2026-10-26):** the result was "NOT RECORDED: Monday 26 October 2026 is a bank holiday ... Say this date, read it back and ask again.", spoken by the model. That is the rejection through the new default-safe url.
+- **The next chat message failed with a platform 504.** The callId was lost when the script crashed, so the "record B" (accepted → /create_promise) leg and the ledger read did not complete.
+- **Three reruns (versions 12-14) failed on their first message with 503 "Internal server error".**
+- **A trivial one-node workflow with no tools (version 15) also returned 503.** This is a Freya chat-API outage, not this change.
+
+The accepted leg uses the same pre-hook url rewrite that fix round 1's probe 5b110990 proved live (the request went to the rewritten url), only in the other direction. probe-hooks now holds the trivial outage-test workflow (version 15).
+
+## Concerns
+
+1. **The accepted path is not re-proven live.** An accepted date going from the get_account default to /create_promise is not proven on the platform after the default-url change, because of the outage. Re-run `scratchpad/a12/probe_fix1.py` once the chat API is back: "record B" must log url `/v1/create_promise` and the ledger must hold 2026-10-27.
+2. **No fallback if the platform ever ignored a pre-hook url rewrite.** Every promise would then stay on get_account and never be recorded. This fails closed, but it is total. Fix round 1's probe showed the rewrite is honoured.
