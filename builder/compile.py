@@ -21,7 +21,7 @@ import re
 import sys
 
 from builder.lib import dates, embed, money
-from builder.lint import SPOKEN_BEFORE_SUCCESS, lint, never_say_words, safe_opening, safe_pre_success
+from builder.lint import SPOKEN_BEFORE_SUCCESS, lint, never_say_words, opening_verbatim_rules, safe_opening, safe_pre_success
 from builder import labels, layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.triggers import verb_led, bare_trigger, sentence, split_trigger, subj, trigger_rest
@@ -1900,7 +1900,10 @@ class _Compiler:
         mine = self.stage_tools(stage)
         out = []
         support = [_words(e["trigger"]) for e in self.support_events()] if stage == "negotiate" else []
+        moved = [id(r) for r, _ in opening_verbatim_rules(self.s)]   # F2: spoken in the opening instead
         for r in rules_for(self.s.get("extra_rules", []), stage):
+            if id(r) in moved:
+                continue
             named = {t for t in tools if re.search(r"\b%s\b" % re.escape(t), r["text"])}
             if named - mine:
                 continue
@@ -1953,12 +1956,15 @@ class _Compiler:
         for the opening: "A recorded promise cannot be changed" -> "A promise cannot be changed". A first sentence the
         brief requires word for word (opening.verbatim) is left as it is."""
         op = self.s["opening"]
-        keep = tpl(op["first_sentence"]) if op.get("verbatim") and op.get("first_sentence") else None   # as spoken
+        keep = [tpl(op["first_sentence"])] if op.get("verbatim") and op.get("first_sentence") else []   # as spoken
+        keep += [tpl(x) for _, x in opening_verbatim_rules(self.s) if x]   # F2: word-for-word opening sentences
 
-        def fix(text):
-            if keep and keep in text:
-                return keep.join(fix(p) for p in text.split(keep))
-            return safe_pre_success(text)[0]
+        def fix(text, i=0):
+            if i == len(keep):
+                return safe_pre_success(text)[0]
+            if keep[i] and keep[i] in text:
+                return keep[i].join(fix(p, i + 1) for p in text.split(keep[i]))
+            return fix(text, i + 1)
 
         for k in SPOKEN_BEFORE_SUCCESS:
             n = nodes.get(k)
@@ -2186,6 +2192,10 @@ HOW TO GET A PROMISE
     def opening_node(self):
         op = self.s["opening"]
         first, _ = safe_opening(op["first_sentence"], op.get("verbatim", False))
+        # F2: word-for-word opening sentences from extra rules, after the first sentence, in brief order, once
+        for _, x in opening_verbatim_rules(self.s):
+            if x and x not in first:
+                first = first.rstrip() + " " + x
         values, desc, trans = self.event_values("opening")
         unclear = self.fallback_close("opening", ["unclear"])
         max_asks = op.get("max_asks", 2)
