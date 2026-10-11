@@ -236,3 +236,45 @@ The accepted leg uses the same pre-hook url rewrite that fix round 1's probe 5b1
 
 1. **The accepted path is not re-proven live.** An accepted date going from the get_account default to /create_promise is not proven on the platform after the default-url change, because of the outage. Re-run `scratchpad/a12/probe_fix1.py` once the chat API is back: "record B" must log url `/v1/create_promise` and the ledger must hold 2026-10-27.
 2. **No fallback if the platform ever ignored a pre-hook url rewrite.** Every promise would then stay on get_account and never be recorded. This fails closed, but it is total. Fix round 1's probe showed the rewrite is honoured.
+
+(Fix round 2 concern 1 is resolved: the controller's live gate at 4747354 recorded promises on the accepted path, with PUB-07 3/3, the PUB-10 retry passing and PUB-B 3/3.)
+
+---
+
+# Fix round 3 (PUB-06: an accepted offer was offered again)
+
+Commits 7cb68c5, e505e0c, plus this report section.
+
+**Cause.** After "Can you pay 637.50 on Friday 16 October 2026? The rest stays overdue.", the customer said "I can do that on Friday". The model called check_date. The OK verdict said "Propose it with the amount of your current attempt, as a yes/no question unless ...". The model repeated "Can you pay 637.50 on Friday 16 October 2026?", and the judge counted a second offer of the minimum.
+
+| # | Fix | Where |
+|---|---|---|
+| a | **check_date knows the agent's own proposals.** Three sources count as dates the agent proposed: prepare_account's plan dates in `offer_dates`; every alternative date a result told the agent to offer, in `cd_offered` (next business day, deadline ...); and the deadline. When the checked date is one of them, the verdict is `ACCEPTED OFFER: <date> is a date you proposed and it can be accepted. The customer accepted your offer: do not propose it again. As a confirmation, read back the product, the amount and the date once and ask "Do you confirm?", then record (create_promise date: <iso>).` The read-back uses the spec's own confirmation question (step 4 wording, `CONFIRM` from `confirmation.question`). | compile.py:389, :910-918 `offered`, :942, :958, :2036 |
+| a' | **A bare weekday resolves to the proposed date on it.** "the Tuesday is fine" after an offer of Tue 27 Oct now resolves to 27 Oct, not the next Tuesday (20 Oct). This uses `resolve_said(..., prefer=offered)`. A weekday with a modifier ("next Tuesday") still follows weekday_words. | dates.py:487 |
+| b | **The prompt checks only days the customer names.** CHECK_DAY starts "A day the customer names themselves (...)" and ends "A yes to a date you proposed needs no check: go to the read-back." | compile.py:51 |
+| c | **OK for a new date** (named by the customer): `OK: <date> can be accepted. If an amount is already agreed, read back the product, the amount and the date once and ask "Do you confirm?". If not, propose this date, as a yes/no question, for the amount of your current attempt (never say a figure the customer already heard). create_promise date: <iso>.` | compile.py, CHECK_PRE |
+| audit | **No verdict tells the model to restate a heard amount.** The not-a-business-day, after-deadline and too-late-for-today offers now say `offer <date>, as a yes/no question, for the amount of your current attempt (never say a figure the customer already heard)` instead of "with the amount of your current attempt". No verdict contains "with the amount" or "Can you pay". This is asserted for 7 phrasings at each of the 5 now-values. | compile.py, CHECK_PRE `cur` |
+
+## Tests
+
+- **tests/test_a12.py:**
+  - `test_fix3_pub06_accepting_the_offered_date_is_confirmed_not_offered_again`: "I can do that on Friday." / "Friday" / "the 16th" give ACCEPTED OFFER with a read-back. None of them contains "propose this date" or "current attempt".
+  - `test_fix3_dates_from_a_result_and_the_deadline_count_as_offers`: after the holiday verdict, "Tuesday is fine" gives ACCEPTED OFFER for 27 Oct. The deadline counts as an offer.
+  - `test_fix3_a_new_date_named_by_the_customer`.
+  - `test_fix3_no_verdict_restates_an_amount_already_heard`, run for each of the 5 now-values.
+  - `test_fix3_prompt_checks_only_days_the_customer_names`.
+- **tests/test_dates.py:** `test_fix3_bare_weekday_means_the_offered_date_on_it`.
+- **Updated:** the after-deadline and holiday wording assertions in test_a12 and test_a10 (`offer it, as a yes/no question, for the amount of your current attempt`).
+- **Runs:**
+  - `uv run pytest -q tests/test_a12.py tests/test_dates.py` → 103 passed.
+  - `uv run pytest -q` → **685 passed, 6 skipped in 21.91s**.
+
+## Compiled-prompt changes
+
+- **spec-a:** the negotiate task_message is **4398 chars** (4302 before this round; budget 4800). Only CHECK_DAY changed, as in (b). The check_date pre-hook and the date-rules prelude changed (`CONFIRM`), and prepare_account writes `offer_dates`.
+- **spec-b:** the negotiate task is unchanged (5336). Its prepare_account also writes the unused `offer_dates`.
+
+## Concerns
+
+1. **ACCEPTED OFFER also fires on a plan date the agent has not yet spoken.** This happens when the customer names a plan date first, for example attempt 2's deadline before attempt 2 was made. The verdict then asks for a read-back with the current amount instead of a proposal. In practice the plan date is the first one offered, and a read-back states the amount and asks for confirmation, so the customer can still say no.
+2. **Not live-tested in this round.** No probe was run: hook mechanics are unchanged and only the wording and the offered-date bookkeeping changed. A gate run of PUB-06 should confirm that the model now reads back once.
