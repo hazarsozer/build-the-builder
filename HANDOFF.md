@@ -104,3 +104,31 @@ You are the successor orchestrator. dev-14 stays open as the **reporter**: it wr
 **Rules:** see "How the work runs" above. Before going idle, set your own heartbeat with CronCreate, every 20 min (minutes 13,33,53), idle-only. Its prompt: read the ledger tail and this file, then continue the queue. That way you resume after a usage-limit reset. Never push. Never cancel a simulation you didn't start. Secrets never printed.
 
 Known platform facts and agent IDs are above. Results: `results/` (gitignored). Rulings so far: in the ledger.
+
+## Orchestrator-3 brief (written Sun ~11:50 by orchestrator-2, session dev-2d)
+
+**State:** `builder` @ 1167f06, tag **gate-green-5** (1019 tests). Since gate-green-1 the builder gained: final-review fixes,
+outage resilience, multi-product rework (set_product visible + parallel-safe), single-product dates in code (check_date,
+fail-closed create_promise), generalisation (outcome names, identity limits, nth business day, account events, verbatim
+openings, banned-word reconcile, never_say), talkative/fragment robustness, close_call guard, dashboard layout + labels.
+Gates on gate-green-4 and gate-green-5: PUB-A 10/10, PUB-B 3/3 at 3 reps. Styles (3 reps, pre-A21): A pieces/corrects/in_words
+10/10, asks_back 9/10, talkative 6/10 (A21 targets it, not re-measured); B 2/3–3/3. Fallback (fallback/agent_builder.py, brief A):
+built in 912 s, PUB-A 10/10 at 3 reps (agent ed5aa40a, slot brief-a). Every decision: ledger `Ruling:` lines.
+
+**In flight when you start:** `bench/run.py ours` on the 10 briefs that failed on the Claude spend limit (log
+`results/bench-ours-g5.log`, ~until 12:45). Main checkout is frozen while it runs (builds import the working tree).
+
+**Queue:**
+1. When the bench ends: `git merge 7c4ebb5` into builder (A22 polling retry, reviewed Opus-approved + docs cleanup/README;
+   compile output unchanged → no live gate needed), run `uv run pytest -q` (expect 1028), then re-run the lost brief:
+   `uv run python bench/run.py ours fields`. Earlier bench (pre-fixes): 61/80; g4 partial: bands3 8/8, calendar 7/8.
+2. 16:00 decision input (Task 11): `uv run python bench/run.py fallback <4 briefs, e.g. insurance ids sme outcomes>` and
+   compare with ours on the same briefs + PUB-A/B. Present the table to Hazar; he decides.
+3. Freeze: `git tag final-candidate` on the chosen commit; only crash fixes after.
+4. 20:00–23:00: RUNBOOK.md, step by step. Always pass `--openapi` and `--slot`.
+
+**Watch-outs:** Claude spend limit stopped work twice (builder extraction uses it — check it works before 20:00). One simulation
+at a time; never cancel one you didn't start (ours are in `.freya-sims.json`). Gates compile into ours-A/ours-B from a detached
+snapshot worktree (`results/regate.sh <tag> <worktree>`). Never `pgrep -f` a string that also appears later in your own command.
+Open for Hazar: Turkish STT/TTS defaults in agent_config (left as platform default); HANDOFF.md/REPORT.md are internal notes —
+remove or keep before making the repo public; workspace holds many bench/probe workflows (deleting needs his OK).
