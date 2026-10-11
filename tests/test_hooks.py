@@ -47,9 +47,12 @@ def test_promise_posthook_records_on_ok():
     code = [t for k, t in _tools(w)
             if t["function"]["name"] == "create_promise" and t.get("post_process_code")][0]["post_process_code"]
     r = {"status": "success", "data": {"ok": True, "promise_id": "x"}}
-    run(code, r)
+    run(code, r, {"promise_sent": "yes"})  # A12: the date guard sent it to create_promise
     assert r["data"]["promise_status"] == "recorded"
-    v = {}
+    r = {"status": "success", "data": {"ok": True, "promise_id": "x"}}
+    run(code, r, {})  # not sent by the guard (the request stayed on the read-only route): never recorded
+    assert r["data"]["promise_status"] == "rejected"
+    v = {"promise_sent": "yes"}
     r = {"status": "success", "data": {"ok": False}}
     run(code, r, v)
     assert r["data"]["promise_status"] == "failed" and "again" in r["data"]["what_to_do_next"]

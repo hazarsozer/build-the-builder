@@ -344,7 +344,7 @@ def test_m1_token_match_before_default_and_model_is_told():
     t = _named(w, "negotiate", "create_promise")
     for sent, want in [("credit card", "card"), ("bank transfer", "bank_transfer"), ("by transfer", "bank_transfer"),
                        ("the app", "app"), ("cash", "bank_transfer"), ("card or app", "bank_transfer")]:
-        v = {}
+        v = {"now": "2026-10-14T11:00", "deadline_iso": "2026-11-02"}  # A12: the date guard accepts the date
         cfg = {"body": {"amount": 1, "date": "2026-10-14", "channel": sent}}
         run(t["pre_process_code"], None, v, cfg)
         assert cfg["body"]["channel"] == want, (sent, cfg)
@@ -352,7 +352,7 @@ def test_m1_token_match_before_default_and_model_is_told():
         run(t["post_process_code"], r, v)
         assert "channel" in r["data"]["what_to_do_next"] and want in r["data"]["what_to_do_next"], r
     # an exact value needs no remark
-    v = {}
+    v = {"now": "2026-10-14T11:00", "deadline_iso": "2026-11-02"}
     run(t["pre_process_code"], None, v, {"body": {"amount": 1, "date": "2026-10-14", "channel": "app"}})
     r = {"status": "success", "data": {"ok": True}}
     run(t["post_process_code"], r, v)
@@ -579,7 +579,7 @@ def test_g4_promise_alias_ok():
     w = C(s, oa)
     post = _named(w, "negotiate", "create_promise")["post_process_code"]
     r = {"status": "success", "data": {"accepted": True, "promise_id": "x"}}
-    run(post, r)
+    run(post, r, {"promise_sent": "yes"})  # A12: the guard sent it to create_promise
     assert r["data"]["promise_status"] == "recorded"
     rp = _named(w, "retry_promise", "create_promise")
     r = {"status": "success", "data": {"accepted": True}}
@@ -650,10 +650,11 @@ def test_g3_retry_carries_the_extra_field():
     assert _body(t)["properties"]["channel"]["default"] == "{{create_promise_args.channel}}"
     cfg = {"body": {"amount": "1", "date": "2026-10-14", "channel": "x"}}
     run(t["pre_process_code"], None, {"create_promise_args.channel": "card", "create_promise_args.promise_amount": 5,
-                                      "create_promise_args.promise_date": "2026-10-15"}, cfg)
+                                      "create_promise_args.promise_date": "2026-10-15",
+                                      "promise_date_used": "2026-10-15", "promise_sent": "yes"}, cfg)  # A12: accepted date
     assert cfg["body"]["channel"] == "card" and cfg["body"]["amount"] == 5.0
     cfg = {"body": {"amount": "1", "date": "2026-10-14"}}
-    run(t["pre_process_code"], None, {}, cfg)
+    run(t["pre_process_code"], None, {"promise_date_used": "2026-10-14", "promise_sent": "yes"}, cfg)
     assert cfg["body"]["channel"] == "bank_transfer"
 
 
@@ -661,7 +662,7 @@ def test_g3_prehook_maps_bad_value_to_default():
     t = _named(C(_with_fields(A), FOA), "negotiate", "create_promise")
     for sent, want in [("cash", "bank_transfer"), ("Card", "card"), (None, "bank_transfer"), ("app", "app")]:
         cfg = {"body": {"amount": 1, "date": "2026-10-14", "channel": sent}}
-        run(t["pre_process_code"], None, {}, cfg)
+        run(t["pre_process_code"], None, {"now": "2026-10-14T11:00", "deadline_iso": "2026-11-02"}, cfg)  # A12: the date guard accepts the date
         assert cfg["body"]["channel"] == want, (sent, cfg)
     for cfg in [{}, {"body": None}, {"body": {}}]:
         run(t["pre_process_code"], None, {}, cfg)

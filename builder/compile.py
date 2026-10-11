@@ -782,9 +782,10 @@ try:
             d = dict()
             result['data'] = d
         good = str(result.get('status', 'success')) == 'success' and d.get('ok') is True
-        if vars.get('promise_reject'):
-            # A12: the pre-hook kept a date the rules do not allow off the bank (the request went to get_account)
-            result['data'] = d = dict(ok=False, recorded=False, promise_status='rejected', what_to_do_next=str(vars.get('promise_reject')))
+        if vars.get('promise_reject') or str(vars.get('promise_sent') or '') != 'yes':
+            # A12: the pre-hook kept the call off the bank (the request went to get_account): never recorded
+            result['data'] = d = dict(ok=False, recorded=False, promise_status='rejected',
+                                      what_to_do_next=str(vars.get('promise_reject') or NOT_CHECKED))
         elif good:
             d['promise_status'] = 'recorded'
             d['what_to_do_next'] = 'The promise is recorded.'
@@ -819,22 +820,31 @@ except Exception:
     pass
 '''
 
+# the engine-run retry (one product): its url is SAFE_URL too; it goes to PROMISE_URL only with the date the
+# create_promise guard accepted (promise_date_used), never the model's raw argument (A12 fix 2)
 RETRY_PRE = r'''
 try:
-    b = config.get('body')
-    if isinstance(b, dict):
+    vars['retry_sent'] = ''
+    b = config.get('body') if isinstance(config, dict) else None
+    dt = str(vars.get('promise_date_used') or '')[:10]
+    if isinstance(b, dict) and dt and str(vars.get('promise_sent') or '') == 'yes':
         a = vars.get('create_promise_args.promise_amount')
         if a is None:
             a = b.get('amount')
         b['amount'] = float(a)
-        dt = vars.get('promise_date_used') or vars.get('create_promise_args.promise_date')
-        if dt:
-            b['date'] = str(dt)[:10]
+        b['date'] = dt
         pid = vars.get('product_id')
         if pid:
             b['product_id'] = str(pid)
+        config['url'] = PROMISE_URL
+        vars['retry_sent'] = 'yes'
+    else:
+        _off_bank(NOT_CHECKED)
 except Exception:
-    pass
+    try:
+        _off_bank(NOT_CHECKED)
+    except Exception:
+        pass
 '''
 
 # A12: one product, a day the customer names. check_date is a read-only api tool (get_account route, like set_product
@@ -946,16 +956,32 @@ except Exception:
     pass
 '''
 
-# create_promise (one product, fix round 1): a date the rules do not allow is never recorded and never silently changed.
-# The pre-hook sends such a call to the read-only get_account route (as check_date does; pre-hooks may rewrite the whole
-# request, docs/tools-and-code.md) and PROMISE_POST answers "NOT RECORDED: <verdict>". A date that is not YYYY-MM-DD is
-# rejected the same way; no earlier check_date value is ever reused.
+# create_promise (one product): a date the rules do not allow is never recorded and never silently changed (fix round 1),
+# and the guard fails CLOSED (fix round 2). The tool's own url is the read-only get_account route (SAFE_URL); only this
+# pre-hook, after it accepted the date, points the request at create_promise (PROMISE_URL). Any rejection, any request
+# it cannot read and any exception keep the call on SAFE_URL with a body of customer_id only, and PROMISE_POST answers
+# "NOT RECORDED: ...". Pre-hooks may rewrite the whole request (docs/tools-and-code.md; probes 5b110990, A12 fix 2).
+NOT_CHECKED = "NOT RECORDED: the date could not be checked; ask the customer for the day again."
+OFF_BANK = r'''
+def _off_bank(msg):
+    vars['promise_reject'] = msg
+    vars['promise_date_used'] = ''
+    vars['promise_sent'] = ''
+    if isinstance(config, dict):
+        cb = config.get('body')
+        cid = cb.get('customer_id') if isinstance(cb, dict) else None
+        config['url'] = SAFE_URL
+        config['body'] = dict(customer_id=cid or vars.get('customer_id'))
+'''
 PROMISE_DATE_PRE = r'''
 try:
     vars['promise_reject'] = ''
     vars['promise_date_used'] = ''
+    vars['promise_sent'] = ''
     b = config.get('body') if isinstance(config, dict) else None
-    if isinstance(b, dict):
+    if not isinstance(b, dict):
+        _off_bank(NOT_CHECKED)
+    else:
         raw = str(b.get('date') or '').strip()[:10]
         dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
         try:
@@ -963,21 +989,23 @@ try:
         except ValueError:
             d = None
         if d is None:
-            vars['promise_reject'] = ('NOT RECORDED: the date was not given as YYYY-MM-DD. Call ' + TOOL + ' with the customer\'s day, '
-                                      'say the date it gives, read it back and ask again.')
+            _off_bank('NOT RECORDED: the date was not given as YYYY-MM-DD. Call ' + TOOL + ' with the customer\'s day, '
+                      'say the date it gives, read it back and ask again.')
         else:
             kind, off, bad, todo = _cd_judge(d, dl)
             if kind == 'ok':
+                config['url'] = PROMISE_URL
+                b['date'] = raw
                 vars['promise_date_used'] = raw
+                vars['promise_sent'] = 'yes'
             else:
-                vars['promise_reject'] = ('NOT RECORDED: ' + bad + '; ' + todo + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
-                                          '. Say this date, read it back and ask again.')
-        if vars['promise_reject']:
-            u = str(config.get('url') or '')
-            config['url'] = u.rsplit('/', 1)[0] + '/get_account' if '/' in u else u
-            config['body'] = dict(customer_id=b.get('customer_id'))
+                _off_bank('NOT RECORDED: ' + bad + '; ' + todo + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
+                          '. Say this date, read it back and ask again.')
 except Exception:
-    pass
+    try:
+        _off_bank(NOT_CHECKED)
+    except Exception:
+        pass
 '''
 
 # spec.responses: the brief's openapi names some response fields differently; copy each back to the name the
@@ -1967,13 +1995,13 @@ HOW TO GET A PROMISE
             "on_enter": {"type": "tts", "text": self.verified_lead() + "{{debt_statement_text}} " + tpl(neg["first_ask"])},
             "on_enter_first_entry_only": True,
             "task_message": self.negotiate_task(),
-            "tools": [self.check_tool(), self.tool("create_promise", {
+            "tools": [self.check_tool(), self.safe_route(self.tool("create_promise", {
                 "product_id": {"default": "{{product_id}}"},
                 "amount": {"description": "Promised amount, a number such as 420.00. From the floor up to the full past-due amount.", "default": "{{promise_amount}}"},
                 "date": {"description": "Promised payment date, YYYY-MM-DD: the date check_date gave, or the date of the plan's offer.", "default": "{{promise_date}}"},
             }, ["amount", "date"], description="Record the payment promise. CALL it only after the customer said yes to your read-back of product, amount and date.",
-                mapping=[{"path": "data.promise_status", "variable": "promise_status"}], pre=self.date_rules() + PROMISE_DATE_PRE,
-                post=PROMISE_POST.replace("RETRIES", str(int(retries))))],
+                mapping=[{"path": "data.promise_status", "variable": "promise_status"}], pre=self.guard() + PROMISE_DATE_PRE,
+                post="NOT_CHECKED = %r\n" % NOT_CHECKED + PROMISE_POST.replace("RETRIES", str(int(retries)))))],
             "extraction_schema": [{
                 "name": "neg_event", "type": "string", "min_confidence": 0.6,
                 "enum_values": structural[:1] + values + structural[1:],
@@ -1991,6 +2019,20 @@ HOW TO GET A PROMISE
                 "NBD = %r\nAFTER = %r\nCUTOFF = %r\nTOOL = %r\n" % (neg.get("non_business_day", "next_business_day"),
                                                                    neg.get("after_deadline", "offer_deadline"),
                                                                    neg.get("same_day_cutoff") or "", CHECK_TOOL) + CHECK_LIB)
+
+    def routes(self):
+        """The constants of the fail-closed promise guard: the read-only route and the promise route (A12 fix 2)."""
+        return "SAFE_URL = %r\nPROMISE_URL = %r\nNOT_CHECKED = %r\n" % (self.base + "/get_account", self.base + "/create_promise", NOT_CHECKED) + OFF_BANK
+
+    def guard(self):
+        return self.date_rules() + self.routes()
+
+    def safe_route(self, t):
+        """A promise tool whose own url is the read-only route; only its pre-hook sends an accepted date to create_promise."""
+        url = t["function"]["parameters"]["properties"]["url"]
+        assert url.get("default") == self.base + "/create_promise", url
+        url["default"] = self.base + "/get_account"
+        return t
 
     def check_tool(self):
         """check_date (one product): the model passes the customer's words for a day; code returns the verdict."""
@@ -2113,11 +2155,11 @@ HOW TO RUN THE CALL
     def retry_node(self):
         fail = self.close_key(self.fail_ev) if self.has(self.fail_ev) else "close_account_error"
         ok = self.close_key("promise_recorded") if self.has("promise_recorded") else fail
-        rp = self.tool("create_promise", {
+        rp = self.safe_route(self.tool("create_promise", {
             "product_id": {"default": "{{product_id}}"},
             "amount": {"default": "{{create_promise_args.promise_amount}}"},
             "date": {"default": "{{create_promise_args.promise_date}}"},
-        }, ["amount", "date"], source="create_promise_args.%s", pre=RETRY_PRE)
+        }, ["amount", "date"], source="create_promise_args.%s", pre="import json\n" + self.routes() + RETRY_PRE))
         return {
             "name": "retry_promise", "node_type": "api_request", "passthrough": True, "passthrough_default_transition": fail,
             "on_enter": {"type": "tts", "text": "I am sorry, there was a technical problem on our side. Let me try that once more."},

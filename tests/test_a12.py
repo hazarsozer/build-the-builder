@@ -42,13 +42,13 @@ def check(w, v, said, date=None):
     return r["data"]
 
 
-BANK = "https://bank.example/v1"
+BANK = OA["servers"][0]["url"].rstrip("/")
 
 
 def promise(w, v, date):
     """(request config after the pre-hook, tool result the model reads). The bank answers as the route it is sent to."""
     t = _tool(w, "create_promise")
-    cfg = {"url": BANK + "/create_promise", "method": "POST",
+    cfg = {"url": t["function"]["parameters"]["properties"]["url"]["default"], "method": "POST",
            "body": {"customer_id": "c1", "product_id": "p1", "amount": 540.0, "date": date}}
     exec(t["pre_process_code"], {"vars": v, "config": cfg})
     if cfg["url"].endswith("/get_account"):
@@ -208,6 +208,92 @@ def test_fix1_after_hours_today():
     assert validate(s, OA) == []                               # the optional field is in the spec schema
     s["negotiation"]["same_day_cutoff"] = "7pm"
     assert validate(s, OA) != []
+
+
+# ---------------------------------------------------------------- fix round 2: the guard fails closed
+
+NOT_CHECKED = "NOT RECORDED: the date could not be checked; ask the customer for the day again."
+
+
+def _pre(t, v, cfg):
+    exec(t["pre_process_code"], {"vars": v, "config": cfg})
+    return cfg
+
+
+def _no_unchecked_promise(cfg):
+    assert not str(cfg.get("url") or "").endswith("/create_promise"), cfg
+    assert cfg["url"] == BANK + "/get_account" and set(cfg["body"]) == {"customer_id"}, cfg
+
+
+def test_fix2_promise_tools_default_to_the_read_only_route():
+    """If a pre-hook never runs, the request goes to get_account: nothing can reach create_promise unchecked."""
+    w = C(A, OA)
+    for node in ("negotiate", "retry_promise"):
+        ts = w["nodes"][node].get("tools", []) + w["nodes"][node].get("pre_actions", [])
+        t = [x for x in ts if x["function"]["name"] == "create_promise"][0]
+        assert t["function"]["parameters"]["properties"]["url"]["default"] == BANK + "/get_account", node
+    # and the result of such a call is never "recorded"
+    t = _tool(w, "create_promise")
+    r = {"status": "success", "data": {"customer_id": "c1", "products": [LOAN]}}
+    exec(t["post_process_code"], {"vars": {}, "result": r})
+    assert r["data"]["promise_status"] == "rejected" and r["data"]["what_to_do_next"] == NOT_CHECKED
+
+
+@pytest.mark.parametrize("dl", [None, "", "garbage", "2026-13-45", 42])
+def test_fix2_unreadable_deadline_keeps_a_holiday_off_the_bank(dl):
+    w, v = account("2026-10-14T11:00")
+    if dl is None:
+        v.pop("deadline_iso")
+    else:
+        v["deadline_iso"] = dl
+    t = _tool(w, "create_promise")
+    for date in ("2026-10-26", "2026-10-23"):                 # even an acceptable date: it could not be checked
+        cfg = _pre(t, v, {"url": BANK + "/get_account", "body": {"customer_id": "c1", "product_id": "p1", "amount": 540, "date": date}})
+        _no_unchecked_promise(cfg)
+        assert v["promise_reject"] == NOT_CHECKED and v["promise_date_used"] == ""
+        r = {"status": "success", "data": {"products": []}}
+        exec(t["post_process_code"], {"vars": v, "result": r})
+        assert r["data"]["promise_status"] == "rejected" and r["data"]["what_to_do_next"] == NOT_CHECKED
+
+
+@pytest.mark.parametrize("body", [None, "date=2026-10-26", ["2026-10-26"], 7])
+def test_fix2_non_dict_body_is_rejected_and_rerouted(body):
+    w, v = account("2026-10-14T11:00")
+    cfg = _pre(_tool(w, "create_promise"), v, {"url": BANK + "/create_promise", "body": body})
+    _no_unchecked_promise(cfg)
+    assert v["promise_reject"] == NOT_CHECKED
+
+
+def test_fix2_config_without_url_is_still_rerouted():
+    w, v = account("2026-10-14T11:00")
+    t = _tool(w, "create_promise")
+    cfg = _pre(t, v, {"body": {"customer_id": "c1", "amount": 540, "date": "2026-10-26"}})
+    _no_unchecked_promise(cfg)
+    cfg = _pre(t, v, {"body": {"customer_id": "c1", "amount": 540, "date": "2026-10-23"}})
+    assert cfg["url"] == BANK + "/create_promise" and cfg["body"]["date"] == "2026-10-23"
+
+
+def test_fix2_retry_reuses_only_a_date_the_guard_accepted():
+    w, v = account("2026-10-14T11:00")
+    rt = w["nodes"]["retry_promise"]["pre_actions"][0]
+
+    def retry(vv):
+        return _pre(rt, vv, {"url": BANK + "/get_account", "body": {"customer_id": "c1", "product_id": "p1", "amount": 1,
+                                                                    "date": "2026-10-26"}})
+    # never sent / rejected / guard crashed: the model's raw date is never used
+    _no_unchecked_promise(retry({"create_promise_args.promise_amount": 540, "create_promise_args.promise_date": "2026-10-26"}))
+    promise(w, v, "2026-10-26")                                # rejected by the guard
+    v.update({"create_promise_args.promise_amount": 540, "create_promise_args.promise_date": "2026-10-26"})
+    _no_unchecked_promise(retry(v))
+    _no_unchecked_promise(retry({"promise_date_used": "2026-10-23"}))   # a date without the guard's "sent" mark
+    # accepted by the guard: the retry sends exactly that date
+    cfg, _ = promise(w, v, "2026-10-23")
+    v["create_promise_args.promise_date"] = "2026-10-23"
+    cfg = retry(v)
+    assert cfg["url"] == BANK + "/create_promise" and cfg["body"]["date"] == "2026-10-23" and cfg["body"]["amount"] == 540.0
+    # the retry node's success route needs data.ok from create_promise; get_account's answer has none
+    tr = json.dumps(w["nodes"]["retry_promise"]["transitions"])
+    assert "retry_ok" in tr
 
 
 def test_retry_uses_the_date_sent_to_the_bank():
