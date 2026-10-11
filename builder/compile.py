@@ -48,8 +48,8 @@ DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a v
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
            'say only "Go on." and read it with the next message.')
 # A12 (one product): a named day is judged by check_date in code, never by the model
-CHECK_DAY = ('A day ("the 26th", "twenty-sixth", "Monday the." then "26th.", "next Friday", "tomorrow"): before you answer, call %s with '
-             'their words for it, joined across turns. Never judge a date yourself: say what the result says, use its date in create_promise. '
+CHECK_DAY = ('A day ("the 26th", "twenty-sixth", "next Friday", "tomorrow"): before you answer, call %s with their latest words for it '
+             '(a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th."). Never judge a date yourself: say what the result says, use its date in create_promise. '
              'Their own date, even after a "no", is never a refusal.')
 DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
              'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
@@ -782,9 +782,12 @@ try:
             d = dict()
             result['data'] = d
         good = str(result.get('status', 'success')) == 'success' and d.get('ok') is True
-        if good:
+        if vars.get('promise_reject'):
+            # A12: the pre-hook kept a date the rules do not allow off the bank (the request went to get_account)
+            result['data'] = d = dict(ok=False, recorded=False, promise_status='rejected', what_to_do_next=str(vars.get('promise_reject')))
+        elif good:
             d['promise_status'] = 'recorded'
-            d['what_to_do_next'] = 'The promise is recorded.' + str(vars.get('promise_date_note') or '')
+            d['what_to_do_next'] = 'The promise is recorded.'
         else:
             n = int(vars.get('promise_fail_n') or 0) + 1
             vars['promise_fail_n'] = n
@@ -839,20 +842,53 @@ except Exception:
 # (dates.date_verdict), the post-hook makes that the tool result the model reads. The model only speaks the verdict.
 # Body leaves are model-filled through {{cdx_*}} defaults; no cdx_* variable is ever set.
 CHECK_TOOL = "check_date"
+# shared by check_date and create_promise: the verdict on a date, as words (DATE_RULES prelude: dates, CAL, today,
+# nowdt, NBD, AFTER, CUTOFF, TOOL)
+CHECK_LIB = r'''
+def _cd_why(d):
+    if d.isoformat() in CAL['holidays']:
+        return 'a bank holiday, not a business day'
+    if d.weekday() >= 5:
+        return 'a weekend day, not a business day'
+    return 'not a business day'
+
+
+def _cd_judge(d, dl):
+    """(kind, date to offer or None, what is wrong with d or '', what to offer or ask) for a named date."""
+    today_open = not (CUTOFF and nowdt.strftime('%H:%M') >= CUTOFF)
+    kind, off = date_verdict(d, today, dl, CAL, NBD, AFTER, today_open)
+    if kind == 'ok':
+        return kind, off, '', ''
+    if kind == 'past':
+        return kind, None, say_date(d) + ' has already passed', 'ask for a date from today on'
+    if kind == 'after_deadline':
+        why = say_date(d) + ' is after the deadline'
+        if off is None:
+            return kind, None, why, 'say it cannot be accepted and ask for a date on or before ' + say_date(dl)
+        return kind, off, why, 'say the latest date you can accept is ' + say_date(off) + ' and offer it'
+    if kind == 'today_closed':
+        why = 'it is after ' + CUTOFF + ', too late for a payment today'
+        if off is None:
+            return kind, None, why, 'ask for a date on or before ' + say_date(dl)
+        return kind, off, why, 'offer the next business day, ' + say_date(off)
+    why = say_date(d) + ' is ' + _cd_why(d)
+    if off is None:
+        return kind, None, why, 'ask for a business day on or before ' + say_date(dl)
+    if NBD == 'previous_business_day' and off == prev_bd(d, CAL):
+        which = 'the business day before it'
+    elif off == next_bd(d, CAL):
+        which = 'the next business day'
+    else:
+        which = 'the latest date you can accept'
+    return kind, off, why, 'offer ' + which + ', ' + say_date(off)
+'''
+
 CHECK_PRE = r'''
 def _cd_arg(b, k):
     v = b.get(k)
     if v is None or (isinstance(v, str) and v.strip()[:2] == chr(123) * 2):
         return ''
     return str(v).strip()
-
-
-def _cd_kind_of(d):
-    if d.isoformat() in CAL['holidays']:
-        return 'a bank holiday, not a business day'
-    if d.weekday() >= 5:
-        return 'a weekend day, not a business day'
-    return 'not a business day'
 
 
 try:
@@ -869,38 +905,28 @@ try:
         except ValueError:
             d = None
     off = None
+    cur = ' with the amount of your current attempt, as a yes/no question'
+    never = ' Their own date is never a refusal.'
     if d is None:
         kind = 'vague' if why == 'vague' else 'no_day'
-    else:
-        kind, off = date_verdict(d, today, dl, CAL, NBD, AFTER)
-    cur = 'with the amount of your current attempt, as a yes/no question'
-    never = ' Their own date is never a refusal.'
-    if kind == 'ok':
-        msg = ('OK: ' + say_date(d) + ' can be accepted. Propose it ' + cur + ' unless they already gave an amount. '
-               'create_promise date: ' + d.isoformat() + '.')
-    elif kind == 'not_business_day' and off is not None:
-        if NBD == 'previous_business_day' and off == prev_bd(d, CAL):
-            which = 'the business day before it'
-        elif off == next_bd(d, CAL):
-            which = 'the next business day'
+        if kind == 'vague':
+            msg = 'NO EXACT DAY: that is a period, not a day. Follow your rule for a vague period.'
         else:
-            which = 'the latest date you can accept'
-        msg = ('NOT A BUSINESS DAY: ' + say_date(d) + ' is ' + _cd_kind_of(d) + '. Say so and offer ' + which + ', ' + say_date(off) + ', ' + cur + '.' +
-               never + ' If they accept, create_promise date: ' + off.isoformat() + '.')
-    elif kind == 'not_business_day':
-        msg = ('NOT A BUSINESS DAY: ' + say_date(d) + ' is ' + _cd_kind_of(d) + '. Say so and ask for a business day on or before ' + say_date(dl) + '.' + never)
-    elif kind == 'after_deadline' and off is not None:
-        msg = ('AFTER THE DEADLINE: ' + say_date(d) + ' is after the deadline. Say the latest date you can accept is ' + say_date(off) +
-               ' and offer it ' + cur + '.' + never + ' If they accept, create_promise date: ' + off.isoformat() + '.')
-    elif kind == 'after_deadline':
-        msg = ('AFTER THE DEADLINE: ' + say_date(d) + ' is after the deadline. Say it cannot be accepted and ask for a date on or before ' + say_date(dl) + '.' + never)
-    elif kind == 'past':
-        msg = 'IN THE PAST: ' + say_date(d) + ' has already passed. Say so and ask for a date from today on.'
-    elif kind == 'vague':
-        msg = 'NO EXACT DAY: that is a period, not a day. Follow your rule for a vague period.'
+            msg = ('NO DAY FOUND in the words given. If the customer named a day, call ' + TOOL + ' again with it as YYYY-MM-DD in date; '
+                   'otherwise ask for the exact day.')
     else:
-        msg = ('NO DAY FOUND in the words given. If the customer named a day, call ' + TOOL + ' again with it as YYYY-MM-DD in date; '
-               'otherwise ask for the exact day.')
+        kind, off, bad, todo = _cd_judge(d, dl)
+        if kind == 'ok':
+            msg = ('OK: ' + say_date(d) + ' can be accepted. Propose it' + cur + ' unless they already gave an amount. '
+                   'create_promise date: ' + d.isoformat() + '.')
+        elif kind == 'past':
+            msg = 'IN THE PAST: ' + bad + '. Say so and ' + todo + '.'
+        else:
+            head = dict(after_deadline='AFTER THE DEADLINE', today_closed='TOO LATE FOR TODAY').get(kind, 'NOT A BUSINESS DAY')
+            first = 'Say ' + todo[4:] if todo.startswith('say ') else 'Say so and ' + todo
+            msg = head + ': ' + bad + '. ' + first + (cur if off is not None else '') + '.' + never
+            if off is not None:
+                msg += ' If they accept, create_promise date: ' + off.isoformat() + '.'
     vars['cd_kind'] = kind
     vars['cd_date'] = off.isoformat() if off is not None else ''
     vars['cd_msg'] = msg
@@ -920,11 +946,14 @@ except Exception:
     pass
 '''
 
-# create_promise (one product): the date sent is the one the rules allow. A date that is not acceptable becomes the date
-# date_verdict offers for it (next business day, deadline); a date that is not YYYY-MM-DD becomes check_date's last date.
+# create_promise (one product, fix round 1): a date the rules do not allow is never recorded and never silently changed.
+# The pre-hook sends such a call to the read-only get_account route (as check_date does; pre-hooks may rewrite the whole
+# request, docs/tools-and-code.md) and PROMISE_POST answers "NOT RECORDED: <verdict>". A date that is not YYYY-MM-DD is
+# rejected the same way; no earlier check_date value is ever reused.
 PROMISE_DATE_PRE = r'''
 try:
-    vars['promise_date_note'] = ''
+    vars['promise_reject'] = ''
+    vars['promise_date_used'] = ''
     b = config.get('body') if isinstance(config, dict) else None
     if isinstance(b, dict):
         raw = str(b.get('date') or '').strip()[:10]
@@ -933,18 +962,20 @@ try:
             d = datetime.date.fromisoformat(raw)
         except ValueError:
             d = None
-        use = None
         if d is None:
-            use = str(vars.get('cd_date') or '') or None
+            vars['promise_reject'] = ('NOT RECORDED: the date was not given as YYYY-MM-DD. Call ' + TOOL + ' with the customer\'s day, '
+                                      'say the date it gives, read it back and ask again.')
         else:
-            kind, off = date_verdict(d, today, dl, CAL, NBD, AFTER)
-            if kind != 'ok' and off is not None:
-                use = off.isoformat()
-        if use and use != raw:
-            b['date'] = use
-            vars['promise_date_note'] = (' It is recorded for ' + say_date(datetime.date.fromisoformat(use)) +
-                                         ', the date the rules allow: say that date.')
-        vars['promise_date_used'] = str(b.get('date') or '')[:10]
+            kind, off, bad, todo = _cd_judge(d, dl)
+            if kind == 'ok':
+                vars['promise_date_used'] = raw
+            else:
+                vars['promise_reject'] = ('NOT RECORDED: ' + bad + '; ' + todo + ('' if off is None else ' (create_promise date ' + off.isoformat() + ')') +
+                                          '. Say this date, read it back and ask again.')
+        if vars['promise_reject']:
+            u = str(config.get('url') or '')
+            config['url'] = u.rsplit('/', 1)[0] + '/get_account' if '/' in u else u
+            config['body'] = dict(customer_id=b.get('customer_id'))
 except Exception:
     pass
 '''
@@ -1957,14 +1988,15 @@ HOW TO GET A PROMISE
         """Prelude (dates, CAL, today) plus the spec's date policies, for the hooks that judge a named date (A12)."""
         neg = self.s["negotiation"]
         return (self.prelude() + _const("WW", neg.get("weekday_words") or {}) +
-                "NBD = %r\nAFTER = %r\nTOOL = %r\n" % (neg.get("non_business_day", "next_business_day"),
-                                                     neg.get("after_deadline", "offer_deadline"), CHECK_TOOL))
+                "NBD = %r\nAFTER = %r\nCUTOFF = %r\nTOOL = %r\n" % (neg.get("non_business_day", "next_business_day"),
+                                                                   neg.get("after_deadline", "offer_deadline"),
+                                                                   neg.get("same_day_cutoff") or "", CHECK_TOOL) + CHECK_LIB)
 
     def check_tool(self):
         """check_date (one product): the model passes the customer's words for a day; code returns the verdict."""
         return self.tool(CHECK_TOOL, {
             "said": {"type": "string", "default": "{{cdx_said}}",
-                     "description": "The customer's own words for the day, joined across turns, e.g. \"Monday the twenty-sixth\"."},
+                     "description": "The customer's latest words for the day, e.g. \"Monday the twenty-sixth\"; a cut-off phrase joined with its rest (\"Monday the.\" + \"26th.\")."},
             "date": {"type": "string", "default": "{{cdx_date}}",
                      "description": "The same day as YYYY-MM-DD if you know it; used only when the words name no day."},
         }, ["said"], path="get_account",
