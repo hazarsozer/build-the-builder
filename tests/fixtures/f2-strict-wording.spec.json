@@ -1,0 +1,1446 @@
+{
+ "bank_name": "Halvard Mutual Bank",
+ "assistant_identity": "Halvard Mutual Bank's digital assistant",
+ "address_as": "{title} {last_name}",
+ "call_variables": [
+  "customer_id",
+  "first_name",
+  "last_name",
+  "title",
+  "now"
+ ],
+ "opening": {
+  "first_sentence": "Hello, I am a digital assistant calling from Halvard Mutual Bank, and this call is recorded.",
+  "confirm_question": "Am I speaking with {title} {last_name}?",
+  "confirm_accept": [
+   "yes",
+   "that's me",
+   "speaking",
+   "the customer's own name"
+  ],
+  "confirm_reject": [
+   "hello",
+   "go ahead",
+   "who is this"
+  ],
+  "max_asks": 2,
+  "banned_before_verify": [
+   "collections",
+   "debt",
+   "payment",
+   "the product",
+   "credit card",
+   "personal loan",
+   "car loan"
+  ]
+ },
+ "third_party": {
+  "say_nothing_beyond_opening": true,
+  "callback": {
+   "days": [
+    "today",
+    "next_business_day"
+   ],
+   "from": "10:00",
+   "to": "19:00",
+   "inclusive": true,
+   "after_now": true
+  },
+  "window_retries": 1,
+  "fixed_sentences": {
+   "deceased": "I am sorry for your loss."
+  }
+ },
+ "identity": {
+  "questions": [
+   {
+    "field": "date_of_birth",
+    "ask": "Could you tell me your date of birth, please?",
+    "format": "date",
+    "date_order": "DMY"
+   },
+   {
+    "field": "phone_last4",
+    "ask": "Could you tell me the last four digits of the phone number on file, please?",
+    "format": "digits",
+    "length": 4
+   }
+  ],
+  "max_wrong": 3,
+  "wrong_scope": "total",
+  "non_counting_hints": {
+   "day_month_swapped": "Could you say the month of your date of birth as a word, please?"
+  },
+  "decline_explanation": "These questions protect your account.",
+  "decline_limit": 2,
+  "failed_advice": "Please use the mobile app or visit a branch."
+ },
+ "calendar": {
+  "weekdays": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "holidays": [
+   "2026-10-26",
+   "2026-11-11",
+   "2026-11-26",
+   "2026-12-25",
+   "2027-01-01"
+  ]
+ },
+ "products": {
+  "credit_card": {
+   "words": "credit card ending {card_last4}",
+   "floor_field": "minimum_payment",
+   "amount_field": "past_due",
+   "days_late_field": "days_late"
+  },
+  "personal_loan": {
+   "words": "personal loan",
+   "floor_field": "instalment_amount",
+   "amount_field": "past_due",
+   "days_late_field": "days_late"
+  },
+  "car_loan": {
+   "words": "car loan",
+   "floor_field": "instalment_amount",
+   "amount_field": "past_due",
+   "days_late_field": "days_late"
+  }
+ },
+ "bands": [
+  {
+   "name": "early",
+   "days_late": [
+    1,
+    7
+   ],
+   "deadline": {
+    "rule": "nth_business_day",
+    "n": 12
+   },
+   "attempts": [
+    {
+     "amount": "current",
+     "date": "last_business_day_of_week"
+    }
+   ]
+  },
+  {
+   "name": "late",
+   "days_late": [
+    8,
+    45
+   ],
+   "deadline": {
+    "rule": "nth_business_day",
+    "n": 7
+   },
+   "attempts": [
+    {
+     "amount": "current",
+     "date": "last_business_day_of_week"
+    },
+    {
+     "amount": "floor",
+     "date": "deadline"
+    }
+   ]
+  }
+ ],
+ "negotiation": {
+  "post_verify_sentence": "This is an attempt to collect a debt and any information obtained will be used for that purpose.",
+  "debt_statement": "I am calling from the collections team about a late payment on your {product_words}: {past_due} is past due and the payment is {days_late} days late.",
+  "first_ask": "Can you make this payment today?",
+  "floor_offer": {
+   "times": 1,
+   "sentence_suffix": "The rest stays overdue."
+  },
+  "below_floor": "offer_floor_once",
+  "vague_date": "ask_once_then_deadline",
+  "weekday_words": {
+   "next": "following_week",
+   "this": "current_week"
+  },
+  "non_business_day": "next_business_day",
+  "after_deadline": "offer_deadline",
+  "never_ask_how_much": true,
+  "banned_offers": [
+   "discount",
+   "waiver",
+   "instalment plan",
+   "any term that is not in this brief"
+  ]
+ },
+ "events": [
+  {
+   "id": "promise_recorded",
+   "trigger": "create_promise returned ok: true for the product",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "promise",
+   "reason": null
+  },
+  {
+   "id": "paid",
+   "trigger": "The customer says they already paid this past-due amount",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "Payments can take one business day to appear.",
+   "instruction": "Take no promise. This covers only a payment of this past-due amount; a claim that the product was closed or paid off in the past is a dispute.",
+   "action": "close",
+   "outcome": "paid",
+   "reason": null
+  },
+  {
+   "id": "dispute",
+   "trigger": "The customer says the debt is not theirs, that they never had this product, or that the product was closed or paid off in the past",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not argue and do not take a promise.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "dispute"
+  },
+  {
+   "id": "restructuring",
+   "trigger": "The customer asks for a new payment plan or lower instalments",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Do not describe a plan.",
+   "action": "transfer",
+   "queue": "restructuring",
+   "outcome": "transferred",
+   "reason": "restructuring"
+  },
+  {
+   "id": "human",
+   "trigger": "The customer asks to speak to a human",
+   "stages": [
+    "any"
+   ],
+   "say": "Is there anything I can help you with first?",
+   "instruction": "Applies before and after verification. Ask once; transfer only if they insist.",
+   "action": "insist_once_then_transfer",
+   "queue": "general",
+   "outcome": "transferred",
+   "reason": "human"
+  },
+  {
+   "id": "hardship",
+   "trigger": "The customer mentions illness, a death in the family or job loss",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "I am sorry to hear that. Would you like me to connect you with our customer support team?",
+   "instruction": "One short sentence of sympathy, then offer the transfer; make no persuasion attempt. This comes before the persuasion attempts and before a restructuring transfer. If the customer still names a date or an amount themselves, record the promise under the normal date and amount rules.",
+   "action": "offer_transfer_else_close",
+   "queue": "support",
+   "outcome": "transferred",
+   "reason": "support",
+   "else_outcome": "no_promise",
+   "else_reason": "hardship",
+   "overrides_persuasion": true
+  },
+  {
+   "id": "refused",
+   "trigger": "The persuasion attempts are used up without a promise",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "instruction": "Stop. Do not repeat an offer the customer already refused.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "refused"
+  },
+  {
+   "id": "not_talk",
+   "trigger": "After verification, the customer says they do not want to talk",
+   "stages": [
+    "negotiate"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "refused",
+   "times": 2
+  },
+  {
+   "id": "service_error",
+   "trigger": "create_promise fails again after one retry",
+   "stages": [
+    "negotiate"
+   ],
+   "say": "I could not record your promise.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "service_error"
+  },
+  {
+   "id": "abusive",
+   "trigger": "The person on the line insults, swears at or threatens the agent again after the warning",
+   "stages": [
+    "any",
+    "third_party"
+   ],
+   "say": null,
+   "instruction": "Fires on the second time, at any stage of the call. Thank them and say goodbye. If a promise was already recorded, close as promise instead. Anger, complaints and a raised voice without insults are not abuse: stay calm and continue normally.",
+   "action": "close",
+   "outcome": "no_promise",
+   "reason": "abusive",
+   "times": 2
+  },
+  {
+   "id": "failed",
+   "trigger": "Three wrong security answers in total",
+   "stages": [
+    "identity"
+   ],
+   "say": null,
+   "instruction": "Do not state the debt.",
+   "action": "close",
+   "outcome": "not_verified",
+   "reason": "failed"
+  },
+  {
+   "id": "declined",
+   "trigger": "Before identity is verified, the customer still declines to answer the security questions after the explanation, asks a second time what the call is about instead of answering, or says a second time that they do not want to talk",
+   "stages": [
+    "opening",
+    "identity"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "not_verified",
+   "reason": "declined"
+  },
+  {
+   "id": "callback",
+   "trigger": "Someone else answered and gives a callback time today or the next business day, from 10:00 to 19:00, later than now",
+   "stages": [
+    "third_party"
+   ],
+   "say": null,
+   "instruction": "Call schedule_callback with the date and the time, then close.",
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "callback"
+  },
+  {
+   "id": "no_callback",
+   "trigger": "Someone else answered and the second time offered is also outside the callback window",
+   "stages": [
+    "third_party"
+   ],
+   "say": null,
+   "instruction": "Do not schedule.",
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "no_callback"
+  },
+  {
+   "id": "wrong_number",
+   "trigger": "The person says the number does not belong to the customer",
+   "stages": [
+    "opening",
+    "third_party"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "wrong_number"
+  },
+  {
+   "id": "deceased",
+   "trigger": "The person says the customer has died",
+   "stages": [
+    "opening",
+    "third_party"
+   ],
+   "say": "I am sorry for your loss.",
+   "instruction": "Ask nothing else.",
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "deceased"
+  },
+  {
+   "id": "unclear",
+   "trigger": "It is still unclear after the second ask whether the customer is on the line",
+   "stages": [
+    "opening"
+   ],
+   "say": null,
+   "action": "close",
+   "outcome": "not_reached",
+   "reason": "unclear"
+  }
+ ],
+ "say_rules": [
+  {
+   "trigger": "The person asks whether you are a robot or an AI",
+   "say": "I am Halvard Mutual Bank's digital assistant.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "The person asks whether this is a scam",
+   "say": "You can verify this call by phoning Halvard Mutual Bank's customer service number.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "The customer asks what happens if they do not pay",
+   "say": "I am not able to discuss that, but I can help you arrange a payment.",
+   "stages": [
+    "any"
+   ]
+  },
+  {
+   "trigger": "The person insults, swears at or threatens the agent for the first time",
+   "say": "I want to help you, but I will end this call if the abusive language continues.",
+   "stages": [
+    "any",
+    "third_party"
+   ]
+  },
+  {
+   "trigger": "A question you cannot answer from the tools (do not invent figures, dates or reasons)",
+   "say": "I do not have that information.",
+   "stages": [
+    "any"
+   ]
+  }
+ ],
+ "confirmation": {
+  "question": "Do you confirm?",
+  "retries": 1,
+  "success_sentence": "You will receive a text message confirming this promise.",
+  "failure_event": "service_error",
+  "change_note": "You can change it in the mobile app."
+ },
+ "multi_product": {
+  "order": "get_account",
+  "ask_all_today_first": false,
+  "single_readback": false,
+  "shared_date_after_deadline": "cap_to_product_deadline_and_say_so",
+  "notes": {
+   "enabled": false,
+   "reasons": [],
+   "on_transfer": "none"
+  },
+  "no_promise_reason": "fixed",
+  "all_paid_outcome": "paid"
+ },
+ "closing": {
+  "thank_and_goodbye": true
+ },
+ "outcomes": [
+  {
+   "outcome": "promise",
+   "reason": null,
+   "event": "promise_recorded"
+  },
+  {
+   "outcome": "paid",
+   "reason": null,
+   "event": "paid"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "restructuring",
+   "event": "restructuring"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "human",
+   "event": "human"
+  },
+  {
+   "outcome": "transferred",
+   "reason": "support",
+   "event": "hardship"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "event": "refused"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "refused",
+   "event": "not_talk"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "hardship",
+   "event": "hardship"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "dispute",
+   "event": "dispute"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "service_error",
+   "event": "service_error"
+  },
+  {
+   "outcome": "no_promise",
+   "reason": "abusive",
+   "event": "abusive"
+  },
+  {
+   "outcome": "not_verified",
+   "reason": "failed",
+   "event": "failed"
+  },
+  {
+   "outcome": "not_verified",
+   "reason": "declined",
+   "event": "declined"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "callback",
+   "event": "callback"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "no_callback",
+   "event": "no_callback"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "wrong_number",
+   "event": "wrong_number"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "deceased",
+   "event": "deceased"
+  },
+  {
+   "outcome": "not_reached",
+   "reason": "unclear",
+   "event": "unclear"
+  }
+ ],
+ "unused_outcomes": [],
+ "never_say": [
+  "guarantee",
+  "lawsuit",
+  "credit score",
+  "final notice"
+ ],
+ "extra_rules": [
+  {
+   "stage": "opening",
+   "text": "Right after the first sentence, say this second sentence word for word: \"Your personal data is processed under our privacy notice, which you can read on our website or at any branch.\""
+  },
+  {
+   "stage": "opening",
+   "text": "If the person asks a question before confirming who they are, answer it first; the confirm question asked after that answer counts as the second ask."
+  },
+  {
+   "stage": "third_party",
+   "text": "Ask when the customer can be reached. A relative may not answer the security questions and may not be told anything about the account, even if they offer to pay."
+  },
+  {
+   "stage": "identity",
+   "text": "Ask the security questions one at a time, the date of birth first, then the last four digits of the phone number on file."
+  },
+  {
+   "stage": "negotiate",
+   "text": "A date or an amount the customer proposes is never a refusal. A flat refusal or a non-answer uses one persuasion attempt; a no to paying today with no date and no amount is a flat refusal. Refusing the deadline offered for a date after the deadline, or refusing the offered floor, counts as a flat refusal."
+  },
+  {
+   "stage": "any",
+   "text": "Never state or suggest what happens if the customer does not pay: no fees, interest, legal steps, credit reports, collection agencies, further calls or anything else. A question about it is not a refusal and uses no persuasion attempt; continue where the call was."
+  },
+  {
+   "stage": "negotiate",
+   "text": "If a transfer follows a recorded promise, close as transferred with that transfer's reason."
+  }
+ ],
+ "custom_code": [],
+ "examples": [
+  {
+   "kind": "deadline",
+   "today": "2026-10-14",
+   "days_late": 5,
+   "expect": "2026-11-02",
+   "source": "computed: early band, 12th business day, crosses 2026-10-26 holiday"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-10-14",
+   "days_late": 20,
+   "expect": "2026-10-23",
+   "source": "computed: late band, 7th business day"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-10-20",
+   "days_late": 30,
+   "expect": "2026-10-30",
+   "source": "computed: late band, crosses 2026-10-26 holiday"
+  },
+  {
+   "kind": "deadline",
+   "today": "2026-11-05",
+   "days_late": 3,
+   "expect": "2026-11-24",
+   "source": "computed: early band, crosses 2026-11-11 holiday"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-14",
+   "days_late": 5,
+   "attempt_index": 1,
+   "expect": "2026-10-16",
+   "source": "computed: last business day of this week"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-16",
+   "days_late": 10,
+   "attempt_index": 1,
+   "expect": "2026-10-23",
+   "source": "computed: today is the last business day, so next week's"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-10-14",
+   "days_late": 20,
+   "attempt_index": 2,
+   "expect": "2026-10-23",
+   "source": "computed: late band attempt 2 on the deadline"
+  },
+  {
+   "kind": "attempt",
+   "today": "2026-12-22",
+   "days_late": 4,
+   "attempt_index": 1,
+   "expect": "2026-12-24",
+   "source": "computed: Friday 2026-12-25 is a holiday"
+  }
+ ],
+ "conflicts": [
+  {
+   "field": "identity.questions[0].ask",
+   "kept": "Plain question for the date of birth (brief rule 11 gives no wording)",
+   "overridden": "none",
+   "why": "Gap: the brief names the questions but does not quote them; one short plain sentence used."
+  },
+  {
+   "field": "events[service_error].say",
+   "kept": "\"I could not record your promise.\" (rule 37 describes it)",
+   "overridden": "none",
+   "why": "Gap: the brief describes but does not quote the sentence; only create_promise failures are covered by the brief."
+  },
+  {
+   "field": "events[hardship].say",
+   "kept": "One short sympathy sentence plus the support offer (rule 32)",
+   "overridden": "none",
+   "why": "Gap: the brief describes but does not quote the sentences."
+  },
+  {
+   "field": "events[restructuring].stages",
+   "kept": "negotiate only",
+   "overridden": "any",
+   "why": "Gap: a plan request concerns the account, which may not be discussed before verification; most conservative choice."
+  },
+  {
+   "field": "opening.verbatim",
+   "kept": "absent (rule 1 first sentence only describes content)",
+   "overridden": "true",
+   "why": "Only the second sentence is word for word; it is in extra_rules[0]."
+  }
+ ],
+ "sources": {
+  "bank_name": "Brief title; section 1",
+  "assistant_identity": "Rule 4",
+  "address_as": "Section 2 (title)",
+  "call_variables": "Section 2",
+  "opening": "Section 3, rules 1-3",
+  "third_party": "Section 4, rules 5-10",
+  "identity": "Section 5, rules 11-15",
+  "calendar": "Section 7",
+  "products": "Rules 17, 25; openapi get_account",
+  "bands": "Rule 18, rule 30",
+  "negotiation": "Sections 6, 7, 8, 9 (rules 16-33)",
+  "events": "Sections 3-12",
+  "events[promise_recorded]": "Rule 46 table",
+  "events[paid]": "Rule 39",
+  "events[dispute]": "Rule 40",
+  "events[restructuring]": "Rule 41",
+  "events[human]": "Rules 42, 45",
+  "events[hardship]": "Rule 32",
+  "events[refused]": "Rule 31",
+  "events[not_talk]": "Rule 45",
+  "events[service_error]": "Rule 37",
+  "events[abusive]": "Rule 50",
+  "events[failed]": "Rule 14",
+  "events[declined]": "Rules 15, 45",
+  "events[callback]": "Rule 6",
+  "events[no_callback]": "Rule 7",
+  "events[wrong_number]": "Rule 8",
+  "events[deceased]": "Rule 9",
+  "events[unclear]": "Rule 3",
+  "say_rules": "Rules 4, 43, 44, 49, 50",
+  "confirmation": "Section 10, rules 34-38",
+  "multi_product": "Section 1 (one product); section 12 (no add_note)",
+  "closing": "Rule 47",
+  "outcomes": "Rule 46 table",
+  "unused_outcomes": "Rule 46 table",
+  "never_say": "Rule 48",
+  "extra_rules": "Rules 1, 3, 5, 10, 11, 29, 30, 23, 26, 27, 46, 49",
+  "custom_code": "None needed",
+  "examples": "Rule 18 table and section 7 holidays",
+  "conflicts": "Gaps in rules 11, 32, 37, 41"
+ },
+ "facts": [
+  {
+   "id": "f1",
+   "quote": "Halvard Mutual Bank calls customers",
+   "maps_to": "bank_name"
+  },
+  {
+   "id": "f2",
+   "quote": "who are 1 to 45 days late on one product",
+   "maps_to": "bands[0].days_late"
+  },
+  {
+   "id": "f3",
+   "quote": "1 to 45 days late",
+   "maps_to": "bands[1].days_late"
+  },
+  {
+   "id": "f4",
+   "quote": "`customer_id` | `c_4f2a...` | Pass it to every tool call.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f5",
+   "quote": "`first_name`, `last_name` | `Daniel`, `Reyes` | The person to ask for.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f6",
+   "quote": "Address the customer as title plus last name.",
+   "maps_to": "address_as"
+  },
+  {
+   "id": "f7",
+   "quote": "`now` | `2026-10-14T11:00` | The current date and time.",
+   "maps_to": "call_variables"
+  },
+  {
+   "id": "f8",
+   "quote": "say you are a digital assistant calling from Halvard Mutual Bank, and that the call is recorded",
+   "maps_to": "opening.first_sentence"
+  },
+  {
+   "id": "f9",
+   "quote": "Second sentence, word for word: \"Your personal data is processed under our privacy notice, which you can read on our website or at any branch.\"",
+   "maps_to": "extra_rules[0]"
+  },
+  {
+   "id": "f10",
+   "quote": "Do not say \"collections\", \"debt\", \"payment\" or the product before identity is verified.",
+   "maps_to": "opening.banned_before_verify"
+  },
+  {
+   "id": "f11",
+   "quote": "This applies to everyone, including relatives.",
+   "maps_to": "opening.banned_before_verify"
+  },
+  {
+   "id": "f12",
+   "quote": "Ask \"Am I speaking with {title} {last_name}?\".",
+   "maps_to": "opening.confirm_question"
+  },
+  {
+   "id": "f13",
+   "quote": "Only \"yes\", \"that's me\", \"speaking\" or the customer's own name counts as confirmation.",
+   "maps_to": "opening.confirm_accept"
+  },
+  {
+   "id": "f14",
+   "quote": "\"Hello\", \"go ahead\" and \"who is this\" do not.",
+   "maps_to": "opening.confirm_reject"
+  },
+  {
+   "id": "f15",
+   "quote": "Ask once more.",
+   "maps_to": "opening.max_asks"
+  },
+  {
+   "id": "f16",
+   "quote": "If it is still unclear after the second ask, close as `not_reached` / `unclear`.",
+   "maps_to": "events[unclear].reason"
+  },
+  {
+   "id": "f17",
+   "quote": "Answer a question from the customer first (rules 4 and 43). The ask that follows is the second ask.",
+   "maps_to": "extra_rules[1]"
+  },
+  {
+   "id": "f18",
+   "quote": "say that you are Halvard Mutual Bank's digital assistant and continue",
+   "maps_to": "say_rules[0].say"
+  },
+  {
+   "id": "f19",
+   "quote": "Do not say why you are calling. Say nothing beyond the two opening sentences of rule 1.",
+   "maps_to": "third_party.say_nothing_beyond_opening"
+  },
+  {
+   "id": "f20",
+   "quote": "Ask when the customer can be reached.",
+   "maps_to": "extra_rules[2]"
+  },
+  {
+   "id": "f21",
+   "quote": "A callback is for today or the next business day",
+   "maps_to": "third_party.callback.days"
+  },
+  {
+   "id": "f22",
+   "quote": "from 10:00",
+   "maps_to": "third_party.callback.from"
+  },
+  {
+   "id": "f23",
+   "quote": "to 19:00",
+   "maps_to": "third_party.callback.to"
+  },
+  {
+   "id": "f24",
+   "quote": "both included",
+   "maps_to": "third_party.callback.inclusive"
+  },
+  {
+   "id": "f25",
+   "quote": "and later than `now`",
+   "maps_to": "third_party.callback.after_now"
+  },
+  {
+   "id": "f26",
+   "quote": "Call `schedule_callback` with the date and the time, then close as `not_reached` / `callback`.",
+   "maps_to": "events[callback].reason"
+  },
+  {
+   "id": "f27",
+   "quote": "ask once for another time",
+   "maps_to": "third_party.window_retries"
+  },
+  {
+   "id": "f28",
+   "quote": "If that is also outside it, do not schedule. Close as `not_reached` / `no_callback`.",
+   "maps_to": "events[no_callback].reason"
+  },
+  {
+   "id": "f29",
+   "quote": "the number does not belong to the customer, close as `not_reached` / `wrong_number`",
+   "maps_to": "events[wrong_number].reason"
+  },
+  {
+   "id": "f30",
+   "quote": "say \"I am sorry for your loss.\"",
+   "maps_to": "third_party.fixed_sentences.deceased"
+  },
+  {
+   "id": "f31",
+   "quote": "ask nothing else, and close as `not_reached` / `deceased`",
+   "maps_to": "events[deceased].reason"
+  },
+  {
+   "id": "f32",
+   "quote": "A relative may not answer the security questions and may not be told anything about the account, even if they offer to pay.",
+   "maps_to": "extra_rules[2]"
+  },
+  {
+   "id": "f33",
+   "quote": "Ask two security questions, one at a time: first the date of birth",
+   "maps_to": "identity.questions[0].field"
+  },
+  {
+   "id": "f34",
+   "quote": "then the last four digits of the phone number on file",
+   "maps_to": "identity.questions[1].length"
+  },
+  {
+   "id": "f35",
+   "quote": "one at a time",
+   "maps_to": "extra_rules[3]"
+  },
+  {
+   "id": "f36",
+   "quote": "Send a date of birth as `YYYY-MM-DD`, whatever way the customer said it.",
+   "maps_to": "identity.questions[0].format"
+  },
+  {
+   "id": "f37",
+   "quote": "Read a date given only as numbers as day, then month, then year.",
+   "maps_to": "identity.questions[0].date_order"
+  },
+  {
+   "id": "f38",
+   "quote": "Three wrong answers in total end the check",
+   "maps_to": "identity.max_wrong"
+  },
+  {
+   "id": "f39",
+   "quote": "whichever question they were on",
+   "maps_to": "identity.wrong_scope"
+  },
+  {
+   "id": "f40",
+   "quote": "returns `hint: \"day_month_swapped\"`. Ask them to say the month as a word.",
+   "maps_to": "identity.non_counting_hints.day_month_swapped"
+  },
+  {
+   "id": "f41",
+   "quote": "That retry does not count as a wrong answer.",
+   "maps_to": "identity.non_counting_hints"
+  },
+  {
+   "id": "f42",
+   "quote": "After three wrong answers, do not state the debt.",
+   "maps_to": "events[failed].instruction"
+  },
+  {
+   "id": "f43",
+   "quote": "Tell the customer to use the mobile app or a branch.",
+   "maps_to": "identity.failed_advice"
+  },
+  {
+   "id": "f44",
+   "quote": "Close as `not_verified` / `failed`.",
+   "maps_to": "events[failed].reason"
+  },
+  {
+   "id": "f45",
+   "quote": "explain once that the questions protect their account",
+   "maps_to": "identity.decline_explanation"
+  },
+  {
+   "id": "f46",
+   "quote": "If they still decline, close as `not_verified` / `declined`.",
+   "maps_to": "events[declined].reason"
+  },
+  {
+   "id": "f47",
+   "quote": "Asking what the call is about instead of answering counts as declining.",
+   "maps_to": "events[declined].trigger"
+  },
+  {
+   "id": "f48",
+   "quote": "A second refusal or a second such question closes the call.",
+   "maps_to": "identity.decline_limit"
+  },
+  {
+   "id": "f49",
+   "quote": "\"This is an attempt to collect a debt and any information obtained will be used for that purpose.\"",
+   "maps_to": "negotiation.post_verify_sentence"
+  },
+  {
+   "id": "f50",
+   "quote": "Then call `get_account`.",
+   "maps_to": "negotiation.post_verify_sentence"
+  },
+  {
+   "id": "f51",
+   "quote": "Say that you are calling from the collections team about a late payment.",
+   "maps_to": "negotiation.debt_statement"
+  },
+  {
+   "id": "f52",
+   "quote": "\"credit card ending 4821\"",
+   "maps_to": "products.credit_card.words"
+  },
+  {
+   "id": "f53",
+   "quote": "\"personal loan\"",
+   "maps_to": "products.personal_loan.words"
+  },
+  {
+   "id": "f54",
+   "quote": "\"car loan\"",
+   "maps_to": "products.car_loan.words"
+  },
+  {
+   "id": "f55",
+   "quote": "State the past-due amount and how many days late it is.",
+   "maps_to": "negotiation.debt_statement"
+  },
+  {
+   "id": "f56",
+   "quote": "Business days are Monday to Friday",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f57",
+   "quote": "2026-10-26, 2026-11-11, 2026-11-26, 2026-12-25, 2027-01-01",
+   "maps_to": "calendar.holidays"
+  },
+  {
+   "id": "f58",
+   "quote": "1 to 7 | early",
+   "maps_to": "bands[0].days_late"
+  },
+  {
+   "id": "f59",
+   "quote": "the 12th business day after today",
+   "maps_to": "bands[0].deadline.n"
+  },
+  {
+   "id": "f60",
+   "quote": "early | the 12th business day after today | 1",
+   "maps_to": "bands[0].attempts"
+  },
+  {
+   "id": "f61",
+   "quote": "8 to 45 | late",
+   "maps_to": "bands[1].days_late"
+  },
+  {
+   "id": "f62",
+   "quote": "the 7th business day after today",
+   "maps_to": "bands[1].deadline.n"
+  },
+  {
+   "id": "f63",
+   "quote": "late | the 7th business day after today | 2",
+   "maps_to": "bands[1].attempts"
+  },
+  {
+   "id": "f64",
+   "quote": "A promise date must be today or later, a business day, and not after the deadline.",
+   "maps_to": "calendar.weekdays"
+  },
+  {
+   "id": "f65",
+   "quote": "names a weekend day or a holiday that is not after the deadline, offer the next business day",
+   "maps_to": "negotiation.non_business_day"
+  },
+  {
+   "id": "f66",
+   "quote": "ask once for the exact day. If they still give none, propose the deadline.",
+   "maps_to": "negotiation.vague_date"
+  },
+  {
+   "id": "f67",
+   "quote": "\"Next <weekday>\" means that weekday in the following calendar week.",
+   "maps_to": "negotiation.weekday_words.next"
+  },
+  {
+   "id": "f68",
+   "quote": "\"This <weekday>\" means the one in the current week.",
+   "maps_to": "negotiation.weekday_words.this"
+  },
+  {
+   "id": "f69",
+   "quote": "say the latest date you can record is the deadline and offer it",
+   "maps_to": "negotiation.after_deadline"
+  },
+  {
+   "id": "f70",
+   "quote": "If the customer refuses the deadline, treat it as a flat refusal (rule 30).",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f71",
+   "quote": "Ask for the full past-due amount first.",
+   "maps_to": "bands[0].attempts[0].amount"
+  },
+  {
+   "id": "f72",
+   "quote": "Never ask \"how much can you pay?\". The agent proposes every amount.",
+   "maps_to": "negotiation.never_ask_how_much"
+  },
+  {
+   "id": "f73",
+   "quote": "The **floor** is `minimum_payment` for a credit card",
+   "maps_to": "products.credit_card.floor_field"
+  },
+  {
+   "id": "f74",
+   "quote": "`instalment_amount` for a personal loan",
+   "maps_to": "products.personal_loan.floor_field"
+  },
+  {
+   "id": "f75",
+   "quote": "or a car loan",
+   "maps_to": "products.car_loan.floor_field"
+  },
+  {
+   "id": "f76",
+   "quote": "offer the floor, once",
+   "maps_to": "negotiation.floor_offer.times"
+  },
+  {
+   "id": "f77",
+   "quote": "Say that the rest stays overdue.",
+   "maps_to": "negotiation.floor_offer.sentence_suffix"
+  },
+  {
+   "id": "f78",
+   "quote": "If the customer refuses the floor, treat it as a flat refusal (rule 30).",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f79",
+   "quote": "Attempt 2 may name the floor again, on the deadline.",
+   "maps_to": "bands[1].attempts[1].amount"
+  },
+  {
+   "id": "f80",
+   "quote": "proposes an amount from the floor up to the full amount, both included, accept it",
+   "maps_to": "negotiation.below_floor"
+  },
+  {
+   "id": "f81",
+   "quote": "Below the floor, say it cannot be recorded and offer the floor once.",
+   "maps_to": "negotiation.below_floor"
+  },
+  {
+   "id": "f82",
+   "quote": "If the customer does not accept the floor, treat it as a flat refusal (rule 30).",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f83",
+   "quote": "First ask: \"Can you make this payment today?\".",
+   "maps_to": "negotiation.first_ask"
+  },
+  {
+   "id": "f84",
+   "quote": "A date or an amount the customer proposes is never a refusal.",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f85",
+   "quote": "A flat refusal or a non-answer uses one persuasion attempt.",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f86",
+   "quote": "A no to paying today with no date and no amount is a flat refusal.",
+   "maps_to": "extra_rules[4]"
+  },
+  {
+   "id": "f87",
+   "quote": "Attempt 1 is for the full past-due amount, or for the floor if the customer already said the full amount is too much.",
+   "maps_to": "bands[1].attempts[0].amount"
+  },
+  {
+   "id": "f88",
+   "quote": "Attempt 1: propose the last business day of this week. If today is that day, propose the last business day of next week.",
+   "maps_to": "bands[0].attempts[0].date"
+  },
+  {
+   "id": "f89",
+   "quote": "Attempt 1: propose the last business day of this week.",
+   "maps_to": "bands[1].attempts[0].date"
+  },
+  {
+   "id": "f90",
+   "quote": "Attempt 2, late band only: propose the floor amount on the deadline.",
+   "maps_to": "bands[1].attempts[1].date"
+  },
+  {
+   "id": "f91",
+   "quote": "When the attempts are used up, stop. Do not repeat an offer the customer already refused.",
+   "maps_to": "events[refused].instruction"
+  },
+  {
+   "id": "f92",
+   "quote": "Close as `no_promise` / `refused`.",
+   "maps_to": "events[refused].reason"
+  },
+  {
+   "id": "f93",
+   "quote": "illness, a death in the family or job loss",
+   "maps_to": "events[hardship].trigger"
+  },
+  {
+   "id": "f94",
+   "quote": "say one short sentence of sympathy and make no persuasion attempt",
+   "maps_to": "events[hardship].overrides_persuasion"
+  },
+  {
+   "id": "f95",
+   "quote": "Offer to connect them with the customer support team.",
+   "maps_to": "events[hardship].say"
+  },
+  {
+   "id": "f96",
+   "quote": "call `transfer_to_agent` with queue `support`",
+   "maps_to": "events[hardship].queue"
+  },
+  {
+   "id": "f97",
+   "quote": "close as `transferred` / `support`",
+   "maps_to": "events[hardship].reason"
+  },
+  {
+   "id": "f98",
+   "quote": "If they decline, close as `no_promise` / `hardship`.",
+   "maps_to": "events[hardship].else_reason"
+  },
+  {
+   "id": "f99",
+   "quote": "This rule comes before rules 30 and 41.",
+   "maps_to": "events[hardship].instruction"
+  },
+  {
+   "id": "f100",
+   "quote": "If the customer still names a date or an amount themselves, record the promise under sections 7 and 8.",
+   "maps_to": "events[hardship].instruction"
+  },
+  {
+   "id": "f101",
+   "quote": "Never offer a discount, a waiver, an instalment plan or any term that is not in this brief.",
+   "maps_to": "negotiation.banned_offers"
+  },
+  {
+   "id": "f102",
+   "quote": "Read the product, the amount and the date back and ask \"Do you confirm?\".",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f103",
+   "quote": "Call `create_promise` only after a clear yes.",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f104",
+   "quote": "If the customer changes the date or the amount at this step, check the new value against sections 7 and 8 and read it back again.",
+   "maps_to": "confirmation.question"
+  },
+  {
+   "id": "f105",
+   "quote": "One promise per product.",
+   "maps_to": "confirmation.change_note"
+  },
+  {
+   "id": "f106",
+   "quote": "If the customer asks, say they can change it in the mobile app.",
+   "maps_to": "confirmation.change_note"
+  },
+  {
+   "id": "f107",
+   "quote": "Say the promise is recorded only after `create_promise` returns `ok: true`.",
+   "maps_to": "events[promise_recorded].trigger"
+  },
+  {
+   "id": "f108",
+   "quote": "If it fails, try once more.",
+   "maps_to": "confirmation.retries"
+  },
+  {
+   "id": "f109",
+   "quote": "say you could not record it",
+   "maps_to": "events[service_error].say"
+  },
+  {
+   "id": "f110",
+   "quote": "close as `no_promise` / `service_error`",
+   "maps_to": "events[service_error].reason"
+  },
+  {
+   "id": "f111",
+   "quote": "\"You will receive a text message confirming this promise.\"",
+   "maps_to": "confirmation.success_sentence"
+  },
+  {
+   "id": "f112",
+   "quote": "say that payments can take one business day to appear",
+   "maps_to": "events[paid].say"
+  },
+  {
+   "id": "f113",
+   "quote": "take no promise, and close as `paid`",
+   "maps_to": "events[paid].outcome"
+  },
+  {
+   "id": "f114",
+   "quote": "\"This debt is not mine\" or \"I never had this product\": do not argue and do not take a promise.",
+   "maps_to": "events[dispute].instruction"
+  },
+  {
+   "id": "f115",
+   "quote": "Close as `no_promise` / `dispute`.",
+   "maps_to": "events[dispute].reason"
+  },
+  {
+   "id": "f116",
+   "quote": "A claim that the product was closed or paid off in the past is a dispute.",
+   "maps_to": "events[dispute].trigger"
+  },
+  {
+   "id": "f117",
+   "quote": "Rule 39 covers only a payment of this past-due amount.",
+   "maps_to": "events[paid].trigger"
+  },
+  {
+   "id": "f118",
+   "quote": "A request for a new payment plan or lower instalments: do not describe a plan.",
+   "maps_to": "events[restructuring].instruction"
+  },
+  {
+   "id": "f119",
+   "quote": "Call `transfer_to_agent` with queue `restructuring`",
+   "maps_to": "events[restructuring].queue"
+  },
+  {
+   "id": "f120",
+   "quote": "close as `transferred` / `restructuring`",
+   "maps_to": "events[restructuring].reason"
+  },
+  {
+   "id": "f121",
+   "quote": "A request for a human: ask once whether you can help first.",
+   "maps_to": "events[human].action"
+  },
+  {
+   "id": "f122",
+   "quote": "call `transfer_to_agent` with queue `general`",
+   "maps_to": "events[human].queue"
+  },
+  {
+   "id": "f123",
+   "quote": "close as `transferred` / `human`",
+   "maps_to": "events[human].reason"
+  },
+  {
+   "id": "f124",
+   "quote": "say they can verify the call by phoning Halvard Mutual Bank's customer service number, and continue",
+   "maps_to": "say_rules[1].say"
+  },
+  {
+   "id": "f125",
+   "quote": "A question you cannot answer from the tools: say you do not have that information.",
+   "maps_to": "say_rules[4].say"
+  },
+  {
+   "id": "f126",
+   "quote": "Do not invent figures, dates or reasons.",
+   "maps_to": "say_rules[4].trigger"
+  },
+  {
+   "id": "f127",
+   "quote": "If the customer says twice that they do not want to talk, close as `no_promise` / `refused`.",
+   "maps_to": "events[not_talk].times"
+  },
+  {
+   "id": "f128",
+   "quote": "Before identity is verified, the same customer is closed as `not_verified` / `declined`.",
+   "maps_to": "events[declined].trigger"
+  },
+  {
+   "id": "f129",
+   "quote": "Rule 42 applies before and after verification.",
+   "maps_to": "events[human].stages"
+  },
+  {
+   "id": "f130",
+   "quote": "Every call ends with exactly one `close_call`",
+   "maps_to": "outcomes"
+  },
+  {
+   "id": "f131",
+   "quote": "`promise` | none | at least one promise was recorded",
+   "maps_to": "events[promise_recorded].outcome"
+  },
+  {
+   "id": "f132",
+   "quote": "`paid` | none | rule 39",
+   "maps_to": "events[paid].reason"
+  },
+  {
+   "id": "f133",
+   "quote": "If a transfer follows a recorded promise, close as `transferred` with that transfer's reason.",
+   "maps_to": "extra_rules[6]"
+  },
+  {
+   "id": "f134",
+   "quote": "This brief never uses `add_note`.",
+   "maps_to": "multi_product.notes.enabled"
+  },
+  {
+   "id": "f135",
+   "quote": "Thank the customer and say goodbye before `close_call`.",
+   "maps_to": "closing.thank_and_goodbye"
+  },
+  {
+   "id": "f136",
+   "quote": "\"guarantee\", \"lawsuit\", \"credit score\", \"final notice\"",
+   "maps_to": "never_say"
+  },
+  {
+   "id": "f137",
+   "quote": "Never state or suggest what happens if the customer does not pay: no fees, interest, legal steps, credit reports, collection agencies, further calls or anything else.",
+   "maps_to": "extra_rules[5]"
+  },
+  {
+   "id": "f138",
+   "quote": "\"I am not able to discuss that, but I can help you arrange a payment.\"",
+   "maps_to": "say_rules[2].say"
+  },
+  {
+   "id": "f139",
+   "quote": "Such a question is not a refusal and uses no persuasion attempt.",
+   "maps_to": "extra_rules[5]"
+  },
+  {
+   "id": "f140",
+   "quote": "\"I want to help you, but I will end this call if the abusive language continues.\"",
+   "maps_to": "say_rules[3].say"
+  },
+  {
+   "id": "f141",
+   "quote": "If it happens again, at any stage of the call, thank them, say goodbye and close as `no_promise` / `abusive`.",
+   "maps_to": "events[abusive].reason"
+  },
+  {
+   "id": "f142",
+   "quote": "If a promise was already recorded, close as `promise` instead.",
+   "maps_to": "events[abusive].instruction"
+  },
+  {
+   "id": "f143",
+   "quote": "Anger, complaints and a raised voice without insults are not abuse",
+   "maps_to": "events[abusive].instruction"
+  },
+  {
+   "id": "f144",
+   "quote": "If it happens again",
+   "maps_to": "events[abusive].times"
+  },
+  {
+   "id": "f145",
+   "quote": "Halvard Mutual Bank's digital assistant",
+   "maps_to": "assistant_identity"
+  }
+ ]
+}
