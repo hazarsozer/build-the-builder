@@ -124,10 +124,11 @@ def test_spec_a_node_set_unchanged():
 def test_transfers_skip_notes():
     w = wf()
     for k, n in w["nodes"].items():
-        if k.startswith("transfer_"):
+        if k.startswith("transfer_") and k != "transfer_failed":
             for t in n["transitions"]:
-                # A24: a failed transfer goes to its retry (a transfer node too)
-                assert t["target_node"].startswith(("close_", k + "_retry")), (k, t)
+                # A24: a failed transfer goes to its retry (a transfer node too), then to transfer_failed, which notes
+                # only when no transfer happened and a promise was recorded (fix round 1, I1)
+                assert t["target_node"].startswith(("close_", k + "_retry", "transfer_failed")), (k, t)
                 assert "note" not in t["target_node"]
 
 

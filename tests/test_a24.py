@@ -303,3 +303,56 @@ def test_outcome_names_come_from_the_spec():
 def test_reference_specs_still_lint_clean():
     assert lint(wf(A), A) == []
     assert lint(wf(B), B) == []
+
+
+# ---------------------------------------------------------------- fix round 1
+
+MRW = json.load(open("tests/fixtures/bench-multi-raw.spec.json"))
+MRW_OA = json.load(open("bench/multi-raw/openapi.json"))
+TWO = [{"product_id": "p1", "type": "credit_card", "card_last4": "5590", "past_due": 400.0, "days_late": 2, "minimum_payment": 120.0},
+       {"product_id": "p2", "type": "personal_loan", "past_due": 1100.0, "days_late": 15, "instalment_amount": 275.0}]
+
+
+def _after_record(spec, oa, recorded=True):
+    """Several products: p1 recorded, p2 declined, wrap_recorded run (as test_a18 MRW-03)."""
+    w = wf(spec, oa)
+    v = {"now": "2026-11-20T13:30", "acct_products_json": json.dumps(TWO)}
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    exec(_code(w["nodes"]["prepare_account"]), {"vars": v})
+    st = json.loads(v["mp_state"])
+    st["p"]["p1"].update(status="agreed", amount=400.0, date="2026-11-27")
+    st["p"]["p2"]["status"] = "declined"
+    v["mp_state"] = json.dumps(st)
+    exec(_code(w["nodes"]["record_plan"]), {"vars": v})
+    if recorded:
+        v["rec1_status"] = "recorded"
+    exec(_code(w["nodes"]["wrap_recorded"]), {"vars": v})
+    return w, v
+
+
+def test_i1_transfer_failing_twice_after_a_recorded_promise_keeps_the_promise_close():
+    for spec, oa in ((B, OA), (MRW, MRW_OA)):
+        w, v = _after_record(spec, oa)
+        assert v["mp_recorded"] == "yes" and route(w["nodes"]["wrap_recorded"], v) == "after_record"
+        promise_close = v["mp_close"]
+        assert close_of(w["nodes"][promise_close])[0] == "promise"
+        t = route(w["nodes"]["after_record_step"], dict(v, ar_answer="restructuring"))
+        assert t.startswith("transfer_")
+        stop, path = walk(w, v, t, [False, False, True, True, True])
+        assert stop == "goodbye" and path[-1] == promise_close, path
+        assert "close_transfer_service_error" not in path
+        assert (v["outcome"], v.get("reason") or None) == close_of(w["nodes"][promise_close])
+        assert "technical problem" in v["farewell"] and not re.search(r"\btransferr(?:ing|ed)\b", v["farewell"]), v["farewell"]
+        # the notes the wrap planned are still written, as on "nothing else" (multi-raw plans one here, spec-b none)
+        assert any(p.startswith("note_") for p in path) == (v["note_has_1"] == "yes")
+    _, v = _after_record(MRW, MRW_OA)
+    assert v["note_has_1"] == "yes"
+
+
+def test_i1_transfer_failing_twice_before_any_record_still_closes_as_the_service_failure():
+    for spec, oa in ((B, OA), (MRW, MRW_OA)):
+        w, v = _after_record(spec, oa, recorded=False)
+        assert v["mp_recorded"] == "no"
+        stop, path = walk(w, v, "transfer_restructuring", [False, False])
+        assert path[-1] == "close_transfer_service_error" and (v["outcome"], v.get("reason") or None) == fail_close(spec)
+

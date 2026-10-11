@@ -1052,6 +1052,17 @@ class Multi:
             "max_node_turns": 3, "max_turn_transition": "after_record_done",
             "transitions": trans + [go("after_record_done", "Nothing else", cond_any(eq("ar_answer", "nothing")))]}
 
+    def transfer_failed(self, nodes, name, fail_close, sorry):
+        """A24 fix round 1 (I1): a transfer that failed twice. Before any promise was recorded: the service-failure
+        close. After one was recorded (the after-record step's transfers): no transfer is claimed, the apology replaces
+        the spoken summary, and the call ends like "nothing else": the notes, then the close the wrap chose (the
+        recorded promise stays the outcome)."""
+        rec = eq("mp_recorded", "yes")
+        tr = ([go("note_1", "Promise recorded: notes to write", all_of(rec, eq("note_has_1", "yes")))] if self.notes_on else [])
+        tr.append(go("finish", "Promise recorded: the wrap's close", cond_any(rec)))
+        nodes[name] = code_node(name, "if str(vars.get('mp_recorded') or '') == 'yes':\n    vars['mp_said'] = %r\n" % sorry,
+                                fail_close, tr)
+
     def build(self, nodes):
         c = self.c
         # records

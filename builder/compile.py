@@ -103,6 +103,8 @@ ID_TOOL_FAIL = ('If a verify_identity call fails (an error such as "API request 
 # own sentence). A transfer that fails twice is not a transfer: the call closes as the service failure.
 CB_FAIL_CLOSE = "close_callback_service_error"
 TRANSFER_FAIL_CLOSE = "close_transfer_service_error"
+TRANSFER_FAILED = "transfer_failed"
+TRANSFER_SORRY = "I am sorry, because of a technical problem I cannot transfer you right now."
 CB_TOOL_FAIL = ('If a schedule_callback call fails (an error such as "API request failed" instead of a result): nothing was booked. '
                 'Call schedule_callback again at once with the same date and time, before you speak and without asking again. '
                 'If it fails a second time, the call ends automatically: do not say goodbye yourself.')
@@ -1487,7 +1489,9 @@ class _Compiler:
             # the brief is silent: the brief's transferred close would record a transfer that did not happen)
             retry = copy.deepcopy(node)
             retry["name"] = name + "_retry"
-            for k, nd, fail in ((name, node, retry["name"]), (retry["name"], retry, TRANSFER_FAIL_CLOSE)):
+            # several products: the second failure goes through a gate that keeps a recorded promise (multi.transfer_failed)
+            last = TRANSFER_FAILED if self.multi else TRANSFER_FAIL_CLOSE
+            for k, nd, fail in ((name, node, retry["name"]), (retry["name"], retry, last)):
                 nd["response_mapping"] = [{"path": "data.ok", "variable": k + "_ok"}]
                 nd["passthrough_default_transition"] = fail
                 nd["transitions"] = [go(close, "Transfer done", is_true(k + "_ok", *self.resp_vars("transfer_to_agent", "ok", k))),
@@ -2652,8 +2656,10 @@ HOW TO RUN THE CALL
         n[CB_FAIL_CLOSE] = close_node(CB_FAIL_CLOSE, *self.fail_close(),
                                       "I am sorry, there was a technical problem, so I could not arrange the callback. " + self.thanks(False))
         if self.transfers:
-            n[TRANSFER_FAIL_CLOSE] = close_node(TRANSFER_FAIL_CLOSE, *self.fail_close(),
-                                                "I am sorry, because of a technical problem I cannot transfer you right now. " + self.thanks(False))
+            n[TRANSFER_FAIL_CLOSE] = close_node(TRANSFER_FAIL_CLOSE, *self.fail_close(), TRANSFER_SORRY + " " + self.thanks(False))
+            if self.multi:
+                # fix round 1 (I1): after a recorded promise the transfer's second failure keeps the wrap's close
+                self.multi.transfer_failed(n, TRANSFER_FAILED, TRANSFER_FAIL_CLOSE, TRANSFER_SORRY)
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
