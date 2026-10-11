@@ -95,6 +95,7 @@ def fixed_sentences(spec):
     s += [i["decline_explanation"], i["failed_advice"], n.get("post_verify_sentence"), n["debt_statement"], n["first_ask"], n["floor_offer"].get("sentence_suffix"),
           n.get("debt_statement_per_product"), n.get("first_ask_all")]
     s += [e.get("say") for e in spec["events"]] + [r["say"] for r in spec["say_rules"]]
+    s += [x for e in spec["events"] for x in (e.get("stage_say") or {}).values()]
     s += [c["question"], c["success_sentence"], c.get("change_note")] + list(spec["third_party"]["fixed_sentences"].values())
     return list(dict.fromkeys(x for x in s if x))
 
@@ -285,9 +286,21 @@ class Ctx:
 
     def deadline(self, p): return D.deadline(self.today, _band(self.spec, _late(self.spec, p))["deadline"], self.cal)
 
+    def today_open(self):
+        """False after negotiation.same_day_cutoff (HH:MM) on the case's clock: today can no longer be promised."""
+        cut = self.spec["negotiation"].get("same_day_cutoff")
+        return not (cut and len(self.now) >= 16 and self.now[11:16] >= cut)
+
+    def attempt(self, kind, dl):
+        """An attempt's date as the compiled plan computes it: a "today" past the cut-off is the next business day."""
+        d = D.attempt_date(self.today, kind, dl, self.cal)
+        if d == self.today and not self.today_open() and D.next_bd(d, self.cal) <= dl:
+            d = D.next_bd(d, self.cal)
+        return d
+
     def promise_day(self, p, kind="today"):
         dl = self.deadline(p)
-        d = D.attempt_date(self.today, kind, dl, self.cal)
+        d = self.attempt(kind, dl)
         return d if D.is_bd(d, self.cal) else min(D.next_bd(d, self.cal), dl)
 
     def say(self, s): return f'the agent says "{s}"'
@@ -326,7 +339,7 @@ def s_floor_after_too_much(c, **o):
     b = _band(c.spec, _late(c.spec, p))
     if not b["attempts"]: return None
     floor = _floor(c.spec, p)
-    d = D.attempt_date(c.today, b["attempts"][0], c.deadline(p), c.cal)
+    d = c.attempt(b["attempts"][0], c.deadline(p))
     n = c.spec["negotiation"]
     checks = [f"the lowest amount ({_money(floor)}) is offered once" + (f', with "{n["floor_offer"]["sentence_suffix"]}"' if n["floor_offer"].get("sentence_suffix") else ""),
               f"promise for {_money(floor)} on {_day(d)}"]
@@ -443,7 +456,7 @@ def s_service_error(c, **o):
     d = c.promise_day(p, "today")
     when = "today" if d == c.today else f"on {_day(d)}"
     e = _event(c.spec, eid)
-    checks = [f"create_promise is tried {n} times", "the agent never says the promise is recorded"] + ([c.say(e["say"])] if e.get("say") else [])
+    checks = [f"create_promise is tried {n} times", "the agent never says the promise is recorded"] + ([c.say(_say_for(e, "negotiate"))] if _say_for(e, "negotiate") else [])
     return dict(family="Tool failure", level="hard", title="The promise service keeps failing", products=[p],
                 faults={"create_promise": list(range(1, n + 1))},
                 script=f"Verified. Says {c.p['he']} can pay the full amount {when}. Confirms at the read-back.",
@@ -517,6 +530,11 @@ def _third_party_event(e):
     return "third_party" in stages or stages == {"opening"}
 
 
+def _say_for(e, stage):
+    """The event's sentence when it ends the call in `stage` (compile.say_for): stage_say, else say."""
+    return (e.get("stage_say") or {}).get(stage) or e.get("say")
+
+
 def _trigger_script(e, first):
     t = e["trigger"].strip().rstrip(".")
     body = (t[0].upper() + t[1:]) if _is_verb_start(t) else "Behaves like this: " + t
@@ -561,7 +579,11 @@ def s_event(c, eid, **o):
     notes = [] if transfers or not (set(e["stages"]) & {"negotiate", "any"}) or "Verified" not in script else _note_for(c.spec, eid)
     checks = []
     if third: checks += _third_party_checks(c)
-    if e.get("say"): checks.append(c.say(e["say"]))
+    # the stage the case ends the call in, for the event's stage_say (final-review-2 I2)
+    stage = ("third_party" if third and "third_party" in set(e["stages"]) else "opening" if third else
+             "negotiate" if acct or script.startswith("Verified") else
+             "identity" if script.startswith("Confirms the name") else "opening")
+    if _say_for(e, stage): checks.append(c.say(_say_for(e, stage)))
     if transfers: checks.append(f"transfer_to_agent called with queue {transfers[0]['queue']}")
     if e.get("instruction"): checks.append("the agent follows: " + e["instruction"])
     checks.append("no promise recorded")

@@ -91,10 +91,10 @@ def test_unreached_node_still_gets_a_place():
 def test_test_variables_are_the_call_variables(case):
     s, w = case
     tv = w["test_variables"]
-    assert set(tv) == set(s["call_variables"])
-    assert tv["customer_id"] == "c_test" and tv["title"] in ("Mr", "Ms") and tv["first_name"] and tv["last_name"]
-    assert tv["now"] == s["examples"][0]["today"] + "T10:00"
-    assert all(isinstance(v, str) and v for v in tv.values())
+    # final-review-2 I5: customer_id -> c_test, the clock undeclared (setup reads the real time), the rest ""
+    assert set(tv) == set(s["call_variables"]) - {"now"}
+    assert tv["customer_id"] == "c_test"
+    assert all(v == "" for k, v in tv.items() if k != "customer_id")
 
 
 def test_never_a_model_filled_placeholder(case):
@@ -110,7 +110,7 @@ def test_every_case_passes_every_test_variable(case):
     public case) passes each declared variable itself, so no sample reaches a simulation."""
     from builder import cases
     s, w = case
-    gen = [c for seed in (0, 1) for c in cases.generate(s, OA, w["test_variables"]["now"], n=10, seed=seed)]
+    gen = [c for seed in (0, 1) for c in cases.generate(s, OA, s["examples"][0]["today"] + "T10:00", n=10, seed=seed)]
     assert gen
     for c in gen:
         passed = set(c["variables"]) | {"customer_id"}   # the practice bank session adds customer_id
@@ -119,23 +119,20 @@ def test_every_case_passes_every_test_variable(case):
         assert set(w["test_variables"]) <= set(c["variables"]) | {"customer_id"}, c["id"]
 
 
-def test_extra_call_variable_gets_a_sample():
+def test_extra_call_variable_defaults_to_empty():
     s = copy.deepcopy(SPECS["a"])
     s["call_variables"].append("company_name")
     w = C(s, OA)
-    assert w["test_variables"]["company_name"] == "Example Ltd"
+    assert w["test_variables"]["company_name"] == ""
 
 
 @pytest.mark.parametrize("name, sample", [
-    ("title", "Ms"), ("subtitle", "Subtitle"), ("customer_title", "Ms"),
-    ("first_name", "Dana"), ("firstName", "Dana"), ("given_name", "Dana"), ("first_payment_date", "First Payment Date"),
-    ("last_name", "Reyes"), ("lastName", "Reyes"), ("surname", "Reyes"), ("family_name", "Reyes"),
-    ("last_payment_date", "Last Payment Date"), ("last_payment_amount", "Last Payment Amount"), ("family_size", "Family Size"),
-    ("company_name", "Example Ltd"), ("companyname", "Example Ltd"), ("agent_name", "Alex Morgan"),
-    ("customer_id", "c_test"), ("customerId", "c_test"), ("idle_timeout", "Idle Timeout"),
+    ("title", ""), ("first_name", ""), ("last_name", ""), ("company_name", ""), ("agent_name", ""),
+    ("customer_id", "c_test"), ("customerId", "c_test"), ("idle_timeout", ""), ("video", ""),
+    ("now", None), ("call_datetime", None),
 ])
-def test_sample_matches_whole_words(name, sample):
-    """Name patterns are anchored on word boundaries: last_payment_* is no surname, subtitle no title."""
+def test_sample_is_empty_except_the_id_and_the_clock(name, sample):
+    """final-review-2 I5: no invented value is ever spoken; the clock is left to setup's real time."""
     assert layout._sample(name, {}) == sample
 
 

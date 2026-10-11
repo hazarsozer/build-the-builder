@@ -168,6 +168,12 @@ def test_selftest_all_pass_skips_round_two(env, monkeypatch):
     [r1] = [r for r in rows if r["kind"] == "selftest_round"]
     assert r1["passed"] == 11 and r1["total"] == 11 and r1["failing"] == []
     assert [r["url_kind"] for r in rows if r["kind"] == "saved"] == ["tunnel", "official"]
+    # final-review-2 M1: the trace never names the tunnel provider, so the RUNBOOK secret scan prints nothing
+    assert [r["url_kind"] for r in rows if r["kind"] == "tunnel"] == ["tunnel"]
+    import re
+    scan = re.compile(r"fak_[A-Za-z0-9]{8}|sk-ant-[A-Za-z0-9]|FREYA_[A-Z_]+=[A-Za-z0-9_-]{8}|https://[a-z0-9-]+\.trycloudflare\.com")
+    for f in env.traces.iterdir():
+        assert not scan.search(f.read_text()) and "trycloudflare" not in f.read_text(), f.name
     assert "fix_round" not in kinds(env)
     [st] = [r for r in rows if r["kind"] == "simulation_started"]
     assert st["simulation_id"] == "sim-1" and st["round"] == 1

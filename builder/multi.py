@@ -547,6 +547,23 @@ except Exception as e:
     vars['mp_msg'] = 'There was a technical problem with that step (' + str(e)[:60] + '). Call ' + TOOL + ' again with the same values.'
 '''
 
+# final-review-2 I3: after negotiation.same_day_cutoff (prepare_account writes it to mp_state as `closed` once the time
+# has passed) today is not accepted, as check_date and create_promise judge it on a single-product call. Inserted only
+# when the spec sets a cut-off, so a spec without one compiles as before.
+_AGREE_AT = "    raw = str(b.get('amount') if b.get('amount') is not None else 'full').strip().lower()\n"
+_AGREE_CUTOFF = r'''    if d == today and st.get('closed'):
+        return None, ('NOT accepted: it is after ' + str(st['closed']) + ', too late for a payment today. Offer the next business day, ' +
+                      _say(DAYS[d][2]) + '.')
+'''
+
+
+def set_lib(cutoff):
+    if not cutoff:
+        return SET_LIB
+    assert SET_LIB.count(_AGREE_AT) == 1
+    return SET_LIB.replace(_AGREE_AT, _AGREE_CUTOFF + _AGREE_AT)
+
+
 API_ARGS = r'''
 def ARGS():
     b = config.get('body') if isinstance(config, dict) else None
@@ -643,7 +660,7 @@ except Exception:
 
 END_NODE = "negotiate_end"
 # A17: said for a confirmed promise that was not recorded when the failure event has no sentence of its own
-FAIL_SAY_DEFAULT = "I am sorry, I could not record your promise."
+FAIL_SAY_DEFAULT = "I am sorry, I could not save your promise."   # M8: no record* word
 NEG_END_CODE = r'''
 try:
     st = _load(vars)
@@ -845,8 +862,8 @@ class Multi:
             r = e.get("per_product_note")
             if r in outcomes and r not in say and e["action"] == "note_and_continue":
                 parts = []
-                if e.get("say"):
-                    parts.append('Say: "%s"' % e["say"])
+                if self.c.say_for(e, "negotiate"):
+                    parts.append('Say: "%s"' % self.c.say_for(e, "negotiate"))
                 if e.get("instruction"):
                     parts.append(e["instruction"])
                 say[r] = " ".join(parts)
@@ -863,6 +880,7 @@ class Multi:
             if p.get("enum"):
                 xprops[f]["enum"] = list(p["enum"])
         head = "import json, re\n" + embed.source(money) + "\nDAYS = dict()\n" + _const("CFG", cfg) + "TOOL = %r\nTURNS = %r\n" % (SET_TOOL, NODE + ".total_turns") + _const("DYN", list(DYN))
+        SET_LIB = set_lib(neg.get("same_day_cutoff"))
         props = {
             "product_id": {"type": "string", "description": "The product_id from PRODUCTS (for example p1), or ALL when the customer gives one answer for every product not yet settled."},
             "outcome": {"type": "string", "enum": outcomes, "description": "agreed: the customer accepted an amount and a date for it. refused: the customer refused the current persuasion attempt for it (call it after EVERY refusal; the result says whether another attempt is allowed). "
@@ -917,8 +935,8 @@ class Multi:
             parts = []
             if eid not in ("promise_recorded", self.fail_ev):
                 parts.append(c.lead_in(eid))
-                if ev.get("say"):
-                    parts.append(ev["say"])
+                if self.c.say_for(ev, "negotiate"):
+                    parts.append(self.c.say_for(ev, "negotiate"))
             lead[t] = " ".join(parts)
         code = ("import json\n" + LOAD + embed.source(dates, money) + "\n" + "SLOTS = %d\n" % SLOTS +
                 "RECORDING = %s\n" % bool(recording) + "END_NOTE = %r\nFAIL_NOTE = %r\n" % (end_note, self.fail_note) +
@@ -927,7 +945,7 @@ class Multi:
                 _const("REASON_MAP", self.reason_map) + "PAID_NOTE = %r\n" % self.paid_note +
                 _const("FALLBACK", list(fb)) + _const("PROMISE", list(self.promise_row)) + "NO_PROMISE = %r\n" % self.no_promise +
                 _const("CLOSE_BY", by_used) + _const("LEAD", lead) +
-                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", fe.get("say") or FAIL_SAY_DEFAULT) +
+                "SUCCESS = %r\nFAIL_SAY = %r\n" % (self.s["confirmation"].get("success_sentence") or "", self.c.say_for(fe, "negotiate") or FAIL_SAY_DEFAULT) +
                 (WRAP_CODE_REACH if self.close_unnoted() else WRAP_CODE))
         first = "note_1" if self.notes_on else "finish"
         tr = [go(first, "Notes to write", cond_any(eq("note_has_1", "yes")))] if self.notes_on else []

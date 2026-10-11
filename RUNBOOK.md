@@ -8,7 +8,7 @@ The rules that bind this run (kit README, "The final" and "Rules"):
 
 ## Before 20:00
 
-1. `git status` must be clean on `builder`, and `git log -1` must be the tagged `final-candidate`.
+1. `git status` must be clean on `builder`, and `git log -1` must be the tagged `final-candidate`. The tag does not exist until freeze: create it then with `git tag final-candidate` on the frozen commit (until then the latest tag is `gate-green-4`).
 2. Run `set -a; source env.sh; set +a`. Never print `env.sh` or any `FREYA_*` value.
 3. Check that the simulation slot is free: `uv run python -c "import freya; print([s['status'] for s in freya.list_simulations()[:5]])"`.
 4. Check that `uv run pytest -q` passes.
@@ -35,7 +35,20 @@ uv run python -m builder.main final/<name>/ --slot final-<name> --openapi final/
 
 1. Read `traces/<UTC>-final-<name>.md`. It must show the start and end time, every model call, the workflow and agent IDs, the self-test result, and the export path.
 2. The exported workflow is at `submission/final-<name>.workflow.json`, and the spec next to it is `final-<name>.spec.json`.
-3. Secret scan, which must print nothing: `rg -n 'fak_|sk-ant|FREYA_|trycloudflare' traces/ submission/`
+3. Secret scan. Expected output of both commands: no file names. Both print file names only, never the matching
+   line, so a leak is never echoed to the terminal.
+   - The first command matches only real secret shapes: a key after `fak_` or `sk-ant-`, a raw `FREYA_*=value`
+     assignment, a tunnel URL. It does not match the trace's `{"kind": "tunnel", "url_kind": "tunnel"}` event or a
+     `[REDACTED:FREYA_API_KEY]` marker.
+   - The second command reads this shell's secret values from the environment, so no value is typed on the command
+     line. These are `FREYA_*` and `*_KEY`/`*_TOKEN`/`*_SECRET`/`*_PASSWORD`, as `builder/redact.py` defines them, of 8
+     characters or more. It prints only the names of files that contain one of them. If no such variable is set, it
+     says so on stderr and exits 1: source `env.sh` first.
+   ```
+   rg -l 'fak_[A-Za-z0-9]{8}|sk-ant-[A-Za-z0-9]|FREYA_[A-Z_]+=[A-Za-z0-9_-]{8}|https://[a-z0-9-]+\.trycloudflare\.com' traces/ submission/
+   python3 -c 'import os,sys,pathlib as P; v=[x for k,x in os.environ.items() if (k.startswith("FREYA_") or k.endswith(("_KEY","_TOKEN","_SECRET","_PASSWORD"))) and len(x)>=8]; v or sys.exit("no secret variables set: source env.sh first"); [print(f) for d in ("traces","submission") for f in sorted(P.Path(d).rglob("*")) if f.is_file() and any(x in f.read_text(errors="ignore") for x in v)]'
+   ```
+   Any file name printed is a leak. Do not submit that file; tell Hazar. Do not open the file in the terminal.
 4. Check that the exported JSON has no tunnel URL and does carry the `servers[0]` host of that brief's API file. The builder asserts this, so this step is only a manual double check.
 
 ## Submission (by 23:00, earlier is better: it is the third tie-break)
