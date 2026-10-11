@@ -111,7 +111,8 @@ def test_spec_a_node_set_unchanged():
         "human_back_opening", "human_back_identity", "human_back_negotiate",
         "hardship_offer", "hardship_hold", "hardship_back",  # A10 support offer latch
         "id_decline_gate",  # A10 SELF-06: a decline with an answer in it is checked first
-        "opening_ask"}  # A21: the opening counts its asks in code (small talk is not an ask)
+        "opening_ask",  # A21: the opening counts its asks in code (small talk is not an ask)
+        "id_explain"}  # A21 fix round 1: the one explanation is spoken by a step, flagged in code
     # A12: one product's named days are judged by the read-only check_date tool
     assert [t["function"]["name"] for t in w["nodes"]["negotiate"]["tools"]] == ["check_date", "create_promise"]
 

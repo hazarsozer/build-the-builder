@@ -24,14 +24,14 @@ from builder.lint import SPOKEN_BEFORE_SUCCESS, lint, never_say_words, safe_open
 from builder import labels, layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.triggers import verb_led, bare_trigger, sentence, split_trigger, subj, trigger_rest
-from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
+from builder.nodes import (FILL_CODE, all_of, always, api_tool, body_enum, body_schema, close_node, code_node,
                            cond_any, eq, farewell_default_code, go, goodbye_node, gt, is_true, py_json, transfer_node)
 
 STAGES = ["opening", "third_party", "identity", "negotiate"]
 # "any" means the customer's own stages; a third party is only covered when a spec names it.
 ANY_STAGES = ["opening", "identity", "negotiate"]
 # conversation steps before the customer is verified (no offer can come up there)
-PRE_VERIFY_NODES = {"opening", "identity", "third_party"}
+PRE_VERIFY_NODES = {"opening", "identity", "third_party", "id_explain"}
 # Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
 STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
                "negotiate": {"create_promise"}, "any": set()}
@@ -790,6 +790,7 @@ try:
         elif d.get('ok') is False:
             d['what_to_do_next'] = 'The answer could not be read. This is NOT a wrong answer. Ask the customer to repeat it (' + UNREADABLE + '). Then call verify_identity again.'
         elif d.get('verified') is True:
+            vars['id_ok_' + str(vars.get('id_field_cur') or '')] = 'yes'   # the decline gate re-asks the first open question
             d['what_to_do_next'] = 'This answer is correct. ' + NEXT_Q + ' ' + NOT_YET
         elif str(left) == '0':
             d['what_to_do_next'] = 'That was the last wrong answer allowed. The check has ended. Do not ask anything else.'
@@ -817,9 +818,10 @@ SUPPORT_TURNS_SEEN = 0
 
 # A10: identity's decline route. A message whose extracted answer parts are new (not the parts the last checked call
 # used, not the parts this gate already sent back) carries an answer: back to identity to check it, once per parts.
-# A21: a decline closes only after the one explanation was spoken (id_explain_said, read from the agent's own words,
-# kept once seen); before that it goes back to identity, which explains (a cut-off message read as a decline in
-# PUB-03/PUB-07 closed the call before any explanation).
+# A21: a decline closes only after the one explanation was given. The flag id_explained is set in code when this gate
+# sends a decline to id_explain, which speaks the explanation and the open question (tts, fix round 1); it is also set
+# when the extractor saw the agent give it on its own (id_explain_said). A cut-off message read as a decline in
+# PUB-03/PUB-07 closed the call before any explanation.
 ID_DECLINE_GATE = r'''
 if str(vars.get('id_explain_said') or '') == 'yes':
     vars['id_explained'] = 'yes'
@@ -828,14 +830,24 @@ if part and part != str(vars.get('id_partial_spent') or '').strip() and part != 
     vars['id_gate_part'] = part
     vars['id_event'] = 'continue'
     vars['id_gate'] = 'answer'
-elif str(vars.get('id_explained') or '') != 'yes' and int(str(vars.get('id_explain_n') or '0')) < 3:
-    # bounded on its own: a return to identity may restart the node's turn cap
-    vars['id_explain_n'] = str(int(str(vars.get('id_explain_n') or '0')) + 1)
+elif str(vars.get('id_explained') or '') != 'yes':
+    vars['id_explained'] = 'yes'
     vars['id_event'] = 'continue'
+    ask = ASKS[-1][1]
+    for fld, a in ASKS:
+        if str(vars.get('id_ok_' + fld) or '') != 'yes':
+            ask = a
+            break
+    try:
+        vars['id_ask_text'] = _fill(ask)
+    except Exception:
+        vars['id_ask_text'] = ask
+    vars['id_explain_reply'] = 'pending'
     vars['id_gate'] = 'explain'
 else:
     vars['id_gate'] = 'close'
 '''
+ID_EXPLAIN = "id_explain"
 
 PROMISE_POST = r'''
 try:
@@ -1059,6 +1071,9 @@ except Exception:
 # pre-hook, after it accepted the date, points the request at create_promise (PROMISE_URL). Any rejection, any request
 # it cannot read and any exception keep the call on SAFE_URL with a body of customer_id only, and PROMISE_POST answers
 # "NOT RECORDED: ...". Pre-hooks may rewrite the whole request (docs/tools-and-code.md; probes 5b110990, A12 fix 2).
+# The bank ledger records that get_account. It is harmless here: these tools live only in steps after load_account,
+# whose only way in is identity's "All answers verified" edge (test_a21 checks the graph), and the graded checks only
+# count get_account before verification. close_call's guard runs before verification too, so it uses NOT_SENT_URL.
 NOT_CHECKED = "NOT RECORDED: the date could not be checked; ask the customer for the day again."
 OFF_BANK = r'''
 def _off_bank(msg):
@@ -1185,14 +1200,18 @@ except Exception:
 # A21 item 7: close_call sends only the outcome and reason a close node wrote in code, and only once a close node ran
 # (close_ready). Probe 3a362703 (slot probe-hooks): the end_of_call run fills an unset {{outcome}} with one model call
 # (it guessed no_promise; PUB-03 ac424c99 and PUB-13 9ce9db6c sent guessed outcomes after a hang-up), then runs this
-# pre-hook, which may rewrite url and body. Like the create_promise guard it fails CLOSED: the tool's own url is the
-# read-only get_account route (SAFE_URL); only a ready close points it at close_call (CLOSE_URL). Otherwise (a hang-up
-# before any close, or a call the model made itself) nothing is recorded: a hang-up sends no outcome (A8 ruling).
+# pre-hook, which may rewrite url and body. It fails CLOSED: the tool's own url is NOT_SENT_URL, a reserved .invalid
+# host that never resolves; only a ready close points it at close_call (CLOSE_URL). Otherwise (a hang-up before any
+# close, or a call the model made itself) nothing reaches any bank: a hang-up sends no outcome (A8 ruling).
+# Not get_account (fix round 1): the bank ledger records every get_account, and graded checks count it ("never called"
+# for a third party, "after both security questions"). Probe 525bc2e7: the .invalid request fails at DNS in 0.02 s
+# with no ledger entry (an unknown path on the bank host also recorded nothing, but depends on that host's routing).
+NOT_SENT_URL = "https://close-call-not-sent.invalid/close_call"
 CLOSE_PRE = r'''
 try:
     b = config.get('body')
     cid = b.get('customer_id') if isinstance(b, dict) else None
-    config['url'] = SAFE_URL
+    config['url'] = NOT_SENT_URL
     config['body'] = dict(customer_id=cid or vars.get('customer_id'))
     out = str(vars.get('outcome') or '')
     if str(vars.get('close_ready') or '') == 'yes' and out:
@@ -1964,11 +1983,11 @@ class _Compiler:
             "Do not tell the customer how many wrong answers are left." % self.banned_words(),
             "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time. "
             "Small talk is not a refusal: never explain for it; ask your question again in a few words." % q(idn["decline_explanation"]),
-            CUT_OFF,
         ]
         if self.id_fail:
             lines.append(ID_TOOL_FAIL)
-        lines += ["- " + l for l in self.event_guidance("identity") + self.say_lines("identity")]
+        # the cut-off rule is a bullet with the other situations, as in the opening and third-party steps
+        lines += ["- " + l for l in [CUT_OFF] + self.event_guidance("identity") + self.say_lines("identity")]
         lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
         lines.append(bullet_block("Rules:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
@@ -2143,9 +2162,21 @@ HOW TO GET A PROMISE
             # A10 (SELF-06): a decline extracted from a message that also carries an unchecked answer goes back to
             # identity once, so the answer is checked (a third wrong answer then closes as failed, not declined)
             gate = "id_decline_gate"
-            self.nodes[gate] = code_node(gate, ID_DECLINE_GATE, self.close_key("declined"),
-                                         [go("identity", "The message carried an answer to check, or the one explanation was not given yet",
-                                             cond_any(eq("id_gate", "answer"), eq("id_gate", "explain")))])
+            asks = [[x["field"], code_tpl(x["ask"])] for x in qs]
+            self.nodes[gate] = code_node(gate, "import json, re\n" + _const("ASKS", asks) + FILL_CODE + ID_DECLINE_GATE, self.close_key("declined"),
+                                         [go("identity", "The message carried an answer to check", cond_any(eq("id_gate", "answer"))),
+                                          go(ID_EXPLAIN, "The one explanation was not given yet", cond_any(eq("id_gate", "explain")))])
+            expl = tpl(idn["decline_explanation"])
+            self.nodes[ID_EXPLAIN] = {
+                "name": ID_EXPLAIN, "node_type": "conversation",
+                "on_enter": {"type": "tts", "text": expl + " {{id_ask_text}}"},
+                "task_message": ("You said %s and asked the security question again. Do not explain again. "
+                                 "No tool call is allowed in this step." % q(expl)),
+                "extraction_schema": [{
+                    "name": "id_explain_reply", "type": "string", "min_confidence": 0.5, "enum_values": ["pending", "replied"],
+                    "description": "replied: the person sent any message after the agent's explanation. pending: no reply yet."}],
+                "max_node_turns": 2, "max_turn_transition": "identity",
+                "transitions": [go("identity", "Back to the security questions", cond_any(eq("id_explain_reply", "replied")))]}
             for t in trans:
                 if t["target_node"] == self.close_key("declined") and not t.get("is_tool_call"):
                     t["target_node"] = gate
@@ -2457,12 +2488,12 @@ HOW TO RUN THE CALL
             "reason": {"default": "{{reason}}", "description": "Reason by outcome. " + rdesc},
         }, ["outcome"], description=("Records how the call ended. Run by the system at the end of the call; the assistant must "
                                      "never call it."),
-            pre="import json\n" + _const("REASONLESS", reasonless) + "SAFE_URL = %r\nCLOSE_URL = %r\n" % (
-                self.base + "/get_account", self.base + "/close_call") + CLOSE_PRE, post=CLOSE_POST)
+            pre="import json\n" + _const("REASONLESS", reasonless) + "NOT_SENT_URL = %r\nCLOSE_URL = %r\n" % (
+                NOT_SENT_URL, self.base + "/close_call") + CLOSE_PRE, post=CLOSE_POST)
         t["config"]["alwaysRunsAt"] = ["end_of_call"]
         url = t["function"]["parameters"]["properties"]["url"]
         assert url.get("default") == self.base + "/close_call", url
-        url["default"] = self.base + "/get_account"   # fail closed: only a ready close is sent to close_call
+        url["default"] = NOT_SENT_URL   # fail closed: only a ready close is sent to close_call
         return t
 
     def build(self):

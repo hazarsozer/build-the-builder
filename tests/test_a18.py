@@ -201,7 +201,7 @@ def test_never_say_words_in_every_conversation_step_and_the_global_prompt():
         assert 'Never say "guarantee", "lawsuit", "credit score" or "final notice", in any form' in n["task_message"], k
     assert 'Never say "guarantee"' in w["system_prompt"]
     # banned offers: every step after verification, none before it
-    post = [k for k in conv if k not in ("opening", "identity", "third_party") and not k.endswith(("_opening", "_identity"))]
+    post = [k for k in conv if k not in ("opening", "identity", "third_party", "id_explain") and not k.endswith(("_opening", "_identity"))]
     assert "negotiate" in post and len(post) >= 2
     for k in post:
         t = conv[k]["task_message"]

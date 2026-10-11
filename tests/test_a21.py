@@ -4,7 +4,7 @@ Offline only. Where the platform decides by extraction and routing, the diag tra
 through the compiled graph (code nodes run for real, conversation transitions evaluated in order, as in test_a10)."""
 import json
 
-from builder.compile import CUT_OFF, NEG_CUT_OFF, compile as C
+from builder.compile import CUT_OFF, NEG_CUT_OFF, NOT_SENT_URL, compile as C
 from tests.test_a10 import _code, holds, route  # noqa: F401  (offline engine helpers)
 
 OA = json.load(open("tools/openapi.json"))
@@ -95,11 +95,11 @@ class Engine:
         return self.at
 
 
-def _verify(e, field, answer, left):
+def _verify(e, field, answer, left, verified=False):
     t = e.n["identity"]["tools"][0]
     cfg = {"url": "x", "body": {"field": field, "answer": answer}}
     exec(t["pre_process_code"], {"vars": e.v, "config": cfg})
-    r = {"status": "success", "data": {"ok": True, "verified": False, "wrong_answers_left": left, "all_verified": False}}
+    r = {"status": "success", "data": {"ok": True, "verified": verified, "wrong_answers_left": left, "all_verified": False}}
     exec(t["post_process_code"], {"vars": e.v, "result": r})
     e.v["id_left"] = str(left)
 
@@ -110,7 +110,8 @@ def test_identity_prompt_and_extraction_rules():
     for spec in (A, B):
         n = wf(spec)["nodes"]["identity"]
         t = n["task_message"]
-        assert CUT_OFF in t
+        # fix round 1: the cut-off rule is a bullet with the other situations
+        assert "\n- " + CUT_OFF + "\n" in t
         assert "Small talk is not a refusal: never explain for it; ask your question again in a few words." in t
         d = n["extraction_schema"][0]["description"]
         assert "A message cut off mid-phrase, or only small talk with no refusal words, is continue, never declined." in d
@@ -118,21 +119,34 @@ def test_identity_prompt_and_extraction_rules():
         assert ex and '"These questions protect your account."' in ex[0]["description"] and ex[0]["enum_values"] == ["no", "yes"]
 
 
+def test_explain_step_speaks_the_explanation_and_the_open_question():
+    """Fix round 1: the one explanation is spoken by a step (tts), so the code flag never depends on extraction."""
+    for spec in (A, B):
+        n = wf(spec)["nodes"]["id_explain"]
+        assert n["on_enter"] == {"type": "tts", "text": "These questions protect your account. {{id_ask_text}}"}
+        assert n["max_turn_transition"] == "identity" and n["transitions"][0]["target_node"] == "identity"
+        assert "Never offer" not in n["task_message"]   # a pre-verification step
+
+
 def test_pub07_replay_fragment_read_as_decline_before_any_explanation_goes_back():
-    """43c11304: DOB answered, then eight fragments; the eighth was extracted as declined (0.99) and closed the call.
-    No explanation had been spoken, so the gate now sends it back to identity."""
+    """43c11304: DOB verified, then eight fragments; the eighth was extracted as declined (0.99) and closed the call.
+    No explanation had been given, so the gate now sends it to id_explain, which says it and asks the phone question."""
     e = Engine(at="identity")
+    e.v.update(id_field_cur="date_of_birth")
+    _verify(e, "date_of_birth", "1975-12-05", 2, verified=True)
     for _ in range(7):
         assert e.user(id_event="continue", id_explain_said="no") == "identity"
-    assert e.user(id_event="declined", id_explain_said="no") == "identity"
-    assert e.v["id_event"] == "continue" and e.v["id_gate"] == "explain"
-    # the agent explains; a real refusal after it closes as declined
-    assert e.user(id_event="declined", id_explain_said="yes") == "close_declined"
+    assert e.user(id_event="declined", id_explain_said="no") == "id_explain"
+    assert e.v["id_explained"] == "yes" and e.v["id_event"] == "continue"
+    assert e.v["id_ask_text"] == "What are the last four digits of the phone number on file?"
+    assert e.user(id_explain_reply="replied") == "identity"
+    # a refusal after the explanation closes as declined, even if the extractor missed the explanation
+    assert e.user(id_event="declined", id_explain_said="no") == "close_declined"
 
 
 def test_pub03_replay_third_wrong_answer_closes_as_failed_not_declined():
     """e2199549: two wrong dates, then four fragments; the fourth was extracted as declined and closed the call before
-    the third answer. Now it goes back; the third wrong answer closes as failed."""
+    the third answer. Now it goes to the explanation; the third wrong answer closes as failed."""
     e = Engine(at="identity")
     e.v.update(id_partial="twelve July nineteen ninety-one", id_partial_field="date_of_birth")
     _verify(e, "date_of_birth", "1991-07-12", 2)
@@ -141,27 +155,31 @@ def test_pub03_replay_third_wrong_answer_closes_as_failed_not_declined():
     _verify(e, "date_of_birth", "1992-08-21", 1)
     for _ in range(3):
         assert e.user(id_event="continue", id_explain_said="no") == "identity"
-    assert e.user(id_event="declined", id_explain_said="no") == "identity"
+    assert e.user(id_event="declined", id_explain_said="no") == "id_explain"
+    assert e.v["id_ask_text"] == "What is your date of birth?"
+    assert e.user(id_explain_reply="replied") == "identity"
     _verify(e, "date_of_birth", "1990-01-01", 0)
     assert e.user(id_event="continue", id_explain_said="no") == "close_failed"
 
 
-def test_identity_explanation_flag_is_kept_once_seen():
+def test_identity_explanation_flag_set_by_extraction_or_code():
+    # the agent explained on its own and the extractor saw it: the decline closes
     assert Engine(at="identity").user(id_event="declined", id_explain_said="yes", id_partial="") == "close_declined"
-    e = Engine(at="identity")
-    assert e.user(id_event="declined", id_explain_said="no", id_partial="") == "identity"
-    assert e.user(id_event="declined", id_explain_said="yes") == "close_declined" and e.v["id_explained"] == "yes"
-    # an extraction that later misses it does not undo the flag
+    # flag set in code by the explain step, kept even if extraction says no
     e2 = Engine(at="identity", v={"id_explained": "yes"})
     assert e2.user(id_event="declined", id_explain_said="no", id_partial="") == "close_declined"
-
-
-def test_identity_decline_without_explanation_is_bounded_by_the_gate():
-    """A return to identity may restart the node's turn cap, so the gate bounds its own bounces (3)."""
+    # the explain step's own turn cap returns to identity
     e = Engine(at="identity")
-    for _ in range(3):
-        assert e.user(id_event="declined", id_explain_said="no", id_partial="") == "identity"
-    assert e.user(id_event="declined", id_explain_said="no", id_partial="") == "close_declined"
+    assert e.user(id_event="declined", id_explain_said="no", id_partial="") == "id_explain"
+    e.user()
+    assert e.user() == "identity"
+
+
+def test_identity_decline_is_explained_once_then_closes():
+    e = Engine(at="identity")
+    assert e.user(id_event="declined", id_partial="") == "id_explain"
+    assert e.user(id_explain_reply="replied") == "identity"
+    assert e.user(id_event="declined", id_partial="") == "close_declined"
     assert wf()["nodes"]["identity"]["max_node_turns"] == 20
 
 
@@ -292,7 +310,7 @@ def test_close_call_tool_is_system_run_and_fails_closed():
         assert t["config"]["alwaysRunsAt"] == ["end_of_call"]
         d = t["function"]["description"]
         assert "Run by the system at the end of the call; the assistant must never call it." in d
-        assert t["function"]["parameters"]["properties"]["url"]["default"] == URL + "/get_account"
+        assert t["function"]["parameters"]["properties"]["url"]["default"] == NOT_SENT_URL
         assert "{{" not in t["pre_process_code"] and "{{" not in t["post_process_code"]
 
 
@@ -303,14 +321,14 @@ def test_pub03_replay_hangup_in_identity_records_no_guessed_close():
     e = Engine(at="identity", v={"customer_id": "c_8d14cf10"})
     e.user(id_event="continue", id_explain_said="no", id_partial="12 July 1991", id_partial_field="date_of_birth")
     url, body = _close_req(w, e.v)
-    assert url == URL + "/get_account" and body == {"customer_id": "c_8d14cf10"}
+    assert url == NOT_SENT_URL and body == {"customer_id": "c_8d14cf10"}
 
 
 def test_model_call_before_any_close_is_answered_not_now():
     w = wf()
     v = {"customer_id": "c1"}
     url, body = _close_req(w, v, ("promise", ""))
-    assert url.endswith("/get_account") and body == {"customer_id": "c1"}
+    assert url == NOT_SENT_URL and body == {"customer_id": "c1"}
     r = {"status": "success", "data": {"products": []}, "header": {}}
     exec(_close_tool(w)["post_process_code"], {"vars": v, "result": r})
     assert r["data"] == {"ok": False, "what_to_do_next": "Not now: the call is not finished; continue the conversation."}
@@ -384,4 +402,39 @@ def test_multi_hangup_at_the_readback_sends_no_guessed_close():
     s = Sim("PUB-12")
     s.say(product_id="p1", outcome="agreed", amount="510", date="2026-10-15")
     url, body = _close_req(s.w, s.v, ("promise", ""))
-    assert url.endswith("/get_account") and set(body) == {"customer_id"}
+    assert url == NOT_SENT_URL and set(body) == {"customer_id"}
+
+
+# ---------------------------------------------------------------- fix round 1: no ledger record before a close
+
+def test_unready_close_never_reaches_any_bank_route():
+    """The bank ledger records every request to a tool route, get_account included, and graded checks count those
+    ("verify_identity and get_account never called", "both security questions passed before get_account"). An
+    unready close goes to a reserved .invalid host (probe 525bc2e7: fails at DNS in 0.02 s, ledger stays empty)."""
+    from urllib.parse import urlparse
+    host = urlparse(NOT_SENT_URL).hostname
+    assert host.endswith(".invalid") and host != urlparse(URL).hostname
+    for spec in (A, B):
+        w = wf(spec)
+        for v in ({"customer_id": "c1"}, {"customer_id": "c1", "outcome": "promise"}, {"customer_id": "c1", "close_ready": "no"}):
+            url, body = _close_req(w, v, ("promise", ""))
+            assert url == NOT_SENT_URL and body == {"customer_id": "c1"}, v
+
+
+def test_promise_guards_get_account_route_only_after_verification():
+    """A12's create_promise / check_date / set_product fail-closed route is get_account. Those tools live only in
+    steps reached through load_account, whose only way in is identity's "All answers verified" edge, so a get_account
+    there is after verification (graded checks allow it)."""
+    from tests.test_outage import reach
+    for spec in (A, B):
+        w = wf(spec)
+        n = w["nodes"]
+        routed = {k for k, x in n.items() for t in (x.get("tools") or []) + (x.get("pre_actions") or [])
+                  if str(t["function"]["parameters"]["properties"].get("url", {}).get("default", "")).endswith("/get_account")}
+        assert routed >= {"load_account"} and len(routed) >= 2
+        ins = [(k, t["description"]) for k, x in n.items() for t in x.get("transitions") or [] if t["target_node"] == "load_account"]
+        ins += [(k, "default") for k, x in n.items() if x.get("passthrough_default_transition") == "load_account"
+                or x.get("max_turn_transition") == "load_account"]
+        assert ins == [("identity", "All answers verified")], ins
+        before = reach(w, "setup", without={"load_account"})
+        assert not (routed & before), routed & before
