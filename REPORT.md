@@ -140,6 +140,8 @@ EXPORT      compile with the official bank URL → save → export_workflow → 
 
 ## 8. Decisions that are yours
 
+- **Agent voice and language defaults:** Turkish STT/TTS and the leyla voice, the same platform default as the kit example. Keep or set English (see section 10).
+
 - **Sunday 16:00 (Task 11):** submit our builder or the fallback, decided on the same bench. My recommendation: our builder, unless the bench shows it failing whole briefs.
 - **Public repo:** the submission needs a repo URL and commit. Nothing has been pushed. It needs your go, a README, and a final secret scan of traces.
 - **The organisers' submission-steps mail:** forward it when it arrives.
@@ -233,5 +235,16 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
 
   Fix A15 (generalising renamed outcomes and the remaining gaps) is in progress. raw-decoy, sme and strict-wording are still to run.
 - [x] Final whole-branch review: **Ready with fixes**. No crash before export; self-test and exported builds are identical apart from the URL; about 770 fuzzed specs crashed nothing; no secret leaks. There is 1 Critical (a brief's API file not named `openapi.json` silently falls back to Brief A's file; on Sunday, always pass `--openapi`) and 9 Important, about 1.5–2 h of fixes. Details are in `.superpowers/sdd/…/final-review.md`, and dev-2d is fixing them before the dress rehearsals.
-- [ ] Customer styles at 3 runs, different "today" dates, variance at 5 runs
+- [x] **Dashboard walk-through and export audit** (your item 6):
+  - **Freya balance:** $224.6.
+  - **The exported workflow looks messy:**
+    - all nodes are stacked in one pile, because the compiler sets no node positions;
+    - an "Incomplete Nodes" warning comes from the call variables, which are only filled at call time;
+    - an export-readability audit counted 16 judge-risk wording items and 26 cosmetic ones.
+  - **No secrets, tunnel URLs or home paths** in the workflow JSON. One home path is in the trace's markdown.
+  - The cleanup is queued as A19/A20, so reviewers who open the workflow can read it.
+- **Flag for you:** the agent's platform defaults (`agent_config`) set Turkish STT/TTS and the "leyla" voice. The kit's own example agent gets the same defaults. Our English opening speaks first and every simulation passes, so dev-2d left it alone. **Your call** whether to change it before submission.
+- [ ] Customer styles at 3 runs (5 styles × A and B on `gate-green-3`): running.
+- [ ] A18 (double sympathy, multi-product restructuring routing, the "guarantee" wording) and A17 (sme): in progress. The bench re-runs after these.
+- [ ] Different "today" dates, variance at 5 runs
 - [ ] Fallback live check (for the 16:00 decision)
