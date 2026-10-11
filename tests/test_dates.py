@@ -224,6 +224,16 @@ def test_fix1_bare_cardinal_day_needs_a_month_or_weekday():
     assert D.resolve_said("on twenty seven", t, WW)[0] == dt.date(2026, 10, 27)
 
 
+def test_fix3_bare_weekday_means_the_offered_date_on_it():
+    t = dt.date(2026, 10, 14)
+    offered = [dt.date(2026, 10, 27), dt.date(2026, 11, 2)]
+    assert D.resolve_said("the Tuesday is fine", t, WW, offered)[0] == dt.date(2026, 10, 27)
+    assert D.resolve_said("Tuesday", t, WW)[0] == dt.date(2026, 10, 20)                # nothing offered on a Tuesday
+    assert D.resolve_said("next Tuesday", t, WW, offered)[0] == dt.date(2026, 10, 20)   # a modifier decides by itself
+    assert D.resolve_said("Monday", t, WW, offered)[0] == dt.date(2026, 11, 2)
+    assert D.resolve_said("Thursday", t, WW, offered)[0] == dt.date(2026, 10, 15)
+
+
 def test_fix1_same_day_cutoff():
     t = dt.date(2026, 10, 14)
     dl = dt.date(2026, 11, 2)

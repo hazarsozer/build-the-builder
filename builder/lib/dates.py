@@ -484,11 +484,12 @@ def _mentions(tk):
     return keep
 
 
-def resolve_said(text, today, ww=None):
+def resolve_said(text, today, ww=None, prefer=None):
     """The exact day the customer's words name: (date, '') or (None, why) with why 'vague' (a period, no day),
     'invalid' (no such date) or 'none' (no day in the words). The LAST day or period mentioned wins (a correction:
     "the 20th, no, the 23rd"); one right after "not" never counts. A day number wins over a weekday next to it that
-    does not fit, except when that weekday fits the latest past date with that number (then that past date)."""
+    does not fit, except when that weekday fits the latest past date with that number (then that past date).
+    prefer: dates the agent proposed; a bare weekday ("Tuesday is fine") that one of them falls on means that date."""
     tk = _tokens(text)
     ms = _mentions(tk)
     if not ms:
@@ -506,6 +507,10 @@ def resolve_said(text, today, ww=None):
     if kind == 'rel':
         return today + datetime.timedelta(days=val), ''
     if kind == 'wd':
+        if not val[1]:
+            fit = sorted(p for p in (prefer or []) if p >= today and p.weekday() == val[0])
+            if fit:
+                return fit[0], ''
         return _weekday_date(today, val[0], val[1], ww), ''
     n, mon, wd = val
     if mon:
