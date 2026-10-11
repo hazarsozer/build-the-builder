@@ -356,3 +356,18 @@ def test_i1_transfer_failing_twice_before_any_record_still_closes_as_the_service
         stop, path = walk(w, v, "transfer_restructuring", [False, False])
         assert path[-1] == "close_transfer_service_error" and (v["outcome"], v.get("reason") or None) == fail_close(spec)
 
+
+def test_m1_post_hooks_say_retry_first_like_the_task_lines():
+    w = wf(A)
+    post = w["nodes"]["identity"]["tools"][0]["post_process_code"]
+    cb = [t for t in w["nodes"]["third_party"]["tools"] if t["function"]["name"] == "schedule_callback"][0]["post_process_code"]
+    for code, tool in ((post, "verify_identity"), (cb, "schedule_callback")):
+        line = [l for l in code.splitlines() if "again" in l and tool in l and "what_to_do_next" in l][0]
+        assert "before you speak" in line and "Say so in one short sentence and" not in line, line
+        assert "Say there was a technical problem and call" not in line, line
+
+
+def test_m2_identity_tool_failure_line_is_a_bullet():
+    t = wf(A)["nodes"]["identity"]["task_message"]
+    assert "\n- If a verify_identity call fails" in t
+

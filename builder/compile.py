@@ -838,7 +838,7 @@ try:
             d['what_to_do_next'] = ('The answer is INCOMPLETE and was NOT checked. This is NOT a wrong answer. Ask only for the missing part (' +
                                     UNREADABLE + '), keep the part already given, and then call verify_identity once with the whole answer.')
         elif technical:
-            d['what_to_do_next'] = 'The security service had a technical problem and nothing was checked. Say so in one short sentence and call verify_identity again with the same answer.'
+            d['what_to_do_next'] = 'The security service had a technical problem and nothing was checked. This is NOT a wrong answer. Call verify_identity again at once with the same answer, before you speak and without asking the customer again. If it fails again, the call ends automatically.'
         if not incomplete:
             # any result but INCOMPLETE ends this answer: the parts collected so far are used up, never combine them again
             vars['id_partial_spent'] = str(vars.get('id_partial_seen') or '')
@@ -968,7 +968,7 @@ try:
             d['what_to_do_next'] = 'The callback is booked.'
         else:
             d['cb_status'] = 'failed'
-            d['what_to_do_next'] = 'NOT BOOKED: the service failed. Do not say it is booked. Say there was a technical problem and call schedule_callback once more with the same date and time.'
+            d['what_to_do_next'] = 'NOT BOOKED: the service failed. Do not say it is booked. Call schedule_callback again at once with the same date and time, before you speak. Only if it fails again, say there was a technical problem.'
 except Exception:
     pass
 '''
@@ -2097,9 +2097,9 @@ class _Compiler:
             "If the customer does not want to answer, or asks what the call is about instead of answering: say %s once, and ask again. Do not explain a second time. "
             "Small talk is not a refusal: never explain for it; ask your question again in a few words." % q(idn["decline_explanation"]),
         ]
-        lines.append(ID_TOOL_FAIL)   # A24: on every brief (A17: only when the failure event covered identity)
-        # the cut-off rule is a bullet with the other situations, as in the opening and third-party steps
-        lines += ["- " + l for l in [CUT_OFF] + self.event_guidance("identity") + self.say_lines("identity")]
+        # the cut-off rule is a bullet with the other situations, as in the opening and third-party steps; A24: so is the
+        # tool-failure line, on every brief (A17: only when the failure event covered identity)
+        lines += ["- " + l for l in [ID_TOOL_FAIL, CUT_OFF] + self.event_guidance("identity") + self.say_lines("identity")]
         lines += ["- " + l for l in self.extra_lines("verify_identity", ("field", "answer"))]
         lines.append(bullet_block("Rules:", self.extra("identity")))
         return "\n".join(l for l in lines if l)
