@@ -192,7 +192,7 @@ try:
             parts.append('on the next business day, ' + speak(next_bd(today, CAL)) + ', ' + win)
             tm = today + datetime.timedelta(days=1)
             if next_bd(today, CAL) != tm and 'next_day' not in CB['days']:
-                # A15 (IDS-08): "tomorrow" is a holiday or a weekend day; the model silently booked the next business day
+                # "tomorrow" is a holiday or a weekend day; the model silently booked the next business day
                 notes.append('Tomorrow, ' + speak(tm) + ', is not a business day, so tomorrow is outside the window.')
         elif kind == 'next_day':
             parts.append('tomorrow, ' + speak(today + datetime.timedelta(days=1)) + ', ' + win)
@@ -376,7 +376,7 @@ try:
     vars['deadline_iso'] = f['deadline'].isoformat()
     for i, a in enumerate(f['attempts']):
         vars['attempt' + str(i + 1) + '_text'] = speak(a['date'])
-    # A12 fix 3/4: the plan attempts' dates and amount kinds, in order; check_date counts one as proposed only once the
+    # the plan attempts' dates and amount kinds, in order; check_date counts one as proposed only once the
     # model says it has reached that attempt, and adds the dates its own results tell the model to offer
     vars['offer_dates'] = ','.join(a['date'].isoformat() for a in f['attempts'])
     vars['offer_amounts'] = ','.join(a['amount'] for a in f['attempts'])
@@ -749,7 +749,7 @@ try:
             vars['id_partial_field'] = ''
         if not (incomplete or technical) and d.get('verified') is False and d.get('ok') is not False and d.get('all_verified') is not True \
                 and not (hint and hint in HINTS):
-            # A15: the brief's own limit (identity.max_wrong, wrong_scope), counted here; the bank's count wins when lower
+            # the spec's own limit (identity.max_wrong, wrong_scope), counted here; the bank's count wins when lower
             key = 'id_wrong_' + (str(vars.get('id_field_cur') or '') if SCOPE == 'per_question' else 'all')
             n = int(str(vars.get(key) or '0')) + 1
             vars[key] = str(n)
@@ -805,7 +805,7 @@ try:
             result['data'] = d
         good = str(result.get('status', 'success')) == 'success' and d.get('ok') is True
         if vars.get('promise_reject') or str(vars.get('promise_sent') or '') != 'yes':
-            # A12: the pre-hook kept the call off the bank (the request went to get_account): never recorded
+            # the pre-hook kept the call off the bank (the request went to get_account): never recorded
             result['data'] = d = dict(ok=False, recorded=False, promise_status='rejected',
                                       what_to_do_next=str(vars.get('promise_reject') or NOT_CHECKED))
         elif good:
@@ -930,13 +930,13 @@ try:
     said = _cd_arg(b, 'said')
     iso = _cd_arg(b, 'date')[:10]
     dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
-    # A12 fix 4: only dates the agent has really proposed count as offers: the plan attempts it says it has reached
+    # only dates the agent has really proposed count as offers: the plan attempts it says it has reached
     # (attempt), and the dates an earlier result told it to offer. A date the customer names first is a new date.
     pd = [x for x in str(vars.get('offer_dates') or '').split(',') if x]
     pk = str(vars.get('offer_amounts') or '').split(',')
     m = re.match(r'\s*(\d+)', _cd_arg(b, 'attempt'))
     n = min(int(m.group(1)), len(pd)) if m else 0
-    # A12 fix 5: a "current" attempt amount is the floor once the model says it offered it, else the full amount
+    # a "current" attempt amount is the floor once the model says it offered it, else the full amount
     fo = _cd_arg(b, 'floor_offered').lower().strip(' .!') in ('yes', 'y', 'true')
     offered = set(pd[:n]) | set(x for x in str(vars.get('cd_offered') or '').split(',') if x)
     prefer = []

@@ -76,3 +76,21 @@ def test_trigger_extra_sentence_is_kept(compiled):
         rest = split_trigger(r["trigger"])[2]
         if rest and "any" in (r.get("stages") or ["any"]):
             assert rest in wf["system_prompt"]
+
+
+# ---------------------------------------------------------------- 2. internal labels
+
+INTERNAL = re.compile(r"\bA\d{1,2}\b|probe|TODO|FIXME|hack")
+
+
+@pytest.mark.parametrize("name", ["a", "b"])
+@pytest.mark.parametrize("base_url", [None, "https://bank.example/v1"])
+def test_no_internal_labels_in_export(name, base_url):
+    """Task numbers, 'probe' and the like never reach the exported workflow (hooks, code nodes, descriptions)."""
+    txt = json.dumps(C(SPECS[name], OA, base_url=base_url))
+    assert sorted(set(INTERNAL.findall(txt))) == []
+
+
+def test_no_internal_labels_in_any_fixture(compiled):
+    name, _, wf = compiled
+    assert sorted(set(INTERNAL.findall(json.dumps(wf)))) == [], name

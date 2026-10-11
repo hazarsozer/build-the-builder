@@ -248,7 +248,7 @@ def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=N
     transfer's reason or None. A transfer wins, then any recorded promise, then the notes.
     reason_map: note reason -> close reason (multi_product.notes.close_reason_map); paid: the note
     reason that means "already paid" (multi_product.notes.paid_note_reason). promise / no_promise /
-    transfer: the brief's own outcome names (the promise row is (outcome, reason)) (A15)."""
+    transfer: the spec's own outcome names (the promise row is (outcome, reason))."""
     m = reason_map or dict()
     paid = paid or 'paid'
     if transferred:
@@ -269,7 +269,7 @@ def close_reason(notes, promises, transferred, rule, all_paid='paid', fallback=N
 
 
 
-# ---------------------------------------------------------------- a date the customer names (A12)
+# ---------------------------------------------------------------- a date the customer names
 # The customer's words for a day are resolved and judged here, in code: the agent only speaks the verdict.
 
 _UNIT_W = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
