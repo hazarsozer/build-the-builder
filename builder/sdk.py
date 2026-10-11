@@ -60,30 +60,53 @@ class SessionError(RuntimeError):
 
 # ------------------------------------------------------------------ files
 
-def is_openapi_file(path):
-    """True when path is a .json file holding an OpenAPI document (a JSON object with `openapi` and `paths`)."""
+def load_openapi(path):
+    """The OpenAPI document in a .json, .yaml or .yml file (parsed, not checked). Raises OSError / ValueError."""
     p = Path(path)
-    if p.suffix.lower() != ".json" or not p.is_file():
+    text = p.read_text(encoding="utf-8", errors="replace")
+    if p.suffix.lower() in (".yaml", ".yml"):
+        import yaml
+        try:
+            return yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            raise ValueError("%s is not valid YAML: %s" % (p.name, e)) from e
+    return json.loads(text)
+
+
+def is_openapi_file(path):
+    """True when path is a .json/.yaml/.yml file holding an OpenAPI document (an object with `openapi` and `paths`)."""
+    p = Path(path)
+    if p.suffix.lower() not in (".json", ".yaml", ".yml") or not p.is_file():
         return False
     try:
-        doc = json.loads(p.read_text(errors="replace"))
+        doc = load_openapi(p)
     except (OSError, ValueError):
         return False
     return isinstance(doc, dict) and "openapi" in doc and "paths" in doc
 
 
-def expand_briefs(brief_paths):
-    """Brief files in order; a directory contributes its files (sorted), except openapi.json,
-    hidden files and secret files (env.sh, .env*). An OpenAPI document under any name is never a brief."""
+def _not_brief(p):
+    return p.name == "openapi.json" or _secret_file(p.name) or is_openapi_file(p)
+
+
+def brief_entries(brief_paths):
+    """(path, name) per brief file in order. A directory contributes every file under it recursively (doctext order:
+    BRIEF.md, README.md, the rest by relative path), named by its relative path; never openapi.json, hidden files,
+    secret files (env.sh, .env*) or an OpenAPI document under any name."""
+    from builder import doctext
     out = []
     for p in brief_paths:
         p = Path(p)
         if p.is_dir():
-            out += sorted(x for x in p.iterdir() if x.is_file() and x.name != "openapi.json"
-                          and not x.name.startswith(".") and not _secret_file(x.name) and not is_openapi_file(x))
-        elif not _secret_file(p.name) and not is_openapi_file(p):
-            out.append(p)
+            out += [(x, x.relative_to(p).as_posix()) for x in doctext.case_files(p, _not_brief)]
+        elif not _not_brief(p):
+            out.append((p, p.name))
     return out
+
+
+def expand_briefs(brief_paths):
+    """Brief files in order (see brief_entries)."""
+    return [p for p, _ in brief_entries(brief_paths)]
 
 
 def _secret_file(name):
@@ -91,18 +114,28 @@ def _secret_file(name):
     return name == "env.sh" or name.startswith(".env")
 
 
+COPY_AS_IS = {".md", ".markdown", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml"}
+
+
 def make_workdir(brief_paths, openapi, label, with_schema=True):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     work = WORK_ROOT / ("%s-%s-%s" % (stamp, label, uuid.uuid4().hex[:6]))
     work.mkdir(parents=True)
     names = set()
-    for p in expand_briefs(brief_paths):
-        name = p.name
+    from builder import doctext
+    order = []
+    for p, rel in brief_entries(brief_paths):
+        convert = p.suffix.lower() not in COPY_AS_IS
+        name = rel.replace("/", "__") + (".md" if convert else "")
         if name in names or name in ("openapi.json", "spec_schema.json", "spec-guide.md"):
             name = "%d-%s" % (len(names) + 1, name)
         names.add(name)
-        shutil.copyfile(p, work / name)
-    (work / ".briefs.json").write_text(json.dumps(sorted(names)))
+        order.append(name)
+        if convert:   # Word, PDF, Excel, images, unknown: a Markdown rendering under the document's own name
+            (work / name).write_text("# %s\n\n%s\n" % (rel, doctext.to_text(p).strip()), encoding="utf-8")
+        else:
+            (work / name).write_text(doctext.read_text(p), encoding="utf-8")   # any encoding in, utf-8 out
+    (work / ".briefs.json").write_text(json.dumps(order, ensure_ascii=False), encoding="utf-8")
     (work / "openapi.json").write_text(json.dumps(openapi, indent=1))
     if with_schema:
         shutil.copyfile(ROOT / "builder" / "spec_schema.json", work / "spec_schema.json")
@@ -111,11 +144,11 @@ def make_workdir(brief_paths, openapi, label, with_schema=True):
 
 
 def brief_names(work):
-    return json.loads((Path(work) / ".briefs.json").read_text())
+    return json.loads((Path(work) / ".briefs.json").read_text(encoding="utf-8"))
 
 
 def brief_text(work):
-    return "\n\n".join((Path(work) / n).read_text(errors="replace") for n in brief_names(work))
+    return "\n\n".join((Path(work) / n).read_text(encoding="utf-8", errors="replace") for n in brief_names(work))
 
 
 def read_json(path):

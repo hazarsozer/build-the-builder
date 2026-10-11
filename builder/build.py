@@ -2,13 +2,17 @@
 
     python3 builder/build.py {case_folder} {mock_url}
 
-  case_folder  the case's folder: brief file(s) plus one OpenAPI document (openapi.json, or the only .json with
-               `openapi` and `paths`; none or several is an error, exit 2). Every other file in it is a brief.
+  case_folder  the case's folder: documents in any format (Markdown, Word, PDF, Excel, ...; read recursively, see
+               builder/doctext.py) plus normally one OpenAPI document (openapi.json, or the only .json/.yaml/.yml with
+               `openapi` and `paths`). Several: exit 2. None: the build goes on with --openapi-fallback (the kit's
+               tools/openapi.json for the tool shapes only, an `openapi_fallback` trace event; the workflow still
+               calls mock_url). Every other file is a brief.
   mock_url     our mock, https only, never trycloudflare. The exported workflow's tools call <mock_url>/v1/<tool>:
                the path of the OpenAPI servers[0] URL (e.g. /v1) is appended unless mock_url already ends with it.
 
 Runs builder.main's normal flow (extract, self-test against our local bank through the tunnel, final export) as
     builder.main <case_folder> --openapi <found> --slot final-<folder name> --mock-url <mock_url>
+(with no OpenAPI document: `--openapi-fallback` in place of `--openapi <found>`)
 Exit codes are builder.main's (0 exported, 1 final step failed, 2 no spec / no OpenAPI / bad arguments).
 
 Plain python3: when the dependencies (claude_agent_sdk, jsonschema) are not importable, this script re-execs itself
@@ -90,11 +94,15 @@ def main_argv(argv):
         print("builder/build.py: %s" % e, file=sys.stderr)
         raise SystemExit(2)
     try:
-        oa = M.resolve_openapi([str(folder)], None)
+        oa_args = ["--openapi", str(Path(M.resolve_openapi([str(folder)], None)).resolve())]
     except M.OpenapiNotFound as e:
-        print("builder/build.py: %s" % e, file=sys.stderr)
-        raise SystemExit(2)
-    return [str(folder), "--openapi", str(Path(oa).resolve()), "--slot", slot_for(folder), "--mock-url", mock]
+        if not e.none:
+            print("builder/build.py: %s" % e, file=sys.stderr)
+            raise SystemExit(2)
+        print("builder/build.py: WARNING %s; the service contract is not machine-readable, falling back to the kit's "
+              "tools/openapi.json for the tool shapes only (the workflow calls %s)" % (e, mock), file=sys.stderr)
+        oa_args = ["--openapi-fallback"]
+    return [str(folder), *oa_args, "--slot", slot_for(folder), "--mock-url", mock]
 
 
 def run(argv):
