@@ -52,7 +52,7 @@ CHECK_DAY = ('A day the customer names themselves ("the 26th", "twenty-sixth", "
              '(a corrected day replaces the earlier one; join only a cut-off phrase with its rest: "Monday the." + "26th."). Never judge a date yourself: say what the result says, use its date in create_promise. '
              'Their own date, even after a "no", is never a refusal. A yes to a date you proposed needs no check: go to the read-back.')
 DATE_ONLY = ('A date with no amount: the amount is the one of your current attempt (the full amount, or the floor once it is on the table). '
-             'Propose that amount with the date as a yes/no question; never ask them to name an amount.')
+             'Never offer it again: read it back with their date once, as the confirmation of step 4; never ask them to name an amount.')
 MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?", "how much?"): "That is the <minimum payment / amount> I '
              'mentioned. Can you pay it <date of that offer>?": no figure, no new date (keep that date unless they refused it), never a new '
              'offer, never %s again. Never restate a figure already offered.')
@@ -292,7 +292,7 @@ def product_facts(p):
             txt = ('propose the full amount ' + fmt(past_due) + ' ' + when + '. If the customer already said the full amount is too much, ' +
                    'the lower amount ' + fmt(floor) + ' is already on the table: propose only the date for that amount, without saying the figure again.')
         prev = a['amount']
-        attempts.append(dict(date=d, text='Attempt ' + str(i + 1) + ': ' + txt))
+        attempts.append(dict(date=d, amount=str(a['amount']), text='Attempt ' + str(i + 1) + ': ' + txt))
     n = len(attempts)
     plan = '\n'.join(a['text'] for a in attempts)
     plan += ('\nThis customer is in the ' + str(band['name']).upper() + ' band: ' + NUMS.get(str(n), str(n)) +
@@ -385,8 +385,10 @@ try:
     vars['deadline_iso'] = f['deadline'].isoformat()
     for i, a in enumerate(f['attempts']):
         vars['attempt' + str(i + 1) + '_text'] = speak(a['date'])
-    # A12 fix 3: the dates the agent itself proposes (plan attempts); check_date adds the dates it tells it to offer
+    # A12 fix 3/4: the plan attempts' dates and amount kinds, in order; check_date counts one as proposed only once the
+    # model says it has reached that attempt, and adds the dates its own results tell the model to offer
     vars['offer_dates'] = ','.join(a['date'].isoformat() for a in f['attempts'])
+    vars['offer_amounts'] = ','.join(a['amount'] for a in f['attempts'])
     vars['attempt_plan'] = f['plan']
     vars['allowed_dates_text'] = ', '.join(x.isoformat() for x in f['allowed'])
     vars['calendar_text'] = calendar_text(f['deadline'])
@@ -910,9 +912,13 @@ try:
     said = _cd_arg(b, 'said')
     iso = _cd_arg(b, 'date')[:10]
     dl = datetime.date.fromisoformat(str(vars.get('deadline_iso') or '')[:10])
-    # the agent's own proposals: plan attempts, the deadline, dates an earlier result told it to offer (A12 fix 3)
-    offered = set(x for x in (str(vars.get('offer_dates') or '') + ',' + str(vars.get('cd_offered') or '')).split(',') if x)
-    offered.add(dl.isoformat())
+    # A12 fix 4: only dates the agent has really proposed count as offers: the plan attempts it says it has reached
+    # (attempt), and the dates an earlier result told it to offer. A date the customer names first is a new date.
+    pd = [x for x in str(vars.get('offer_dates') or '').split(',') if x]
+    pk = str(vars.get('offer_amounts') or '').split(',')
+    m = re.match(r'\s*(\d+)', _cd_arg(b, 'attempt'))
+    n = min(int(m.group(1)), len(pd)) if m else 0
+    offered = set(pd[:n]) | set(x for x in str(vars.get('cd_offered') or '').split(',') if x)
     prefer = []
     for x in offered:
         try:
@@ -927,7 +933,20 @@ try:
             d = None
     off = None
     cur = ', as a yes/no question, for the amount of your current attempt (never say a figure the customer already heard)'
-    readback = 'read back the product, the amount and the date once and ask ' + repr(CONFIRM).replace("'", '"')
+
+    def _amt(i):
+        k = pk[i] if 0 <= i < len(pk) else 'current'
+        full = str(vars.get('past_due_text') or 'the full amount')
+        low = str(vars.get('floor_text') or 'the floor')
+        if k == 'full':
+            return full
+        if k == 'floor':
+            return low
+        return full + ' (or ' + low + ' if the customer already said the full amount is too much)'
+
+    def _rb(i, d):
+        return ('As a confirmation, read back once the product and ' + _amt(i) + ' on ' + say_date(d) +
+                ' (an amount the customer named and you may accept instead, if they named one) and ask ' + repr(CONFIRM).replace("'", '"'))
     never = ' Their own date is never a refusal.'
     if d is None:
         kind = 'vague' if why == 'vague' else 'no_day'
@@ -939,11 +958,12 @@ try:
     else:
         kind, off, bad, todo = _cd_judge(d, dl)
         if kind == 'ok' and d.isoformat() in offered:
+            i = max([j for j in range(n) if pd[j] == d.isoformat()] or [n - 1])
             msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. The customer accepted your offer: '
-                   'do not propose it again. As a confirmation, ' + readback + ', then record (create_promise date: ' + d.isoformat() + ').')
+                   'do not propose it again. ' + _rb(i, d) + ', then record (create_promise date: ' + d.isoformat() + ').')
         elif kind == 'ok':
-            msg = ('OK: ' + say_date(d) + ' can be accepted. If an amount is already agreed, ' + readback + '. If not, propose this date' +
-                   cur + '. create_promise date: ' + d.isoformat() + '.')
+            msg = ('NEW DATE: ' + say_date(d) + ' can be accepted. You have not offered it: do not offer it now. ' + _rb(max(n, 1) - 1, d) +
+                   '. This is not a question about paying and not a new offer. After a yes, record (create_promise date: ' + d.isoformat() + ').')
         elif kind == 'past':
             msg = 'IN THE PAST: ' + bad + '. Say so and ' + todo + '.'
         else:
@@ -2058,7 +2078,9 @@ HOW TO GET A PROMISE
                      "description": "The customer's latest words for the day, e.g. \"Monday the twenty-sixth\"; a cut-off phrase joined with its rest (\"Monday the.\" + \"26th.\")."},
             "date": {"type": "string", "default": "{{cdx_date}}",
                      "description": "The same day as YYYY-MM-DD if you know it; used only when the words name no day."},
-        }, ["said"], path="get_account",
+            "attempt": {"type": "string", "default": "{{cdx_attempt}}",
+                        "description": "The number of the last plan attempt you have already said to the customer: 0 before your first offer with a date, 1 after attempt 1, and so on."},
+        }, ["said", "attempt"], path="get_account",
             description=("Check a payment day the customer names. CALL it before you answer any day they name (any form, also in pieces "
                          "or words); say what what_to_do_next says. It records nothing."),
             pre=self.date_rules() + CHECK_PRE, post="TOOL = %r\n" % CHECK_TOOL + CHECK_POST)

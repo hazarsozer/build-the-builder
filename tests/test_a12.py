@@ -33,9 +33,10 @@ def account(now, product=LOAN, spec=A):
     return w, v
 
 
-def check(w, v, said, date=None):
+def check(w, v, said, date=None, attempt=None):
     t = _tool(w, "check_date")
-    body = {"customer_id": "c1", "said": said, "date": date if date is not None else "{{cdx_date}}"}
+    body = {"customer_id": "c1", "said": said, "date": date if date is not None else "{{cdx_date}}",
+            "attempt": attempt if attempt is not None else "{{cdx_attempt}}"}
     exec(t["pre_process_code"], {"vars": v, "config": {"body": body}})
     r = {"status": "success", "header": {"x": 1}, "data": {"products": []}}
     exec(t["post_process_code"], {"vars": v, "result": r})
@@ -301,32 +302,34 @@ def test_fix2_retry_reuses_only_a_date_the_guard_accepted():
 def test_fix3_pub06_accepting_the_offered_date_is_confirmed_not_offered_again():
     """PUB-06 (regate-a12-A): "I can do that on Friday" after the offer of Friday 16 Oct must not bring a second offer."""
     w, v = account("2026-10-14T11:00")
-    assert v["offer_dates"] == "2026-10-16"
+    assert v["offer_dates"] == "2026-10-16" and v["offer_amounts"] == "current"
     for said in ("I can do that on Friday.", "Friday", "the 16th"):
-        d = check(w, v, said)
+        d = check(w, v, said, attempt="1")
         m = d["what_to_do_next"]
         assert d["verdict"] == "ok" and d["date"] == "2026-10-16", said
         assert m.startswith("ACCEPTED OFFER: Friday 16 October 2026 is a date you proposed")
         assert "The customer accepted your offer: do not propose it again." in m
-        assert 'read back the product, the amount and the date once and ask "Do you confirm?", then record' in m
+        assert ("As a confirmation, read back once the product and 540.00 (or 180.00 if the customer already said the full amount is "
+                "too much) on Friday 16 October 2026") in m
+        assert m.endswith('ask "Do you confirm?", then record (create_promise date: 2026-10-16).')
         assert "propose this date" not in m and "current attempt" not in m
 
 
-def test_fix3_dates_from_a_result_and_the_deadline_count_as_offers():
+def test_fix3_dates_from_a_result_count_as_offers():
     w, v = account("2026-10-14T11:00")
-    check(w, v, "Monday the twenty-sixth")                     # result: offer Tuesday 27 October
+    check(w, v, "Monday the twenty-sixth", attempt="1")        # result: offer Tuesday 27 October
     assert v["cd_offered"] == "2026-10-27"
-    assert check(w, v, "Tuesday is fine")["what_to_do_next"].startswith("ACCEPTED OFFER: Tuesday 27 October 2026")
-    assert check(w, v, "the second of November")["what_to_do_next"].startswith("ACCEPTED OFFER: Monday 2 November 2026")
+    assert check(w, v, "Tuesday is fine", attempt="1")["what_to_do_next"].startswith("ACCEPTED OFFER: Tuesday 27 October 2026")
+    check(w, v, "the 20th of November", attempt="1")            # result: offer the deadline
+    assert check(w, v, "the second of November", attempt="1")["what_to_do_next"].startswith("ACCEPTED OFFER: Monday 2 November 2026")
 
 
 def test_fix3_a_new_date_named_by_the_customer():
     w, v = account("2026-10-14T11:00")
-    m = check(w, v, "the 23rd")["what_to_do_next"]
-    assert m.startswith("OK: Friday 23 October 2026 can be accepted.")
-    assert 'If an amount is already agreed, read back the product, the amount and the date once and ask "Do you confirm?".' in m
-    assert ("If not, propose this date, as a yes/no question, for the amount of your current attempt "
-            "(never say a figure the customer already heard)") in m
+    m = check(w, v, "the 23rd", attempt="1")["what_to_do_next"]
+    assert m.startswith("NEW DATE: Friday 23 October 2026 can be accepted. You have not offered it: do not offer it now. ")
+    assert "read back once the product and 540.00 (or 180.00 if" in m and "on Friday 23 October 2026" in m
+    assert "This is not a question about paying and not a new offer." in m
 
 
 @pytest.mark.parametrize("now", NOWS)
@@ -334,7 +337,7 @@ def test_fix3_no_verdict_restates_an_amount_already_heard(now):
     w, v = account(now)
     for said in ("Friday", "the 23rd", "Monday the twenty-sixth", "the 20th of November", "tomorrow", "the 31st", "today"):
         m = check(w, v, said)["what_to_do_next"]
-        assert "with the amount" not in m and "Can you pay" not in m, (now, said, m)
+        assert "with the amount" not in m and "Can you pay" not in m and "propose this date" not in m, (now, said, m)
         if "current attempt" in m:
             assert "never say a figure the customer already heard" in m, (now, said, m)
 
@@ -388,3 +391,91 @@ def test_multi_product_is_unchanged():
     assert [x["function"]["name"] for x in w["nodes"]["negotiate"]["tools"]] == ["set_product"]
     assert "{{calendar_text}}" in w["nodes"]["negotiate"]["task_message"]
     assert lint(w, B) == []
+
+
+# ---- fix round 4: ACCEPTED OFFER only for a date the agent has really proposed; otherwise a NEW DATE read-back
+LATE = dict(LOAN, days_late=20)
+
+
+def _plan(now, spec=A):
+    w, v = account(now, LATE, spec)
+    pd, pk = v["offer_dates"].split(","), v["offer_amounts"].split(",")
+    assert pk == ["current", "floor"] and pd[1] == v["deadline_iso"]
+    return w, v, pd
+
+
+def _iso_said(iso):
+    import datetime
+    d = datetime.date.fromisoformat(iso)
+    return "the %d of %s" % (d.day, ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+                                      "October", "November", "December"][d.month - 1])
+
+
+@pytest.mark.parametrize("now", NOWS)
+def test_fix4_plan_dates_count_only_once_the_attempt_was_said(now):
+    """The deadline (attempt 2 of the late band) and attempt 1's date, named by the customer before the agent offered
+    them, are NEW DATEs with the current attempt's amount; once the attempt was said, ACCEPTED OFFER with its amount."""
+    w, v, pd = _plan(now)
+    for k, iso in enumerate(pd):
+        for att in ([None, "", "0", "{{cdx_attempt}}", "x"] + (["1"] if k == 1 else [])):
+            d = check(w, v, _iso_said(iso), attempt=att)
+            m = d["what_to_do_next"]
+            if d["verdict"] != "ok":
+                continue                                       # e.g. a plan date that is today after hours never occurs here
+            assert d["date"] == iso, (now, iso, att)
+            assert m.startswith("NEW DATE: "), (now, iso, att, m)
+            assert "accepted your offer" not in m and "Can you pay" not in m and "propose this date" not in m
+            # amount of the current attempt: attempt 1 (current) before attempt 2 was said
+            assert "read back once the product and 540.00 (or 180.00 if the customer already said" in m, (now, att, m)
+        v.pop("cd_offered", None)
+    # attempt 1 said: its date is accepted with attempt 1's amount
+    m = check(w, v, _iso_said(pd[0]), attempt="1")["what_to_do_next"]
+    assert m.startswith("ACCEPTED OFFER: "), (now, m)
+    assert "read back once the product and 540.00 (or 180.00" in m
+    # attempt 2 said: the deadline is accepted with the floor; a figure-free offer is never asked for
+    m = check(w, v, _iso_said(pd[1]), attempt="2")["what_to_do_next"]
+    assert m.startswith("ACCEPTED OFFER: "), (now, m)
+    assert "read back once the product and 180.00 on " in m and "540.00" not in m
+    # a new date after attempt 2 reads back attempt 2's amount (the floor)
+    m = check(w, v, "today", attempt="2")["what_to_do_next"]
+    if m.startswith("NEW DATE"):
+        assert "read back once the product and 180.00 on " in m and "540.00" not in m
+
+
+@pytest.mark.parametrize("now", NOWS)
+def test_fix4_attempt_one_date_named_first_is_a_new_date(now):
+    """The issue: on attempt 1 (full amount, early band) the customer names the plan date or the deadline before
+    the agent said it: never "The customer accepted your offer"; the read-back names the current attempt's amount."""
+    w, v = account(now)
+    for iso in (v["offer_dates"].split(",")[0], v["deadline_iso"]):
+        d = check(w, v, _iso_said(iso), attempt="0")
+        if d["verdict"] != "ok":
+            continue
+        m = d["what_to_do_next"]
+        assert m.startswith("NEW DATE: ") and "accepted your offer" not in m, (now, iso, m)
+        assert "540.00" in m and m.count(iso) == 1 and m.endswith("record (create_promise date: " + iso + ").")
+    # the deadline is never an offer by itself, even after attempt 1 was said (the early band has one attempt)
+    if v["deadline_iso"] not in v["offer_dates"]:
+        assert check(w, v, _iso_said(v["deadline_iso"]), attempt="1")["what_to_do_next"].startswith("NEW DATE")
+
+
+def test_fix4_attempt_out_of_range_is_clamped():
+    w, v, pd = _plan("2026-10-14T11:00")
+    assert pd[0] != pd[1]
+    assert check(w, v, _iso_said(pd[1]), attempt="7")["what_to_do_next"].startswith("ACCEPTED OFFER")
+    for att in ("-1", "two", "1", " 1 "):                      # unreadable or too low: the deadline is not yet offered
+        assert check(w, v, _iso_said(pd[1]), attempt=att)["what_to_do_next"].startswith("NEW DATE"), att
+
+
+def test_fix4_check_date_asks_for_the_attempt_and_date_only_reads_back():
+    w = C(A, OA)
+    body = _tool(w, "check_date")["function"]["parameters"]["properties"]["body"]
+    assert body["properties"]["attempt"]["default"] == "{{cdx_attempt}}"
+    assert "attempt" in body.get("required", ["attempt"])
+    pre = _tool(w, "check_date")["pre_process_code"]
+    assert "{{" not in pre and "}}" not in pre
+    t = w["nodes"]["negotiate"]["task_message"]
+    assert "Never offer it again: read it back with their date once, as the confirmation of step 4" in t
+    assert "Propose that amount with the date" not in t
+    assert len(t) <= 4800
+    assert lint(w, A) == []
