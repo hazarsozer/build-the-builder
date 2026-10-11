@@ -244,7 +244,17 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
   - **No secrets, tunnel URLs or home paths** in the workflow JSON. One home path is in the trace's markdown.
   - The cleanup is queued as A19/A20, so reviewers who open the workflow can read it.
 - **Flag for you:** the agent's platform defaults (`agent_config`) set Turkish STT/TTS and the "leyla" voice. The kit's own example agent gets the same defaults. Our English opening speaks first and every simulation passes, so dev-2d left it alone. **Your call** whether to change it before submission.
-- [ ] Customer styles at 3 runs (5 styles × A and B on `gate-green-3`): running.
+- [ ] Customer styles at 3 runs, on `gate-green-3`, partial:
+
+  | Style | Brief A | Brief B |
+  |---|---|---|
+  | pieces | **10/10** (was 3/10, then 7/10) | 2/3 |
+  | corrects | **10/10** | **3/3** |
+  | talkative | **6/10**, a new weak spot | running |
+  | asks_back | pending | pending |
+  | in_words | pending | pending |
+
+- [x] `candidate-2` = gate-green-3 + A19/A20 (workflow readability and wording cleanup) + A17 (sme fixes): clean merge, 939 tests. A18 (double sympathy, restructuring routing, "guarantee" wording) passed its review and joins next. Then the gate and the bench re-run.
 - [ ] A18 (double sympathy, multi-product restructuring routing, the "guarantee" wording) and A17 (sme): in progress. The bench re-runs after these.
 - [ ] Different "today" dates, variance at 5 runs
 - [ ] Fallback live check (for the 16:00 decision)
