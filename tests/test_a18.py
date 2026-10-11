@@ -167,7 +167,7 @@ def test_mrw03_recorded_promise_then_restructuring_transfers_without_notes():
     assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_restructuring"
     # anything else: the recorded sentence is not repeated by the close, the notes are then written
     assert _route(ar, dict(v, ar_answer="nothing")) == "after_record_done"
-    assert _route(ar, dict(v, ar_answer="question")) is None  # stays: answers, asks again
+    assert _route(ar, dict(v, ar_answer="other")) is None  # stays: answers, asks again (no close on an unread reply)
     vv = dict(v)
     exec(_code(n["after_record_done"]), {"vars": vv})
     assert vv["mp_said"] == "" and _route(n["after_record_done"], vv) == "note_1"
@@ -257,8 +257,71 @@ def test_self_test_cases_check_never_say():
     assert _ctx(_stw(None)).never_say() == [] and _ctx(A).never_say() == []
 
 
-def test_after_record_only_with_a_transfer_event():
+# ---- fix round 1
+
+TRANSFERISH = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
+
+
+def test_after_record_only_with_a_transfer_ask_once_or_support_event():
     s = copy.deepcopy(MRW)
-    s["events"] = [e for e in s["events"] if e["action"] != "transfer"]
+    s["events"] = [e for e in s["events"] if e["action"] not in TRANSFERISH]
     s["outcomes"] = [o for o in s["outcomes"] if o["event"] in {e["id"] for e in s["events"]}]
     assert "after_record" not in C(s, MRW_OA, base_url=URL)["nodes"]
+    for keep in TRANSFERISH:
+        s = copy.deepcopy(MRW)
+        s["events"] = [e for e in s["events"] if e["action"] not in TRANSFERISH or e["action"] == keep]
+        s["outcomes"] = [o for o in s["outcomes"] if o["event"] in {e["id"] for e in s["events"]}]
+        assert "after_record" in C(s, MRW_OA, base_url=URL)["nodes"], keep
+
+
+def test_human_request_after_recording_asks_once_then_transfers_without_notes():
+    w, v = _mrw03_after_wrap()
+    n = w["nodes"]
+    ar = n["after_record"]
+    assert {"human_first_request", "human_insists", "hardship"} <= set(ar["extraction_schema"][0]["enum_values"])
+    ask = _route(ar, dict(v, ar_answer="human_first_request"))
+    assert ask == "human_ask_after_record"
+    vv = dict(v)
+    exec(_code(n[ask]), {"vars": vv})
+    hold = _route(n[ask], vv)
+    assert hold == "human_hold_after_record" and vv["human_asked"] == "yes"
+    t = _route(n[hold], dict(vv, human_reply="insists"))
+    assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_human"
+    # accepts help: back to after_record (the recorded sentence is not spoken again)
+    back = _route(n[hold], dict(vv, human_reply="other"))
+    assert back == "human_back_after_record" and _route(n[back], vv) == "after_record"
+    assert ar["on_enter_first_entry_only"] is True
+    # insists straight away after being asked once: transfer
+    assert _route(ar, dict(vv, ar_answer="human_insists")).startswith("transfer_")
+    assert "note_1" not in (t, back)
+
+
+def test_support_event_after_recording_offers_then_transfers_or_ends_as_nothing_else():
+    w, v = _mrw03_after_wrap()
+    n = w["nodes"]
+    offer = _route(n["after_record"], dict(v, ar_answer="hardship"))
+    assert offer == "hardship_offer_after_record"
+    vv = dict(v)
+    exec(_code(n[offer]), {"vars": vv})
+    assert "mp_phase" not in _code(n[offer])  # the negotiation is not reopened
+    hold = _route(n[offer], vv)
+    assert hold == "hardship_hold_after_record"
+    t = _route(n[hold], dict(vv, hardship_reply="accepted"))
+    assert t.startswith("transfer_") and n[t]["passthrough_default_transition"] == "close_hardship_transfer"
+    for r in ("declined", "names_payment", "other"):
+        assert _route(n[hold], dict(vv, hardship_reply=r)) == "after_record_done", r
+    assert n[hold]["max_turn_transition"] == "after_record_done"
+    # the negotiate offer is untouched
+    assert n["hardship_hold"]["max_turn_transition"] == "wrap_hardship"
+
+
+def test_question_offer_sentence_ends_the_turn():
+    """The cannot-offer step comes before a fixed sentence that is the offer question."""
+    t = _hold(OUT, OUT_OA)
+    steps = [l for l in t.splitlines() if l[:2] in ("1.", "2.", "3.")]
+    assert steps[0].startswith("1. Only if they asked for") and steps[1].startswith('2. Say "I am sorry to hear that. Would you like')
+    t = _hold(MRW, MRW_OA)  # no question in the sentence: say, cannot-offer, offer
+    steps = [l for l in t.splitlines() if l[:2] in ("1.", "2.", "3.")]
+    assert steps[0].startswith('1. Say "I am sorry') and steps[2].startswith("3. Offer to connect")
+
+

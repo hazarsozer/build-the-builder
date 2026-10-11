@@ -186,9 +186,14 @@ def entry_states(w, x):
         out.append(u1)
     if x in reach(w, "prepare_account", without={"readback"}):
         out.append(u2)
-    if "readback" in n and x in reach(w, "readback") - reach(w, "prepare_account", without={"readback"}):
+    after_only = (reach(w, "after_record") - reach(w, "readback", without={"after_record"})) if "after_record" in n else set()
+    if "readback" in n and x in reach(w, "readback") - reach(w, "prepare_account", without={"readback"}) - after_only:
         # several products: the read-back is entered only after the set tool wrote it
         out.append(dict(u2, mp_phase="readback", mp_readback="Product 1: 420.00 on 16 October. Do you confirm?"))
+    if "after_record" in n and x in reach(w, "after_record") - reach(w, "prepare_account", without={"after_record"}):
+        # A18: after_record is entered only after wrap_recorded wrote the recorded sentence (mp_recorded == yes)
+        out.append(dict(u2, mp_phase="confirmed", mp_recorded="yes", mp_said="Your promise for your credit card is recorded.",
+                        mp_close="close_promise_recorded"))
     return out
 
 

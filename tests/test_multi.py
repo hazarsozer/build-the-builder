@@ -829,7 +829,7 @@ def test_notes_in_get_account_order():
 def test_multi_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
     # A9 raised it from 4600 for the per-refusal set_product call and the day-number and cut-off rules.
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 5500
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 5800  # A18 fix round 1 ruling: room for never_say
 
 
 def test_spec_b_hardship_conflict_matches_code():
@@ -1144,7 +1144,7 @@ def test_a14_hooks_read_the_negotiate_turn_counter_and_the_prompt_says_so():
     task = w["nodes"]["negotiate"]["task_message"]
     assert ("Only the product the last result (or step 1) told you to offer counts; report a no about another product too: "
             "it uses no attempt.") in task
-    assert len(task) <= 5500
+    assert len(task) <= 5800
 
 
 def test_a14_post_hook_uses_the_turn_its_pre_hook_read():
