@@ -3,7 +3,7 @@
     export FREYA_API_KEY=fak_...            # your workspace key
     export FREYA_API_URL=https://staging-app.freyavoice.ai   # default
 """
-import json, os, re, socket, ssl, threading, time, urllib.request, urllib.error, urllib.parse
+import json, os, re, socket, ssl, sys, threading, time, urllib.request, urllib.error, urllib.parse
 
 URL = os.environ.get("FREYA_API_URL", "https://staging-app.freyavoice.ai")
 # Cloudflare rejects requests without a browser-like User-Agent (error 1010).
@@ -97,7 +97,7 @@ def api(method, path, body=None, *, retry=True, **params):
             if deadline is not None and _now() + RETRY_S[n] >= deadline: raise
             dup = method == "POST" and path == "/api/v2/workflow" and params.get("dryRun") != "true" and not _unhandled(e)
             print(f"freya: {method} {path} -> {_status(e)}; retry {n + 1}/{len(RETRY_S)} in {RETRY_S[n]} s"
-                  + ("; the failed create may have made a duplicate workflow" if dup else ""), flush=True)
+                  + ("; the failed create may have made a duplicate workflow" if dup else ""), file=sys.stderr, flush=True)
             _wait(RETRY_S[n])
 
 _ws = None
@@ -216,7 +216,7 @@ def _poll_api(sim_id, t0, t_end, method, path, **params):
             if not _transient(e): raise
             wait = BACKOFF_S[min(n, len(BACKOFF_S) - 1)]; n += 1
             if _now() + wait >= t_end: raise SimulationTimeout(sim_id, _now() - t0) from e
-            print(f"transient error on {path} ({e}); retrying in {wait} s", flush=True); time.sleep(wait)
+            print(f"transient error on {path} ({e}); retrying in {wait} s", file=sys.stderr, flush=True); time.sleep(wait)
 
 def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concurrency=int(os.environ.get("FREYA_SIM_CONCURRENCY", "5")), on_created=None, on_busy=None, deadline_s=SIM_DEADLINE_S):
     """Start a text simulation, wait for it, return (simulation_id, iteration_id).
@@ -239,7 +239,7 @@ def run_simulation(agent_id, name, variables_by_persona, max_seconds=420, concur
         except RuntimeError as e:
             if "concurrent simulations" not in str(e): raise
             if on_busy: on_busy(waited)
-            print("another simulation is running in this workspace, waiting 30 s", flush=True); time.sleep(30); waited += 30
+            print("another simulation is running in this workspace, waiting 30 s", file=sys.stderr, flush=True); time.sleep(30); waited += 30
     sim_id = (sim.get("simulation") or sim)["id"]
     if on_created: on_created(sim_id)
     t0 = _now(); t_end = t0 + deadline_s
