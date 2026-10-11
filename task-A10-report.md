@@ -174,3 +174,82 @@ The dumps are in the scratchpad: `prompts-base/` is c034bf9 and `prompts-new/` i
 4. **Backup close tools (paid/dispute, single product):** a model false positive would close the call early. The prompt limits the call to the trigger text. Multi-product calls are unchanged.
 5. **spec-a negotiate is at 4799/4800** of our own budget. The next rule added there needs a trim or a budget ruling.
 6. **The hold prompt includes the event's instruction verbatim.** For spec-a that contains "record the promise". This is not quoted text, so lint does not flag it, but the model could echo "record" before a promise. The negotiate prompt had the same sentence before this change.
+
+---
+
+# Fix round 1
+
+Code commit: 2d91259 (plus this report section).
+
+## Item 2 first: the probe (one chat-API run on slot probe-hooks, workflow version 6)
+- **Script:** `scratchpad/probe_a10.py`.
+- **Workflow:** a stub `main` node (tts ask, extracts `neg_event` hardship/continue) leads to the **compiled** `hardship_offer` and `hardship_hold` nodes of spec-a. The hold node's targets are replaced by labelled end_call nodes.
+- **No bank:** the hold step calls no tools, so no practice customer was seeded.
+- **Secrets:** read inside Python, never printed. No simulation was run.
+- **Call 87371815 (question path):**
+  ```
+  U: I lost my job last month and cannot pay anything.   neg_event=hardship -> hardship_offer -> hardship_hold
+     route_evaluated hardship_offer->hardship_hold  {hardship_hold.total_turns: 0}
+  A: I am very sorry to hear that. I cannot offer a discount or waiver. Would you like me to connect you with our support team?
+  U: What would the support team do for me?            hardship_reply=question  {hardship_hold.total_turns: 1}
+     route_evaluated hardship_hold: No transition matched
+  A: They can discuss available options to help you manage your account. Would you like to be connected?
+  U: No, thank you.                                     node_enter end_cap "max_node_turns exceeded" (no extraction, no route evaluated)
+  ```
+- **Call da4da80d (decline path, the PUB-05 sentence):**
+  ```
+  U: I don't want to be transferred. Is there anything else you can do?   hardship_reply=declined {total_turns: 1}
+     route_evaluated hardship_hold -> end_hardship (matched)
+  ```
+- **Proven:**
+  1. The on_enter `llm` line is not counted. `hardship_hold.total_turns` is 0 until the customer's first reply and 1 at routing after it. So no call closes before the customer replies. `SUPPORT_TURNS_SEEN = 0` (compile.py) encodes this.
+  2. The offer is spoken on entry.
+  3. **New finding:** `max_node_turns` fires on the user turn that *reaches* the cap, **before** extraction and routing. With cap 2, a "yes" on the second reply would never transfer.
+- **Fix from the probe:** the hold node's `max_node_turns` is now **3**. The second reply routes normally (yes transfers, a named payment returns), and any other second reply closes through the `total_turns > 1` route. The cap is now a safety net only.
+- **Not re-probed:** the cap-3 change follows directly from the observed semantics.
+
+## Item 1: a question is not a decline
+The hold reply enum is now `pending, accepted, names_payment, declined, question, <human-event>_request, other` (compile.py `support_nodes`). Routes:
+
+| Reply | Route |
+|---|---|
+| accepted | transfer |
+| names_payment | `<id>_back` → negotiate |
+| `human_request` | the event's own ask-once step (`human_ask_negotiate` → `human_hold_negotiate`, rule 42) |
+| declined or other | else-close |
+| pending (unreadable) once `total_turns > 0` | else-close |
+| question on the first reply | no route: the hold model answers in one sentence and asks once more |
+| any second reply that is not a yes or a named payment (`total_turns > 1`) | else-close |
+
+The hold prompt adds two things:
+- "If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do not have that information), then ask once more whether they want to be connected. Do this only once."
+- The spec's say rules for any/negotiate, e.g. `Rule (asks if this call is a scam): say "You can verify this call by phoning ..."` (rules 43/44).
+
+Tests:
+- `test_fix1_question_is_answered_and_offer_asked_again_then_second_non_yes_closes`: question → stays. The second reply is then checked: accepted → transfer, names_payment → negotiate, question / pending / declined → close_hardship. Cap is 3.
+- `test_fix1_human_request_after_the_offer_keeps_its_ask_once_step`.
+- The earlier tests now include `declined`.
+
+## Item 3: counter-offers after the offer
+The latched rule is now: "It was made: make no offer or persuasion of your own. Only a date or an amount the customer names themselves: check it under the rules (a date after the deadline gets the deadline, an amount below the floor gets the floor, once) and read it back. Anything else ends the call automatically."
+Test: `test_fix1_post_offer_rule_allows_the_deadline_and_floor_counter_offers`.
+
+## Item 4: wording and one hardship line
+- The hold prompt quotes the instruction through `_Compiler.neutral`: "record the promise" becomes "take their payment date and amount" (test `test_fix1_neutral_wording_of_the_instruction`; the hold task has no "record").
+- `extra()` drops a negotiate extra rule that shares at least 3 content words with a support event's trigger. In spec-a/b that is "Hardship (illness, ...) comes before persuasion ... record the promise." The negotiate prompt now has exactly one such line: `If the customer mentions illness, ...: the offer of the support team is made automatically; never make it yourself and make no persuasion attempt. Offer status: {{hardship_rule}}`.
+- `with_article` keeps an existing article ("a discount" no longer becomes "an a discount"). This also fixes the dress-A "If asked for" line.
+- `bare_trigger` strips a leading "The customer" from triggers.
+- The hold's banned-offer step now starts "Only if they asked for".
+
+## Item 5: budget
+spec-a negotiate is **4572** chars (was 4799; budget 4800, unchanged). spec-b is 5129 and dress-A 4621. Test: `test_negotiate_prompt_no_longer_asks_the_model_to_offer` asserts one hardship line and ≤ 4800.
+
+## Runs
+- `uv run pytest -q tests/test_a10.py` → `18 passed in 0.17s`
+- `uv run pytest -q tests/test_compile.py` → `46 passed, 1 skipped in 0.16s`
+- `uv run pytest -q` → `588 passed, 6 skipped in 19.96s`
+- `lint()` returns `[]` for spec-a and spec-b.
+
+## Remaining concerns
+- **Unprompted banned-offer sentence:** in the probe, the hold model said "I cannot offer a discount or waiver" although the stub customer had not asked for one. The step now says "Only if they asked". A literal judge could read an unprompted mention as noise, but it is not an offer.
+- **The probe slot** probe-hooks now holds the A10 probe workflow (version 6).
