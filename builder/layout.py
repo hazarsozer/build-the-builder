@@ -129,56 +129,35 @@ def call_variable_names(spec):
     return list(dict.fromkeys(names))
 
 
-def _sample_now(spec):
-    """A sample "now" from the spec's own worked examples (their `today`), at a mid-morning time."""
-    for ex in spec.get("examples") or []:
-        t = ex.get("today") if isinstance(ex, dict) else None
-        if isinstance(t, str) and re.match(r"^\d{4}-\d{2}-\d{2}$", t):
-            return t + "T10:00"
-    return None
-
-
-ORG_WORDS = {"company", "business", "firm", "employer", "organisation", "organization", "shop", "store", "bank"}
-
-
 def _words(name):
-    """A variable name's words: split on underscores, other non-word characters and camelCase ("lastName")."""
+    """A variable name's words: split on underscores, other non-word characters and camelCase ("customerId")."""
     return [w.lower() for w in re.split(r"[\W_]+|(?<=[a-z0-9])(?=[A-Z])", name) if w]
 
 
 def _sample(name, spec):
-    """Matched on whole words, so last_payment_date is not a surname and subtitle is not a title."""
+    """customer_id -> c_test; the clock (now) -> no entry, so setup reads the real time; any other call variable -> "".
+    final-review-2 I5: a spoken sample ("Ms", a made-up name or company) would be read out on a call that omits the
+    variable, i.e. the wrong person's details; "" says nothing, as before A19."""
     low = name.lower()
     ws = _words(name)
-    has = set(ws)
-    named = "name" in has
-    if low == "now" or has & {"now", "datetime", "timestamp"}:
-        return _sample_now(spec)
+    if low == "now" or set(ws) & {"now", "datetime", "timestamp"}:
+        return None
     if (ws and ws[-1] == "id") or low == "id":
-        return low[:1] + "_test"   # customer_id -> c_test, as before
-    if has & {"title", "honorific", "salutation"}:
-        return "Ms"
-    if has & {"firstname", "givenname", "forename"} or (named and has & {"first", "given"}):
-        return "Dana"
-    if has & {"lastname", "surname", "familyname"} or (named and has & {"last", "family"}):
-        return "Reyes"
-    if named or any(w.endswith("name") for w in ws):
-        org = has & ORG_WORDS or any(w.endswith("name") and w[:-4] in ORG_WORDS for w in ws)   # company_name, companyname
-        return "Example Ltd" if org else "Alex Morgan"
-    return low.replace("_", " ").strip().title() or "X"
+        return low[:1] + "_test"   # customer_id -> c_test
+    return ""
 
 
 def sample_call_variables(spec, wf):
-    """test_variables for the dashboard: a sample for each call variable, so its "Call Agent" button works and the
-    "Variables that will not resolve" warning drops them.
+    """test_variables for the dashboard: customer_id gets c_test and every other call variable but the clock an empty
+    default, so a call that omits one never speaks a placeholder or an invented value. The dashboard still warns that
+    the clock will not resolve, and its "Call Agent" button has no name to say (I5 trade-off).
 
     Only call variables, never a model-filled tool parameter. Tool parameters such as `field`, `answer`, `cb_date`,
     `cb_time` have a `{{name}}` default that the model fills in on each tool call; a test_variable of the same name
     would be a set variable, and a set variable overrides the model's input (seen in earlier runs). The dashboard
     keeps warning about those placeholders; that warning is expected and harmless.
 
-    A call that passes a variable overrides its sample here, and every practice and graded case passes all of them,
-    so these values never reach a simulation."""
+    A call that passes a variable overrides its default here."""
     written = _written_names(wf)
     out = {}
     for name in call_variable_names(spec):

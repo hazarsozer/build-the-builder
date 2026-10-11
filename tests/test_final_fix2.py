@@ -263,6 +263,23 @@ def test_i4_check_date_uses_the_models_date_for_a_relative_phrase():
     assert d["date"] == "2026-10-21"
 
 
+# ---------------------------------------------------------------- I5: no invented call-variable samples
+
+def test_i5_test_variables_invent_nothing_and_leave_the_clock_real():
+    import datetime as dt
+    s = copy.deepcopy(A)
+    s["call_variables"] += ["company_name", "policy_number"]
+    w = C(s, OA)
+    tv = w["test_variables"]
+    assert tv == {"customer_id": "c_test", "first_name": "", "last_name": "", "title": "", "company_name": "",
+                  "policy_number": ""}
+    v = dict(tv)                       # a dashboard call: only the declared variables
+    exec(_code(w["nodes"]["setup"]), {"vars": v})
+    assert v["setup_state"] == "ok" and v["now_time"]
+    from builder.lib.dates import speak
+    assert v["today_text"] in (speak(dt.date.today()), speak(dt.datetime.now().date()))
+
+
 def test_i2_reference_specs_have_no_stage_variants():
     stages = ("_opening", "_identity", "_negotiate", "_third_party")
     for s in (A, B):
