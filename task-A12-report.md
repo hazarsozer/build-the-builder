@@ -319,3 +319,31 @@ Kept unchanged: offer verdicts (holiday, after the deadline, too late for today)
 1. **The model fills the attempt count.** If it under-counts, a real acceptance gets NEW DATE, which still reads back once with the amount, so the behaviour is the same. If it over-counts, an unsaid plan date gets ACCEPTED OFFER, which is the old false claim, but now it names the amount. No probe was run because the hook mechanics are unchanged (one more model-filled body field, like `said`). A gate run of PUB-06/07 should confirm that the model fills `attempt`.
 2. **A deadline the model proposes under the vague-period rule** (no tool told it) is not tracked. A later "the 2nd is fine" gets NEW DATE, which also reads back once.
 3. **Attempt kind "current"** cannot be resolved in code: the hook does not know whether the floor is on the table. The read-back therefore names both figures with the condition, and the model picks one.
+
+---
+
+# Fix round 5 (one amount per verdict)
+
+Commit a85aeb6, plus this report section.
+
+| # | Fix | Where |
+|---|---|---|
+| 1 | check_date has a new required field, `floor_offered`. It is model-filled through `{{cdx_floor_offered}}` and described as "yes if you have already offered {{floor_text}} in an earlier message". No `cdx_*` variable is set in code. The hook resolves a "current" attempt amount to one figure: the floor when the value is yes/y/true (any case, trailing punctuation ignored), otherwise the full amount, including when the value is unreadable or still the template. A "floor" attempt is always the floor and a "full" attempt always the full amount. No verdict carries two figures. | compile.py CHECK_PRE `fo`/`_amt`, check_tool |
+| 2 | ACCEPTED OFFER no longer says "The customer accepted your offer". It now reads "... is a date you proposed and it can be accepted. Do not propose it again. As a confirmation, read back once ...", so the attempt number only selects the amount. The `attempt` description now reads "The number of the last plan attempt you already said in an earlier message: ...". | CHECK_PRE, check_tool |
+
+## Tests
+
+- **tests/test_a12.py:**
+  - `test_fix5_no_verdict_contains_two_amounts`: 5 now-values × early/late band × attempt 0/1/2/template × floor_offered yes/no/garbage/template × 7 phrasings + each plan date. No verdict contains both 540.00 and 180.00.
+  - `test_fix5_floor_offered_picks_one_figure`, run for each of the 5 now-values. yes and "Yes." give 180.00, and no, garbage, "" and the template give 540.00. A floor attempt gives 180.00 whatever the field says.
+  - `test_fix5_no_cdx_variable_is_set_in_code`.
+  - The field and description assertions were added to the fix4 shape test. Fix-3 and fix-4 wording assertions were updated to the single figure.
+- **Runs:** `uv run pytest -q` → **713 passed, 6 skipped**. Lint is `[]` for spec-a and spec-b.
+
+## Compiled-prompt changes
+
+- **spec-a:** the negotiate task_message is unchanged at **4430 chars**. Only the check_date tool (new field and descriptions) and its pre-hook changed.
+
+## Concerns
+
+1. Both `attempt` and `floor_offered` are filled by the model and not live-tested. A wrong `floor_offered` makes the read-back name the other figure once; the customer can still say no to the confirmation. A gate run of PUB-06/07 should confirm that the model fills both fields.
