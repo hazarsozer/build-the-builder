@@ -49,6 +49,28 @@ def safe_opening(sentence, verbatim=False):
     return " ".join(out), need
 
 
+_REC_DET = re.compile(r"\b(a|an|the|your|any|each|every|this|that|these|those|its|their|our)\s+recorded\s+", re.I)
+_REC_HAVE = re.compile(r"\b(have|has|had)\s+(?:already\s+)?recorded\s+", re.I)
+_REC_PASSIVE = re.compile(r"\b(is|are|was|were|been|be|being)\s+(already\s+)?recorded\b", re.I)
+_REC_WORD = re.compile(r"\b([Rr])ecord(s|ed|ing)?\b")
+
+
+def safe_pre_success(text):
+    """Text spoken before a promise can be recorded, without record* words and with the same meaning (the honesty
+    check reads any "record*" before a successful create_promise literally). Returns (text, changed).
+    "A recorded promise cannot ..." -> "A promise cannot ...", "we have recorded your date" -> "we have your date",
+    "is recorded" -> "is noted", any other record* -> note*."""
+    if not text or not _RECORD.search(text):
+        return text or "", False
+    t = _REC_DET.sub(lambda m: m.group(1) + " ", text)
+    t = _REC_HAVE.sub(lambda m: m.group(1) + " ", t)
+    t = _REC_PASSIVE.sub(lambda m: m.group(1) + " " + (m.group(2) or "") + "noted", t)
+    t = _REC_WORD.sub(lambda m: ("N" if m.group(1) == "R" else "n") + "ote" + {"s": "s", "ed": "d", "ing": "ing"}.get(m.group(2) or "", ""), t)
+    # "noteing" -> "noting"
+    t = re.sub(r"\b([Nn])oteing\b", r"\1oting", t)
+    return re.sub(r"[ \t]{2,}", " ", t), t != text
+
+
 def never_say_words(spec):
     """spec.never_say: words or phrases the brief forbids in every sentence of the call."""
     w = spec.get("never_say") if isinstance(spec, dict) else None
