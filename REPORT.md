@@ -4,7 +4,7 @@ Written by dev-14 (the first orchestrator) for Hazar. It is kept up to date whil
 
 ## 1. The short version
 
-> **Latest (Sun ~07:00): `builder` @ 567eb9a, tag `gate-green-3`** (768 tests). On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. This tag adds:
+> **Latest (Sun ~07:45):** the safe version is still `gate-green-3`. The next candidate missed its gate: an early self-close in one case, plus platform and sandbox errors. Customer styles: corrects and pieces are good, talkative is weak (A 6/10), and the cause has been found. Earlier, **(~07:00): `builder` @ 567eb9a, tag `gate-green-3`** (768 tests). On the practice set, organisers' bank, 3 runs: Brief A 10/10, Brief B 3/3. This tag adds:
 > - A12: single-product dates in code
 > - A14: multi-product refusal counting
 > - A15: generalisation (outcome names taken from the spec, identity limits, an attempt date on a business day, events triggered by account data)
@@ -250,10 +250,15 @@ Each line gives what I decided, why, and what it costs if wrong. The full list i
   |---|---|---|
   | pieces | **10/10** (was 3/10, then 7/10) | 2/3 |
   | corrects | **10/10** | **3/3** |
-  | talkative | **6/10**, a new weak spot | running |
-  | asks_back | pending | pending |
+  | talkative | **6/10**, a new weak spot | 2/3 |
+  | asks_back | 9/10 | running |
   | in_words | pending | pending |
 
+- **Why styles fail** (from the diagnosis): 6 of 8 failures come from cut-off fragments and small talk eating the turn limit at a step (the identity decline, a negotiation attempt, the opening asks, the third-party cap, an endless "go on"). The fix is to stop counting those turns against the limit.
+- [ ] Gate on `candidate-2` (organisers' bank, 3 runs): **PUB-A 8/10, PUB-B 2/3. Below the bar, so not merged.**
+  - PUB-07: the judge platform returned no verdict once.
+  - PUB-03: the model called the global close_call itself, early.
+  - PUB-13: Freya's code sandbox returned parse errors on every code step from one point on, so a promise was lost. The diagnosis is under way.
 - [x] `candidate-2` = gate-green-3 + A19/A20 (workflow readability and wording cleanup) + A17 (sme fixes): clean merge, 939 tests. A18 (double sympathy, restructuring routing, "guarantee" wording) passed its review and joins next. Then the gate and the bench re-run.
 - [ ] A18 (double sympathy, multi-product restructuring routing, the "guarantee" wording) and A17 (sme): in progress. The bench re-runs after these.
 - [ ] Different "today" dates, variance at 5 runs
