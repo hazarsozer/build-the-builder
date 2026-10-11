@@ -918,6 +918,8 @@ try:
     pk = str(vars.get('offer_amounts') or '').split(',')
     m = re.match(r'\s*(\d+)', _cd_arg(b, 'attempt'))
     n = min(int(m.group(1)), len(pd)) if m else 0
+    # A12 fix 5: a "current" attempt amount is the floor once the model says it offered it, else the full amount
+    fo = _cd_arg(b, 'floor_offered').lower().strip(' .!') in ('yes', 'y', 'true')
     offered = set(pd[:n]) | set(x for x in str(vars.get('cd_offered') or '').split(',') if x)
     prefer = []
     for x in offered:
@@ -940,9 +942,9 @@ try:
         low = str(vars.get('floor_text') or 'the floor')
         if k == 'full':
             return full
-        if k == 'floor':
+        if k == 'floor' or (k == 'current' and fo):
             return low
-        return full + ' (or ' + low + ' if the customer already said the full amount is too much)'
+        return full
 
     def _rb(i, d):
         return ('As a confirmation, read back once the product and ' + _amt(i) + ' on ' + say_date(d) +
@@ -959,8 +961,7 @@ try:
         kind, off, bad, todo = _cd_judge(d, dl)
         if kind == 'ok' and d.isoformat() in offered:
             i = max([j for j in range(n) if pd[j] == d.isoformat()] or [n - 1])
-            msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. The customer accepted your offer: '
-                   'do not propose it again. ' + _rb(i, d) + ', then record (create_promise date: ' + d.isoformat() + ').')
+            msg = ('ACCEPTED OFFER: ' + say_date(d) + ' is a date you proposed and it can be accepted. Do not propose it again. ' + _rb(i, d) + ', then record (create_promise date: ' + d.isoformat() + ').')
         elif kind == 'ok':
             msg = ('NEW DATE: ' + say_date(d) + ' can be accepted. You have not offered it: do not offer it now. ' + _rb(max(n, 1) - 1, d) +
                    '. This is not a question about paying and not a new offer. After a yes, record (create_promise date: ' + d.isoformat() + ').')
@@ -2079,8 +2080,10 @@ HOW TO GET A PROMISE
             "date": {"type": "string", "default": "{{cdx_date}}",
                      "description": "The same day as YYYY-MM-DD if you know it; used only when the words name no day."},
             "attempt": {"type": "string", "default": "{{cdx_attempt}}",
-                        "description": "The number of the last plan attempt you have already said to the customer: 0 before your first offer with a date, 1 after attempt 1, and so on."},
-        }, ["said", "attempt"], path="get_account",
+                        "description": "The number of the last plan attempt you already said in an earlier message: 0 before your first offer with a date, 1 after attempt 1, and so on."},
+            "floor_offered": {"type": "string", "default": "{{cdx_floor_offered}}",
+                              "description": "yes if you have already offered {{floor_text}} in an earlier message"},
+        }, ["said", "attempt", "floor_offered"], path="get_account",
             description=("Check a payment day the customer names. CALL it before you answer any day they name (any form, also in pieces "
                          "or words); say what what_to_do_next says. It records nothing."),
             pre=self.date_rules() + CHECK_PRE, post="TOOL = %r\n" % CHECK_TOOL + CHECK_POST)

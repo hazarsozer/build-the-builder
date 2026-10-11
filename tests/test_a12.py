@@ -33,10 +33,11 @@ def account(now, product=LOAN, spec=A):
     return w, v
 
 
-def check(w, v, said, date=None, attempt=None):
+def check(w, v, said, date=None, attempt=None, floor=None):
     t = _tool(w, "check_date")
     body = {"customer_id": "c1", "said": said, "date": date if date is not None else "{{cdx_date}}",
-            "attempt": attempt if attempt is not None else "{{cdx_attempt}}"}
+            "attempt": attempt if attempt is not None else "{{cdx_attempt}}",
+            "floor_offered": floor if floor is not None else "{{cdx_floor_offered}}"}
     exec(t["pre_process_code"], {"vars": v, "config": {"body": body}})
     r = {"status": "success", "header": {"x": 1}, "data": {"products": []}}
     exec(t["post_process_code"], {"vars": v, "result": r})
@@ -308,9 +309,8 @@ def test_fix3_pub06_accepting_the_offered_date_is_confirmed_not_offered_again():
         m = d["what_to_do_next"]
         assert d["verdict"] == "ok" and d["date"] == "2026-10-16", said
         assert m.startswith("ACCEPTED OFFER: Friday 16 October 2026 is a date you proposed")
-        assert "The customer accepted your offer: do not propose it again." in m
-        assert ("As a confirmation, read back once the product and 540.00 (or 180.00 if the customer already said the full amount is "
-                "too much) on Friday 16 October 2026") in m
+        assert "Do not propose it again." in m and "accepted your offer" not in m
+        assert "As a confirmation, read back once the product and 540.00 on Friday 16 October 2026" in m
         assert m.endswith('ask "Do you confirm?", then record (create_promise date: 2026-10-16).')
         assert "propose this date" not in m and "current attempt" not in m
 
@@ -328,7 +328,7 @@ def test_fix3_a_new_date_named_by_the_customer():
     w, v = account("2026-10-14T11:00")
     m = check(w, v, "the 23rd", attempt="1")["what_to_do_next"]
     assert m.startswith("NEW DATE: Friday 23 October 2026 can be accepted. You have not offered it: do not offer it now. ")
-    assert "read back once the product and 540.00 (or 180.00 if" in m and "on Friday 23 October 2026" in m
+    assert "read back once the product and 540.00 on Friday 23 October 2026" in m
     assert "This is not a question about paying and not a new offer." in m
 
 
@@ -426,12 +426,12 @@ def test_fix4_plan_dates_count_only_once_the_attempt_was_said(now):
             assert m.startswith("NEW DATE: "), (now, iso, att, m)
             assert "accepted your offer" not in m and "Can you pay" not in m and "propose this date" not in m
             # amount of the current attempt: attempt 1 (current) before attempt 2 was said
-            assert "read back once the product and 540.00 (or 180.00 if the customer already said" in m, (now, att, m)
+            assert "read back once the product and 540.00 on " in m, (now, att, m)
         v.pop("cd_offered", None)
     # attempt 1 said: its date is accepted with attempt 1's amount
     m = check(w, v, _iso_said(pd[0]), attempt="1")["what_to_do_next"]
     assert m.startswith("ACCEPTED OFFER: "), (now, m)
-    assert "read back once the product and 540.00 (or 180.00" in m
+    assert "read back once the product and 540.00 on " in m
     # attempt 2 said: the deadline is accepted with the floor; a figure-free offer is never asked for
     m = check(w, v, _iso_said(pd[1]), attempt="2")["what_to_do_next"]
     assert m.startswith("ACCEPTED OFFER: "), (now, m)
@@ -471,7 +471,11 @@ def test_fix4_check_date_asks_for_the_attempt_and_date_only_reads_back():
     w = C(A, OA)
     body = _tool(w, "check_date")["function"]["parameters"]["properties"]["body"]
     assert body["properties"]["attempt"]["default"] == "{{cdx_attempt}}"
-    assert "attempt" in body.get("required", ["attempt"])
+    assert body["properties"]["floor_offered"]["default"] == "{{cdx_floor_offered}}"
+    assert body["properties"]["floor_offered"]["description"] == "yes if you have already offered {{floor_text}} in an earlier message"
+    assert "the last plan attempt you already said in an earlier message" in body["properties"]["attempt"]["description"]
+    for f in ("attempt", "floor_offered"):
+        assert f in body.get("required", [f])
     pre = _tool(w, "check_date")["pre_process_code"]
     assert "{{" not in pre and "}}" not in pre
     t = w["nodes"]["negotiate"]["task_message"]
@@ -479,3 +483,47 @@ def test_fix4_check_date_asks_for_the_attempt_and_date_only_reads_back():
     assert "Propose that amount with the date" not in t
     assert len(t) <= 4800
     assert lint(w, A) == []
+
+
+# ---- fix round 5: one figure per verdict; a "current" amount is the floor once the model says it offered it
+PHRASES = ("Friday", "the 23rd", "Monday the twenty-sixth", "the 20th of November", "tomorrow", "the 31st", "today")
+
+
+@pytest.mark.parametrize("now", NOWS)
+@pytest.mark.parametrize("product", [LOAN, LATE])
+def test_fix5_no_verdict_contains_two_amounts(now, product):
+    w, v = account(now, product)
+    plan = v["offer_dates"].split(",")
+    for att in ("0", "1", "2", "{{cdx_attempt}}"):
+        for fo in ("yes", "no", "maybe", "{{cdx_floor_offered}}"):
+            v.pop("cd_offered", None)
+            for said in PHRASES + tuple(_iso_said(x) for x in plan):
+                m = check(w, v, said, attempt=att, floor=fo)["what_to_do_next"]
+                assert not ("540.00" in m and "180.00" in m), (now, att, fo, said, m)
+
+
+@pytest.mark.parametrize("now", NOWS)
+def test_fix5_floor_offered_picks_one_figure(now):
+    w, v = account(now)
+    iso = v["offer_dates"]
+    for fo, fig in (("yes", "180.00"), ("Yes.", "180.00"), ("no", "540.00"), ("garbage", "540.00"), ("", "540.00"),
+                    ("{{cdx_floor_offered}}", "540.00")):
+        for att in ("0", "1"):
+            d = check(w, v, _iso_said(iso), attempt=att, floor=fo)
+            if d["verdict"] != "ok":
+                continue
+            m = d["what_to_do_next"]
+            assert "read back once the product and " + fig + " on " in m, (now, fo, att, m)
+    # a floor attempt names the floor whatever floor_offered says
+    w, v, pd = _plan(now)
+    for fo in ("yes", "no", "garbage"):
+        d = check(w, v, _iso_said(pd[1]), attempt="2", floor=fo)
+        if d["verdict"] == "ok":
+            assert "read back once the product and 180.00 on " in d["what_to_do_next"] and "540.00" not in d["what_to_do_next"]
+
+
+def test_fix5_no_cdx_variable_is_set_in_code():
+    w = C(A, OA)
+    assert "'cdx_" not in json.dumps(w).replace('"{{cdx_', "")
+    pre = _tool(w, "check_date")["pre_process_code"]
+    assert "accepted your offer" not in pre and "{{" not in pre and "}}" not in pre
