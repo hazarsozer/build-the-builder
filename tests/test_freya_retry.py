@@ -88,7 +88,7 @@ def test_retry_line_names_method_path_status_and_no_secrets(net, monkeypatch, ca
     monkeypatch.setitem(freya.HEADERS, "Authorization", "Bearer fak_SECRET")
     net([http(502), {"ok": 1}])
     freya.api("GET", "/api/v2/workflow/w1", workspaceId="ws1")
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err   # diagnostics go to stderr (stdout carries --save JSON)
     assert "GET /api/v2/workflow/w1" in out and "502" in out
     assert "fak_SECRET" not in out and "Bearer" not in out and out.count("\n") == 1
 
@@ -174,7 +174,7 @@ def test_retried_create_is_logged_and_the_second_id_kept(net, tmp_path, capsys):
     out = freya.save_workflow("slot", {}, state_file=str(sf))
     assert out == {"workflow_id": "w2", "agent_id": "a2"}
     assert json.loads(sf.read_text())["slot"] == {"workflow_id": "w2", "agent_id": "a2"}
-    log = capsys.readouterr().out
+    log = capsys.readouterr().err
     assert "POST /api/v2/workflow" in log and "duplicate" in log
 
 
@@ -257,3 +257,28 @@ def test_unbound_calls_keep_the_full_retry(net):
     st = net([http(502), {"ok": 1}])
     assert freya.api("GET", "/api/v2/workflow/w1") == {"ok": 1}
     assert st["sleeps"] == [5]
+
+
+# -- stdout stays machine-readable (results/regate.sh: `builder.compile --save | json.load`) -------------------------
+
+def test_retry_during_compile_save_keeps_stdout_pure_json(net, tmp_path, capsys):
+    from builder import compile as comp
+    sf = tmp_path / "state.json"
+    net([http(504), {"workflow": {"id": "w9", "agentId": "a9"}}])
+    assert comp.main(["specs/reference/spec-a.json", "tools/openapi.json", "--save", "ours-A", "--state", str(sf)]) == 0
+    cap = capsys.readouterr()
+    assert json.loads(cap.out) == {"workflow_id": "w9", "agent_id": "a9"}
+    assert "retry 1/5" in cap.err and "504" in cap.err
+
+
+def test_poll_and_busy_diagnostics_go_to_stderr(net, monkeypatch, capsys):
+    net([http(503), {"ok": 1}])
+    monkeypatch.setattr(freya, "_now", lambda: 0.0)
+    assert freya._poll_api("s1", 0.0, 1000.0, "GET", "/api/v2/simulations/s1") == {"ok": 1}
+    cap = capsys.readouterr()
+    assert cap.out == "" and "transient error" in cap.err
+    monkeypatch.setattr(freya, "api", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("too many concurrent simulations")))
+    with pytest.raises(RuntimeError, match="busy"):
+        freya.run_simulation("a1", "n", {}, on_busy=lambda w: (_ for _ in ()).throw(RuntimeError("busy")) if w else None)
+    cap = capsys.readouterr()
+    assert cap.out == "" and "another simulation is running" in cap.err
