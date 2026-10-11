@@ -16,6 +16,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `call_variables` (required): list of string, pattern `^[A-Za-z_][A-Za-z0-9_]*$`. Names of the variables every call starts with (the brief's call-variable table).
 - `opening` (required): object. The first turns, before the person on the line is confirmed as the customer.
 - `opening.first_sentence` (required): string. The first sentence, said word for word. Must contain every fact the brief requires in it.
+- `opening.verbatim` (optional): boolean. Set true only when the brief requires the first sentence word for word, exactly or verbatim. The sentence is then kept exactly as written (a recording notice is not rephrased). Absent or false: a recording notice in the first sentence is rephrased to a neutral monitoring sentence.
 - `opening.confirm_question` (required): string. The question that confirms the customer, said word for word.
 - `opening.confirm_accept` (required): list of string. Answers that count as confirmation.
 - `opening.confirm_reject` (required): list of string. Answers that do NOT count as confirmation (ask again).

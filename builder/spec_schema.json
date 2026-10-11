@@ -236,6 +236,10 @@
           "$ref": "#/$defs/str",
           "description": "The first sentence, said word for word. Must contain every fact the brief requires in it."
         },
+        "verbatim": {
+          "type": "boolean",
+          "description": "Set true only when the brief requires the first sentence word for word, exactly or verbatim. The sentence is then kept exactly as written (a recording notice is not rephrased). Absent or false: a recording notice in the first sentence is rephrased to a neutral monitoring sentence."
+        },
         "confirm_question": {
           "$ref": "#/$defs/str",
           "description": "The question that confirms the customer, said word for word."
