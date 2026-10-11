@@ -71,6 +71,26 @@ from builder.validate import validate  # noqa: E402
 STATE_FILE = ROOT / ".freya-agents.json"
 
 
+L10N_MAX_S = 180      # the translation call's bound (also never past the final reserve)
+L10N_MIN_S = 30
+
+
+def brief_text_for_language(briefs):
+    """The briefs as text for language detection: converted like make_workdir does (Word, PDF, ... via doctext)."""
+    from builder import doctext
+    out = []
+    try:
+        entries = sdk.brief_entries(briefs)
+    except Exception:  # noqa: BLE001 - detection falls back to English
+        return ""
+    for p, _rel in entries:
+        try:
+            out.append(doctext.read_text(p) if p.suffix.lower() in sdk.COPY_AS_IS else doctext.to_text(p))
+        except Exception:  # noqa: BLE001
+            continue
+    return "\n".join(out)
+
+
 def translate_factory(trace):
     """The translator for the localisation pass: one batched Agent SDK call (tests replace this)."""
     return l10n.model_translate(trace)
@@ -555,10 +575,7 @@ class Build:
         if self._lang is None or (spec or {}).get("language"):
             text = ""
             if not (spec or {}).get("language"):
-                try:
-                    text = "\n".join(Path(p).read_text(errors="replace") for p in sdk.expand_briefs(self.briefs))
-                except OSError:
-                    text = ""
+                text = brief_text_for_language(self.briefs)
             lang = l10n.language_of(spec, text)
             if lang != self._lang:
                 self.ev("language", code=lang["code"], name=lang["name"],
@@ -578,9 +595,30 @@ class Build:
         lang = self.language(spec)
         if l10n.is_english(lang):
             return wf, problems
+        failed = getattr(self, "_l10n_failed", None)
+        if failed is None:
+            failed = self._l10n_failed = set()
+        if lang["code"] in failed:
+            self.ev("localise_skipped", stage=stage, why="the translation failed earlier in this build")
+            return wf, problems
+        cap = min(L10N_MAX_S, max(L10N_MIN_S, self.left() - FINAL_RESERVE_S))
+        if stage == "final" and l10n.pending(wf, lang) and self.left() < cap:
+            self.ev("localise_skipped", stage=stage, why="no cached translation and %.0f s left" % self.left())
+            return wf, problems
+        translator = translate_factory(self.trace)
+        call_failed = []
+
+        def tr(texts, lg):
+            try:
+                return bounded(lambda: translator(texts, lg), cap)
+            except BaseException:
+                call_failed.append(1)
+                raise
         try:
             loc = copy.deepcopy(wf)
-            l10n.localise(loc, lang, translate_factory(self.trace), trace=self.trace)
+            l10n.localise(loc, lang, tr, trace=self.trace)
+            if call_failed:
+                failed.add(lang["code"])          # not retried at the next compile
             p2 = self._lint(loc, spec)
         except Exception as e:  # noqa: BLE001 - the build goes on in English
             self.ev("localise_failed", stage=stage, errors=[_err(e)])
