@@ -433,8 +433,7 @@ class Build:
         except Exception as e:
             verrs = ["validate crashed: " + _err(e)]
         self.ev("spec_validated", stage="extract", errors=len(verrs), first=[scrub(x)[:300] for x in verrs[:5]])
-        if not verrs:
-            spec = self._reconcile(spec, "extract")
+        spec = self._reconcile(spec, "extract")
         conf = spec.get("conflicts") if isinstance(spec, dict) else None
         conf = conf if isinstance(conf, list) else []
         self.ev("conflicts", count=len(conf), items=[{"field": c.get("field"), "kept": str(c.get("kept"))[:300]}
@@ -575,8 +574,7 @@ class Build:
             return
         verrs = validate(new, self.openapi)
         self.ev("spec_validated", stage="fix1", errors=len(verrs), first=[scrub(x)[:300] for x in verrs[:5]])
-        if not verrs:
-            new = self._reconcile(new, "fix1")
+        new = self._reconcile(new, "fix1")
         cs2 = self._cases(new, now)
         run2, comparable, extra = round2_cases(cs, cs2)
         self.ev("round2_plan", rerun=len(cs), extra=[c["id"] + ":" + str(c.get("scenario")) for c in extra],

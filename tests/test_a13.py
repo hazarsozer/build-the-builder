@@ -47,9 +47,10 @@ def test_word_boundary_and_recording_rewrite():
 
 @pytest.mark.parametrize("spec", [A, B], ids=["spec-a", "spec-b"])
 def test_reference_specs_unchanged_and_compile_identical(spec):
+    plain = json.dumps(comp.compile(copy.deepcopy(spec), OA), sort_keys=True)
     out, removed = reconcile_banned(spec)
-    assert removed == [] and out is spec
-    assert json.dumps(comp.compile(out, OA), sort_keys=True) == json.dumps(comp.compile(spec, OA), sort_keys=True)
+    assert removed == []
+    assert json.dumps(comp.compile(out, OA), sort_keys=True) == plain
 
 
 def test_cases_and_prompt_use_cleaned_list():
@@ -75,3 +76,49 @@ def test_main_reports_and_applies(env):  # noqa: F811
 def test_main_no_event_when_nothing_to_remove(env):  # noqa: F811
     assert run_main(env, "--no-selftest") == 0
     assert not [r for r in trace_rows(env) if r["kind"] == "banned_reconciled"]
+
+
+def test_hints_and_third_party_sentences_are_not_evidence():
+    s = copy.deepcopy(DRESS_B)
+    s["identity"]["decline_explanation"] = "These questions protect you."
+    s["identity"]["non_counting_hints"] = {"x": "Say the account month."}
+    s["third_party"]["fixed_sentences"] = {"deceased": "We are sorry about the account holder."}
+    s["opening"]["banned_before_verify"] = ["account"]
+    assert reconcile_banned(s)[1] == []
+
+
+def test_main_reconciles_even_when_validation_errors(env, monkeypatch):  # noqa: F811
+    from builder import main as M
+    monkeypatch.setattr(M, "validate", lambda spec, oa: ["schema: boom"])
+    env.spec = copy.deepcopy(DRESS_B)
+    run_main(env, "--no-selftest")
+    [ev] = [r for r in trace_rows(env) if r["kind"] == "banned_reconciled"]
+    assert ev["stage"] == "extract"
+
+
+def test_reconcile_is_defensive(env):  # noqa: F811
+    from builder import main as M
+    b = M.Build.__new__(M.Build)
+    b.ev = lambda *a, **k: None
+    b.log = lambda *a, **k: None
+    for bad in (None, [], {"opening": {"banned_before_verify": ["x"]}, "identity": "str"},
+                {"opening": {"banned_before_verify": ["x", 3]}, "identity": {"questions": [1, None]}}):
+        assert b._reconcile(bad, "extract") == bad
+
+
+def test_fix1_stage_reconciled(env, monkeypatch):  # noqa: F811
+    from builder import main as M
+    from tests.test_main_dry import selftest_result
+    from builder import selftest
+    new = copy.deepcopy(DRESS_B)
+    new["identity"]["decline_explanation"] = "These questions protect your account."
+    env.spec = copy.deepcopy(DRESS_B)
+    env.spec["identity"]["decline_explanation"] = "These questions protect you."
+    env.spec["opening"]["banned_before_verify"] = ["the account", "debt"]
+    new["opening"]["banned_before_verify"] = ["the account", "debt"]
+    monkeypatch.setattr(selftest, "run", lambda agent_id, cs, bank, **k: selftest_result(cs, failing=[cs[0]["id"]]))
+    monkeypatch.setattr(M, "run_fix", lambda *a, **k: (new, {"changes": [{"path": "identity.decline_explanation", "quote": "q", "why": "SELF-01"}], "discarded": [], "errors": 0}))
+    monkeypatch.setattr(M, "TUNNEL_BACKOFF_S", 0.01)
+    run_main(env)
+    evs = [r for r in trace_rows(env) if r["kind"] == "banned_reconciled"]
+    assert [e["stage"] for e in evs] == ["fix1"]

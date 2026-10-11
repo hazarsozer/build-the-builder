@@ -21,3 +21,13 @@ stay banned; a term in no required sentence stays banned (tests).
 
 ## Suite
 `uv run pytest -q`: 602 passed, 6 skipped (base 594, +8).
+
+## Fix round 1
+1. main.py: `_reconcile` now runs unconditionally at the extract and fix1 stages (still wrapped in try/except; lint.py guards
+   non-dict opening/identity/questions). Tests: test_main_reconciles_even_when_validation_errors, test_reconcile_is_defensive,
+   test_fix1_stage_reconciled.
+2. lint.py `required_pre_verify_sentences`: evidence is now only opening (first sentence after rewrite, confirm question),
+   identity question asks and decline_explanation. third_party.fixed_sentences and non_counting_hints removed
+   (test_hints_and_third_party_sentences_are_not_evidence).
+3. test_reference_specs_unchanged_and_compile_identical compares against a deepcopy compiled without reconcile.
+Suite: 606 passed, 6 skipped (tests/test_a13.py: 12 passed).

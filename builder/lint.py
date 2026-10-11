@@ -47,25 +47,20 @@ def safe_opening(sentence):
 
 
 def required_pre_verify_sentences(spec):
-    """(where, text) for every sentence the spec requires the agent to say before identity is verified."""
-    op, idn = spec.get("opening") or {}, spec.get("identity") or {}
+    """(where, text) for what the agent must speak to the customer before identity is verified: the opening, the
+    confirm question, the security questions and the decline explanation (not third-party or hint text)."""
+    op, idn = spec.get("opening"), spec.get("identity")
+    op, idn = op if isinstance(op, dict) else {}, idn if isinstance(idn, dict) else {}
     out = []
     if isinstance(op.get("first_sentence"), str):
         out.append(("opening.first_sentence", safe_opening(op["first_sentence"])[0]))
     if isinstance(op.get("confirm_question"), str):
         out.append(("opening.confirm_question", op["confirm_question"]))
-    for i, q in enumerate(idn.get("questions") or []):
+    for i, q in enumerate(idn.get("questions") if isinstance(idn.get("questions"), list) else []):
         if isinstance(q, dict) and isinstance(q.get("ask"), str):
             out.append(("identity.questions[%d].ask" % i, q["ask"]))
-    for k, v in sorted((idn.get("non_counting_hints") or {}).items()):
-        if isinstance(v, str):
-            out.append(("identity.non_counting_hints.%s" % k, v))
     if isinstance(idn.get("decline_explanation"), str):
         out.append(("identity.decline_explanation", idn["decline_explanation"]))
-    fixed = (spec.get("third_party") or {}).get("fixed_sentences") or {}
-    for k, v in sorted(fixed.items()):
-        if isinstance(v, str):
-            out.append(("third_party.fixed_sentences.%s" % k, v))
     return out
 
 
