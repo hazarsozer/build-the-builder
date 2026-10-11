@@ -11,6 +11,7 @@ import datetime, logging, random, re
 
 from bank.server import field_kinds
 from builder.lib import dates as D
+from builder.lint import reconcile_banned
 
 log = logging.getLogger(__name__)
 
@@ -292,7 +293,8 @@ class Ctx:
     def say(self, s): return f'the agent says "{s}"'
 
     def banned(self):
-        b = self.spec["opening"]["banned_before_verify"]
+        # never a term the agent must itself say before verification (a word-for-word opening, the security questions)
+        b = reconcile_banned(self.spec)[0]["opening"]["banned_before_verify"]
         return [f"none of these is said before identity is verified: {', '.join(b)}"] if b else []
 
     def goodbye(self):

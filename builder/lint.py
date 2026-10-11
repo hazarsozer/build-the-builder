@@ -56,7 +56,8 @@ def required_pre_verify_sentences(spec):
     op, idn = op if isinstance(op, dict) else {}, idn if isinstance(idn, dict) else {}
     out = []
     if isinstance(op.get("first_sentence"), str):
-        out.append(("opening.first_sentence", safe_opening(op["first_sentence"])[0]))
+        # the sentence as spoken: rephrased, or word for word when the brief requires it (opening.verbatim)
+        out.append(("opening.first_sentence", safe_opening(op["first_sentence"], bool(op.get("verbatim")))[0]))
     if isinstance(op.get("confirm_question"), str):
         out.append(("opening.confirm_question", op["confirm_question"]))
     for i, q in enumerate(idn.get("questions") if isinstance(idn.get("questions"), list) else []):
