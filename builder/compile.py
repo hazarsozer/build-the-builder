@@ -41,10 +41,11 @@ STANDARD_VARS = ("customer_id", "first_name", "last_name", "title", "now")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
-               "readback": "rb_answer"}
+               "readback": "rb_answer", "after_record": "ar_answer"}
+AFTER_RECORD = "after_record"   # multi: the step after promises were recorded (multi.Multi.after_record)
 # Value a stage's extraction variable is reset to when the conversation comes back to it.
 EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": "continue", "negotiate": "continue",
-                   "readback": "pending"}
+                   "readback": "pending", "after_record": "pending"}
 # L1 (PUB-06): an amount said once is pointed back to, never offered again.
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
@@ -1535,26 +1536,29 @@ class _Compiler:
         """The brief's instruction without recording words (the hold step speaks before any promise)."""
         return re.sub(r"\brecord(?:s|ed)? (?:the|a) promise\b", "take their payment date and amount", text or "", flags=re.I)
 
-    def support_nodes(self, ev, transfer, account=False):
+    def support_nodes(self, ev, transfer, account=False, after=None):
         """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it and reads the reply:
         a yes transfers; a date or an amount the customer names returns to negotiate (<id>_back); a human request goes to
         that event's ask-once step; a question is answered in one sentence and the offer asked once more (first reply
-        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close."""
+        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close.
+        after=<node>: the offer made after promises were recorded (multi after_record): its own nodes, and every
+        non-yes reply (a named payment too) goes to <node>, never back to the negotiation or to the else-close."""
         eid = ev["id"]
-        offer, hold, back = eid + "_offer", eid + "_hold", eid + "_back"
+        sfx = "_" + AFTER_RECORD if after else ""
+        offer, hold, back = eid + "_offer" + sfx, eid + "_hold" + sfx, eid + "_back"
         if offer in self.nodes:
             return offer
-        end = self.account_end(ev) if account else self.end_target("negotiate", eid)
+        end = after or (self.account_end(ev) if account else self.end_target("negotiate", eid))
         reply = eid + "_reply"
         code = "vars[%r] = 'yes'\nvars[%r] = 'pending'\nvars[%r] = %r\n" % (eid + "_offered", reply, eid + "_rule", self.support_rule(ev, True))
-        if self.multi:  # reached from the read-back as well: negotiation is open again
+        if self.multi and not after:  # reached from the read-back as well: negotiation is open again
             code += "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n"
         self.nodes[offer] = code_node(offer, code, hold)
         reset = "vars['neg_event'] = 'continue'\nvars[%r] = 'pending'\n" % reply
         if self.multi:
             reset += ("vars['mp_msg'] = 'The customer named a date or an amount after the support offer. Make no offer of your own; "
                       "check what they named and call %s for that product.'\n" % multi_mod.SET_TOOL)
-        if not account:
+        if not account and not after:
             self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
@@ -1565,13 +1569,14 @@ class _Compiler:
         if account:
             # nothing about the debt was said yet: the verification thanks, then the event's own sentence
             steps = ["Say %s." % q(self.verified_lead().strip())]
-        if say:
-            steps.append("Say %s.%s" % (q(tpl(say)), " This is your one sentence of sympathy: add no other, before or after it."
-                                        if sympathy and not account else ""))
-        if banned and not account:
-            steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
-        if "?" not in say:  # a fixed sentence that is a question already makes the offer
-            steps.append("Offer to connect them with %s, as a yes/no question." % team)
+        say_step = ["Say %s.%s" % (q(tpl(say)), " This is your one sentence of sympathy: add no other, before or after it."
+                                   if sympathy and not account else "")] if say else []
+        cannot = (["Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned)]
+                  if banned and not account else [])
+        if "?" in say:  # a fixed sentence that is a question already makes the offer: it ends the turn
+            steps += cannot + say_step
+        else:
+            steps += say_step + cannot + ["Offer to connect them with %s, as a yes/no question." % team]
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
                   "not have that information), then ask once more whether they want to be connected. Do this only once."]
         answer += ["Rule (%s): say %s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])))
@@ -1584,11 +1589,13 @@ class _Compiler:
                 values.append(v)
                 hdesc.append("%s: they %s." % (v, h["trigger"].rstrip(". ")))
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
-                routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
+                routes.append(go(self.ask_once_nodes(AFTER_RECORD if after else "negotiate", h, t), eid + ": " + v,
+                                 cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
         situation = ("the customer " + bare_trigger(ev["trigger"])) if not account else (
             "the account shows: " + bare_trigger(ev["trigger"]) + ". The product concerned: {{product_words}}")
-        pay = go(end if account else back, eid + (": the customer names a payment, none is taken" if account else ": the customer names a payment"),
+        pay = go(end if account or after else back,
+                 eid + (": the customer names a payment, none is taken" if account or after else ": the customer names a payment"),
                  cond_any(eq(reply, "names_payment")))
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
