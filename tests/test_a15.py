@@ -307,6 +307,53 @@ def test_ids08_tomorrow_holiday_is_named_outside_the_window():
     assert "is not a business day" not in v["callback_rules"]
 
 
+def _renamed(spec, names):
+    """The spec and its openapi with outcome names renamed ({old: new})."""
+    s = copy.deepcopy(spec)
+    for e in s["events"]:
+        for k in ("outcome", "else_outcome"):
+            if e.get(k) in names:
+                e[k] = names[e[k]]
+    for o in s["outcomes"]:
+        o["outcome"] = names.get(o["outcome"], o["outcome"])
+    txt = json.dumps(INS_OA)
+    for a, b in names.items():
+        txt = txt.replace('"%s"' % a, '"%s"' % b)
+    return s, json.loads(txt)
+
+
+def test_else_close_and_cases_take_outcome_names_from_the_spec():
+    """Fix round 1 (M-1): no literal no_promise / transferred in the else-close or the self-test expectations."""
+    from builder import cases
+    s, oa = _renamed(INS, {"no_promise": "unpaid", "transferred": "handed_over"})
+    # an else-close without else_outcome falls back to the refused event's outcome
+    for e in s["events"]:
+        if e["id"] == "hardship":
+            e["else_outcome"] = None
+    w = C(s, oa, base_url="https://bank.example/v1")
+    assert _close_of(w["nodes"]["close_hardship"])[0] == "unpaid"
+    assert cases._note_row(s, "hardship") == ("unpaid", "hardship")
+    assert cases._note_row(s, "policy_lapsed") == ("unpaid", "policy_lapsed")
+    exp = cases._multi_expected(s, [{"product_id": "p1", "type": "car_insurance", "premium_due": 100, "days_overdue": 5}], {"p1": "refused"})
+    assert (exp["outcome"], exp["reason"]) == ("unpaid", "refused")
+
+
+CORPUS_ONLY = ["lapse", "premium", "brightwater", "harbourline", "northwind", "retention", "insurance", "reinstat",
+               "policyholder", "5th business day"]
+
+
+def test_no_corpus_words_in_generic_text():
+    """Fix round 1 (I-1): words only the bench corpus uses never appear in the schema, the guide, the prompts or the code."""
+    import glob
+    files = ["builder/spec_schema.json", "docs/spec-guide.md"] + glob.glob("builder/prompts/*.md") + \
+        glob.glob("builder/*.py") + glob.glob("builder/lib/*.py")
+    hits = []
+    for f in files:
+        text = open(f).read().lower()
+        hits += ["%s: %s" % (f, w) for w in CORPUS_ONLY if w in text]
+    assert hits == []
+
+
 def test_no_lapsed_policy_negotiates_as_before():
     s = _ins_lapsed()
     w = C(s, INS_OA, base_url="https://bank.example/v1")

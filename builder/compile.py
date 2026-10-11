@@ -1176,7 +1176,7 @@ class _Compiler:
         self.base = (base_url or openapi["servers"][0]["url"]).rstrip("/")
         self.addr = tpl(spec["address_as"])
         self.events = {e["id"]: e for e in spec["events"]}
-        # A15: events a band fires by itself as get_account returns (a lapsed policy): never listened for in speech
+        # A15: events a band fires by itself as get_account returns (bands[].event): never listened for in speech
         self.account_events = list(dict.fromkeys(b["event"] for b in spec["bands"] if b.get("event") in self.events))
         self.fail_ev = spec["confirmation"].get("failure_event") or ""
         self.nodes = {}
@@ -1296,6 +1296,10 @@ class _Compiler:
     def close_key(self, ev_id):
         return "close_" + ev_id
 
+    def no_promise_outcome(self):
+        """The brief's no-promise outcome: the refused event's outcome (as Multi and oracle read it), never a literal (A15)."""
+        return (self.events.get("refused") or {}).get("outcome") or "no_promise"
+
     def prelude(self):
         return ("import datetime, json, re\n" + embed.source(dates, money) + "\n" +
                 _const("CAL", self.s["calendar"]) + NOW_CODE)
@@ -1380,7 +1384,7 @@ class _Compiler:
         for ev in self.s["events"]:
             if ev["action"] == "offer_transfer_else_close":
                 self.nodes[self.close_key(ev["id"])] = close_node(
-                    self.close_key(ev["id"]), ev.get("else_outcome") or "no_promise", ev.get("else_reason") or "",
+                    self.close_key(ev["id"]), ev.get("else_outcome") or self.no_promise_outcome(), ev.get("else_reason") or "",
                     self.farewell(ev, "else"))
                 self.nodes[self.close_key(ev["id"]) + "_transfer"] = close_node(
                     self.close_key(ev["id"]) + "_transfer", ev["outcome"], ev.get("reason") or "",
@@ -1885,7 +1889,7 @@ HOW TO GET A PROMISE
     def fail_close(self):
         """(outcome, reason) of the service-failure close (also used when the account cannot be read)."""
         fe = self.events.get(self.fail_ev) or {}
-        return fe.get("outcome") or "no_promise", fe.get("reason") or ""
+        return fe.get("outcome") or self.no_promise_outcome(), fe.get("reason") or ""
 
     def setup_nodes(self):
         """setup computes the call's date facts and writes a plain default farewell (no outcome). A snippet that did
