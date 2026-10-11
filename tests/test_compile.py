@@ -323,7 +323,8 @@ def test_extra_rules_naming_other_tools_are_dropped():
 
 def test_negotiate_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4000
+    # A9 raised it from 4000 for the day-number, cut-off and date-only rules of diag t5r5.
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4700
 
 
 def test_reference_specs_still_valid():
@@ -416,3 +417,27 @@ def test_g3_no_figure_restated():
     assert "only the date" in plan.split("Attempt 2")[1]
     neg = wf()["nodes"]["negotiate"]["task_message"]
     assert "Never restate a figure already offered" in neg and "A read-back is not an offer" in neg
+
+
+# ---------------------------------------------------------------- A9 (diag t5r5)
+
+def test_a9_calendar_rows_carry_the_day_number_in_digits_and_words():
+    """PUB-07: "Monday the." + "twenty-sixth." must land on the bank-holiday row."""
+    v = _run_account("2026-10-14T11:00", dict(CARD, type="personal_loan", days_late=4))
+    rows = v["calendar_text"].split("\n")
+    hol = [r for r in rows if "(2026-10-26)" in r][0]
+    assert hol.startswith("- the 26th (twenty-sixth): Monday 26 October 2026")
+    assert "BANK HOLIDAY" in hol and "Tuesday 27 October 2026" in hol
+    assert rows[0].startswith("- the 14th (fourteenth): ") and "(today)" in rows[0]
+    labels = {r.split(":")[0] for r in rows}
+    for want in ("- the 1st (first)", "- the 2nd (second)", "- the 3rd (third)", "- the 11th (eleventh)",
+                 "- the 12th (twelfth)", "- the 13th (thirteenth)", "- the 21st (twenty-first)", "- the 22nd (twenty-second)",
+                 "- the 23rd (twenty-third)", "- the 31st (thirty-first)"):
+        assert want in labels, want
+
+
+def test_a9_day_number_and_cut_off_rules_in_both_templates():
+    for w in (wf(), C(json.load(open("specs/reference/spec-b.json")), OA)):
+        t = w["nodes"]["negotiate"]["task_message"]
+        assert '"twenty-sixth"' in t and "first calendar row with that number" in t
+        assert '"Monday the."' in t and 'say only "Go on."' in t and "uses no attempt" in t

@@ -674,7 +674,8 @@ def test_notes_in_get_account_order():
 
 def test_multi_prompt_size():
     # Our own prompt budget for the reference spec, not a platform limit (controller ruling, Task 7b M6).
-    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 4600
+    # A9 raised it from 4600 for the per-refusal set_product call and the day-number and cut-off rules.
+    assert len(wf()["nodes"]["negotiate"]["task_message"]) <= 5300
 
 
 def test_spec_b_hardship_conflict_matches_code():

@@ -44,6 +44,9 @@ EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity":
 EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": "continue", "negotiate": "continue",
                    "readback": "pending"}
 # L1 (PUB-06): an amount said once is pointed back to, never offered again.
+DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
+CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
+           'say only "Go on." and read it with the next message.')
 MENTIONED = ('Say each amount once. Asked about it again ("what is the minimum?"): "That is the <amount> I mentioned; could you '
              'pay it by <date>?", never a new offer, never %s again. Never restate a figure already offered.')
 # Runtime names usable in spec sentences -> the workflow variable that holds them.
@@ -293,6 +296,18 @@ def product_facts(p):
                 debt_statement_one=fill(NEG.get('debt_statement_per_product') or NEG['debt_statement'], p, say))
 
 
+ORD_WORDS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh',
+             'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth',
+             'twentieth', 'twenty-first', 'twenty-second', 'twenty-third', 'twenty-fourth', 'twenty-fifth', 'twenty-sixth',
+             'twenty-seventh', 'twenty-eighth', 'twenty-ninth', 'thirtieth', 'thirty-first']
+
+
+def day_label(n):
+    """'the 26th (twenty-sixth)': a calendar row found by the day number in digits or in words."""
+    suf = 'th' if 11 <= n % 100 <= 13 or n % 10 > 3 else ['th', 'st', 'nd', 'rd'][n % 10]
+    return 'the ' + str(n) + suf + ' (' + ORD_WORDS[n - 1] + ')'
+
+
 def calendar_text(dl):
     out = []
     d = today
@@ -313,7 +328,7 @@ def calendar_text(dl):
                 tag += '. If the customer names this day, offer the next business day: ' + speak(next_bd(d, CAL))
         if d > dl:
             tag += ', AFTER THE DEADLINE'
-        out.append('- ' + speak(d) + ': ' + tag + (' (today)' if d == today else ''))
+        out.append('- ' + day_label(d.day) + ': ' + speak(d) + ': ' + tag + (' (today)' if d == today else ''))
         d = d + datetime.timedelta(days=1)
     return '\n'.join(out)
 
@@ -1415,12 +1430,14 @@ HOW TO GET A PROMISE
    - Date must be one of the dates you may accept. %s %s
    - %s
    - %s
+   - %s
+   - %s
 2. %s
 3. %s
    %s
 4. When you have an amount and a date the customer accepts, read back the product, the amount and the date and ask %s. A read-back is not an offer, so it states all three. If they change the date or amount, check it again and read it back again.
 5. Only after a clear yes, call create_promise with amount (number) and date (YYYY-MM-DD). The result decides whether it is recorded.""" % (
-            first_ask, nbd, aft, vague, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
+            first_ask, nbd, aft, vague, DAY_NUMBER, CUT_OFF, below, too_much, refuse, self.mentioned(), q(tpl(conf["question"])))
         for line in self.extra_lines("create_promise", PROMISE_FIELDS):
             t += "\n   " + line + " Read it back too."
         if conf.get("change_note"):
@@ -1686,7 +1703,8 @@ HOW TO RUN THE CALL
    If not, go through the products one by one, %(order)s. Do not ask about today again. Start each product at attempt 1 of its own persuasion plan; attempts are counted per product.
 2. For the product you are discussing, the customer names a date or an amount (combine parts said across turns, "four hundred... and twenty" = 420): never a refusal.
    - Date: a business day from today up to that product's deadline. %(nbd)s A date after its deadline: say the latest date you can accept for it is its deadline, and offer it.
-   - %(vague)s
+   - %(vague)s %(day_number)s
+   - %(cut_off)s
    - Amount: from the product's floor up to its full amount.
    - %(too_much)s
 3. A flat refusal or a non-answer for the current product (refusing the floor, refusing the deadline) uses one attempt of its plan: call %(tool)s with outcome refused at once, before you speak. Its result gives the next attempt or says to make no more offers for it; make only an offer a result or the plan gives you. Never repeat an offer the customer already refused.
@@ -1697,7 +1715,7 @@ HOW TO RUN THE CALL
    Its result (what_to_do_next) names the next product. Last result: {{mp_msg}}
 5. When every product is settled, the single read-back of all promises and the question %(confirm)s are spoken automatically. If the customer then changes something, call %(tool)s again for that product; if they then accept the same promises, call %(tool)s with product_id ALL and outcome review. Nothing is registered before the confirmation; never say anything is recorded.""" % dict(
             tool=multi_mod.SET_TOOL, order=order, nbd=nbd, vague=vague, too_much=too_much, confirm=q(tpl(conf["question"])),
-            mentioned=self.mentioned(),
+            mentioned=self.mentioned(), day_number=DAY_NUMBER, cut_off=CUT_OFF,
             notes="".join("\n   - %s, when the customer %s; then continue with the other products." % (o, self.multi.outcome_words(o)[len("the customer "):]) for o in notes))
         for f, d in self.model_extras("create_promise", PROMISE_FIELDS):
             t += "\n   %s with outcome agreed also needs %s: %s" % (multi_mod.SET_TOOL, f, d)
