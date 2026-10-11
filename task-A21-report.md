@@ -152,3 +152,83 @@ tool, an unset `{{outcome}}`, and `reason` set as a variable. The chat was ended
 - "Go on." once, then re-ask, and the negotiate re-ask without a figure, are prompt rules. Live effect unproven
   (the diag gave low confidence for PUB-13).
 - probe-hooks now holds the A21 probe workflow (version 17). The bank was not touched.
+
+---
+
+# Fix round 1
+
+Commit 7109567, on top of fa93b99. Full suite **1008 passed, 6 skipped**. Lint clean for spec-a and spec-b. Node count:
+spec-a 46, spec-b 73 (new `id_explain`). Identity task 1937 -> 1939 chars. Negotiate is unchanged (4620 / 5694).
+
+## 1. (Important) The fail-closed close_call no longer touches get_account
+
+**Probe** (ONE chat conversation, call 525bc2e7, slot probe-hooks version 18). Setup: an official practice session,
+case PUB-02, customer c_6f01cce0-94f, with an empty ledger before the call. The workflow had four end_of_call tools,
+each sending `{customer_id}` to a different candidate route. Results:
+
+| route | result | time |
+|---|---|---|
+| bank host `/v1/close_call_not_now` | 404 `not found` (function_call_error) | 0.02 s |
+| bank host `/not_a_tool` | 404 `not found` | 0.04 s |
+| `http://127.0.0.1:9/...` | refused by the platform: "Localhost URLs are not allowed" | immediate |
+| `https://close-call-not-sent.invalid/...` | "DNS resolution failed" | immediate |
+
+Ledger after the call: `calls: []`, outcome None. Neither unknown bank path was recorded. None of the routes
+blocks the end of the call.
+
+**Choice: (a) `NOT_SENT_URL = "https://close-call-not-sent.invalid/close_call"`** (compile.py:1209). It is used as the
+tool's own url (compile.py:2491 onward) and as the pre-hook's fallback. `.invalid` is reserved (RFC 2606) and never
+resolves, so the request never reaches any server. It also does not depend on how the grading bank routes unknown
+paths, which (b) would. Option (c) was not needed: close_call runs before verification as well, so it has to stay
+off get_account either way.
+- Upside: no ledger record on any bank; fails at once.
+- Downside: a stray mid-call model call would get a tool error ("DNS resolution failed") instead of the "Not now"
+  text, because the post-hook probably does not run on an error. Lifecycle tools are documented as never shown to
+  the model, and the PUB-03 evidence showed no model call (see the main report), so this case is theoretical.
+
+**A12 review.** The create_promise, retry_promise, check_date and set_product fail-closed route is get_account. These
+tools live only in negotiate and retry_promise, which are reached only through load_account. load_account has one way
+in: identity's "All answers verified" edge. A get_account from them is therefore always after verification, which the
+graded checks allow ("both security questions passed before get_account"). This is documented at compile.py:1074 and
+pinned by `test_promise_guards_get_account_route_only_after_verification`: the routed tools are not reachable from
+setup without load_account, and load_account's only incoming edge is that one.
+
+Tests: `test_unready_close_never_reaches_any_bank_route`, plus the A21 close tests, now on NOT_SENT_URL.
+
+## 2. (Minor) The explanation flag no longer depends on extraction
+
+The explanation is now spoken by a step and flagged in code.
+- `ID_DECLINE_GATE` (compile.py:825). On a decline before any explanation it:
+  - sets `id_explained='yes'` in code;
+  - picks the first security question not yet verified (VERIFY_POST now writes `id_ok_<field>` on a correct answer,
+    compile.py:793) and fills it into `id_ask_text`;
+  - goes to the new conversation step `id_explain` (compile.py:2170).
+- `id_explain` speaks `"<explanation> {{id_ask_text}}"` (tts). Its prompt says not to explain again, and no tool call
+  is allowed. Any reply goes back to identity, through the extraction `id_explain_reply=replied` or its 2-turn cap.
+  It is a pre-verification step (PRE_VERIFY_NODES, compile.py:34), so no banned-offer line is added to it.
+- `id_explain_said` (extraction) is now only a second source, for an explanation the agent gave on its own. The
+  3-bounce counter is gone: one explanation, then the next decline closes.
+- Gate label updated (labels.py:29).
+- Tests:
+  - `test_explain_step_speaks_the_explanation_and_the_open_question`;
+  - PUB-07 replay: DOB verified -> 7 continue -> declined goes to id_explain, which asks the phone question -> a
+    reply goes back to identity -> a decline closes, even with extraction "no";
+  - PUB-03 replay: the explanation re-asks the date of birth; the third wrong answer closes as failed;
+  - `test_identity_explanation_flag_set_by_extraction_or_code`;
+  - `test_identity_decline_is_explained_once_then_closes`.
+- Updated tests: test_a18 (id_explain counts as pre-verify) and test_multi (node set).
+
+## 3. (Minor) Identity cut-off formatting
+
+`CUT_OFF` is now a "- " bullet together with the event/say bullets (compile.py:1990), as in the opening and
+third-party steps. Before, it was a loose paragraph between the explanation rule and the bullets.
+
+## Concerns (fix round)
+
+- `id_explain` relies on two things that are unverified live: tts with a `{{var}}` set by a code step just before it,
+  and a conversation step whose reply goes back to identity. The opening (`{{title}}`) and the ask-once hold steps use
+  the same patterns, and those work.
+- If the agent explains on its own and the extractor misses it, `id_explain` explains a second time. That is better
+  than an early close, but a judge may flag it.
+- probe-hooks now holds the fix-round probe workflow (version 18). The PUB-02 practice session c_6f01cce0-94f was
+  used only for this probe, and its ledger is empty.
