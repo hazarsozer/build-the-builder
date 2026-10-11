@@ -20,7 +20,7 @@ import re
 import sys
 
 from builder.lib import dates, embed, money
-from builder.lint import lint, safe_opening
+from builder.lint import SPOKEN_BEFORE_SUCCESS, lint, never_say_words, safe_opening, safe_pre_success
 from builder import labels, layout, multi as multi_mod
 from builder.multi import Multi, enabled as multi_enabled
 from builder.triggers import verb_led, bare_trigger, sentence, split_trigger, subj, trigger_rest
@@ -30,6 +30,8 @@ from builder.nodes import (all_of, always, api_tool, body_enum, body_schema, clo
 STAGES = ["opening", "third_party", "identity", "negotiate"]
 # "any" means the customer's own stages; a third party is only covered when a spec names it.
 ANY_STAGES = ["opening", "identity", "negotiate"]
+# conversation steps before the customer is verified (no offer can come up there)
+PRE_VERIFY_NODES = {"opening", "identity", "third_party"}
 # Tools each stage's dialogue model can call (an extra rule naming another tool is dropped there).
 STAGE_TOOLS = {"opening": set(), "third_party": {"schedule_callback"}, "identity": {"verify_identity"},
                "negotiate": {"create_promise"}, "any": set()}
@@ -38,10 +40,11 @@ PROMISE_FIELDS = ("product_id", "amount", "date")
 TRANSFER_ACTIONS = ("transfer", "insist_once_then_transfer", "offer_transfer_else_close")
 _STOP = {"asks", "says", "with", "from", "their", "they", "that", "this", "lower", "new", "for"}
 EXTRACT_VAR = {"opening": "line_status", "third_party": "tp_status", "identity": "id_event", "negotiate": "neg_event",
-               "readback": "rb_answer"}
+               "readback": "rb_answer", "after_record": "ar_answer"}
+AFTER_RECORD = "after_record"   # multi: the step after promises were recorded (multi.Multi.after_record)
 # Value a stage's extraction variable is reset to when the conversation comes back to it.
 EXTRACT_DEFAULT = {"opening": "pending", "third_party": "continue", "identity": "continue", "negotiate": "continue",
-                   "readback": "pending"}
+                   "readback": "pending", "after_record": "pending"}
 # L1 (PUB-06): an amount said once is pointed back to, never offered again.
 DAY_NUMBER = 'A day number ("the 26th", "twenty-sixth") is an exact day, not a vague period: follow the first calendar row with that number.'
 CUT_OFF = ('A message cut off mid-phrase ("Monday the.", "what the") is not an answer or a refusal and uses no attempt or ask: '
@@ -94,6 +97,9 @@ CB_DAY_WORDS = {"today": "today", "next_business_day": "the next business day", 
 # ---------------------------------------------------------------- text helpers
 
 _PH = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# a sentence of sympathy ("I am sorry to hear that", "my condolences"): an event's fixed sentence that says one is
+# the call's only one (OUT-03/04: a prompted extra sentence plus the fixed one read as two)
+SYMPATHY = re.compile(r"\b(?:sorry|condolences?|sympath\w*)\b", re.I)
 
 
 def tpl(s):
@@ -1460,8 +1466,11 @@ class _Compiler:
                         {"logic": "and", "conditions": [eq(eid + "_seen", "yes"), eq(eid + "_offered", "no")]})))
             elif act == "transfer":
                 values.append(eid)
-                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s."
-                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid)) if stage == "negotiate" else ""
+                # MRW-07: "I'll take the instalment amount" (accepting the agent's lower offer) once fired a
+                # lower-instalments transfer; taking an offer is an agreement, never a request for something new
+                not_it = ("Saying they cannot pay or that the amount is too much%s is NOT %s. Accepting an amount or a date "
+                          "the agent offered, even by its kind (\"I'll take the instalment\", \"the minimum is fine\"), is NOT %s: it is continue."
+                          % ((", or asking for " + join_or(with_article(b) for b in banned)) if banned else "", eid, eid)) if stage == "negotiate" else ""
                 own, pred, _ = split_trigger(trig)
                 desc.append(("%s: %s EXPLICITLY %s.%s %s" % (eid, who, pred, extra, not_it)) if not own and verb_led(pred)
                             else ("%s: %s.%s %s" % (eid, subj(who, trig), extra, not_it)))
@@ -1544,38 +1553,47 @@ class _Compiler:
         """The brief's instruction without recording words (the hold step speaks before any promise)."""
         return re.sub(r"\brecord(?:s|ed)? (?:the|a) promise\b", "take their payment date and amount", text or "", flags=re.I)
 
-    def support_nodes(self, ev, transfer, account=False):
+    def support_nodes(self, ev, transfer, account=False, after=None):
         """A10 latch. <id>_offer (code) marks the offer as made; <id>_hold (conversation) speaks it and reads the reply:
         a yes transfers; a date or an amount the customer names returns to negotiate (<id>_back); a human request goes to
         that event's ask-once step; a question is answered in one sentence and the offer asked once more (first reply
-        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close."""
+        only); a decline, anything else, an unreadable reply or a second non-yes reply ends with the else-close.
+        after=<node>: the offer made after promises were recorded (multi after_record): its own nodes, and every
+        non-yes reply (a named payment too) goes to <node>, never back to the negotiation or to the else-close."""
         eid = ev["id"]
-        offer, hold, back = eid + "_offer", eid + "_hold", eid + "_back"
+        sfx = "_" + AFTER_RECORD if after else ""
+        offer, hold, back = eid + "_offer" + sfx, eid + "_hold" + sfx, eid + "_back"
         if offer in self.nodes:
             return offer
-        end = self.account_end(ev) if account else self.end_target("negotiate", eid)
+        end = after or (self.account_end(ev) if account else self.end_target("negotiate", eid))
         reply = eid + "_reply"
         code = "vars[%r] = 'yes'\nvars[%r] = 'pending'\nvars[%r] = %r\n" % (eid + "_offered", reply, eid + "_rule", self.support_rule(ev, True))
-        if self.multi:  # reached from the read-back as well: negotiation is open again
+        if self.multi and not after:  # reached from the read-back as well: negotiation is open again
             code += "vars['mp_phase'] = 'open'\nvars['rb_answer'] = 'pending'\n"
         self.nodes[offer] = code_node(offer, code, hold)
         reset = "vars['neg_event'] = 'continue'\nvars[%r] = 'pending'\n" % reply
         if self.multi:
             reset += ("vars['mp_msg'] = 'The customer named a date or an amount after the support offer. Make no offer of your own; "
                       "check what they named and call %s for that product.'\n" % multi_mod.SET_TOOL)
-        if not account:
+        if not account and not after:
             self.nodes[back] = code_node(back, reset, "negotiate")
         team = team_words(ev["queue"]).replace("our ", "the ")
         banned = self.banned_for("negotiate")
-        steps = ["Exactly one short sentence of sympathy."]
+        say = ev.get("say") or ""
+        # the brief allows one sentence of sympathy per call: a fixed sentence that already says it is that one
+        sympathy = bool(SYMPATHY.search(say))
+        steps = [] if sympathy else ["Exactly one short sentence of sympathy."]
         if account:
             # nothing about the debt was said yet: the verification thanks, then the event's own sentence
             steps = ["Say %s." % q(self.verified_lead().strip())]
-        if ev.get("say"):
-            steps.append("Say %s." % q(tpl(ev["say"])))
-        if banned and not account:
-            steps.append("Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned))
-        steps.append("Offer to connect them with %s, as a yes/no question." % team)
+        say_step = ["Say %s.%s" % (q(tpl(say)), " This is your one sentence of sympathy: add no other, before or after it."
+                                   if sympathy and not account else "")] if say else []
+        cannot = (["Only if they asked for %s: say you cannot offer it." % join_or(with_article(b) for b in banned)]
+                  if banned and not account else [])
+        if "?" in say:  # a fixed sentence that is a question already makes the offer: it ends the turn
+            steps += cannot + say_step
+        else:
+            steps += say_step + cannot + ["Offer to connect them with %s, as a yes/no question." % team]
         answer = ["If they then ask a question: answer it in one sentence (if what you know does not answer it, say you do "
                   "not have that information), then ask once more whether they want to be connected. Do this only once."]
         answer += ["Rule (%s): say %s%s" % (bare_trigger(r["trigger"]), q(tpl(r["say"])), trigger_rest(r["trigger"]))
@@ -1588,21 +1606,27 @@ class _Compiler:
                 values.append(v)
                 hdesc.append("%s: %s." % (v, subj("the customer", h["trigger"])))
                 t = self.transfer_to(h["queue"], self.close_key(h["id"]), h["id"])
-                routes.append(go(self.ask_once_nodes("negotiate", h, t), eid + ": " + v, cond_any(eq(reply, v))))
+                routes.append(go(self.ask_once_nodes(AFTER_RECORD if after else "negotiate", h, t), eid + ": " + v,
+                                 cond_any(eq(reply, v))))
         turns = hold + ".total_turns"
         situation = subj("the customer", ev["trigger"]) if not account else (
             "the account shows: " + bare_trigger(ev["trigger"]) + ". The product concerned: {{product_words}}")
-        pay = go(end if account else back, eid + (": the customer names a payment, none is taken" if account else ": the customer names a payment"),
+        pay = go(end if account or after else back,
+                 eid + (": the customer names a payment, none is taken" if account or after else ": the customer names a payment"),
                  cond_any(eq(reply, "names_payment")))
         self.nodes[hold] = {
             "name": hold, "node_type": "conversation",
             "on_enter": {"type": "llm"},
             "task_message": ("Situation: %s. Your first reply in this step, in this order, and nothing else:\n%s\n%s\n"
                              "Never a payment request or a persuasion attempt: no amount, no date, no plan. "
-                             "The rule for this situation: %s\nNo tool call is allowed in this step."
+                             "%s\nNo tool call is allowed in this step."
                              % (situation,
                                 "\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(steps)),
-                                "\n".join(answer), tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
+                                "\n".join(answer),
+                                # after recording a named date or amount ends the call (no new promise): the brief's
+                                # take-their-payment rule would contradict the routing
+                                "The promises are already recorded: no new promise is taken in this step." if after else
+                                "The rule for this situation: " + tpl(self.neutral(ev.get("instruction") or "Offer the team once.")))),
             "extraction_schema": [{
                 "name": reply, "type": "string", "min_confidence": 0.6,
                 "enum_values": ["pending", "accepted", "names_payment", "declined", "question"] + values + ["other"],
@@ -1723,11 +1747,60 @@ class _Compiler:
                   "- When a tool result contains what_to_do_next, follow it."]
         if neg.get("never_ask_how_much"):
             lines.append('- Never ask "how much can you pay?".')
+        if self.never_say_line():
+            lines.append("- " + self.never_say_line())
         ex = self.extra("any")
         if ex:
             lines.append("Rules:")
             lines += ["- " + l for l in ex]
         return "\n".join(lines)
+
+    def never_say_line(self):
+        """spec.never_say as one prompt line; also appended to every conversation step (STW-05: the word was in the
+        global prompt only, and the model echoed the customer's word in a negotiate reply)."""
+        words = never_say_words(self.s)
+        if not words:
+            return ""
+        return ("Never say %s, in any form (plural, past tense), in any sentence, even when the customer says it first: "
+                "answer without repeating the word." % join_or(q(w) for w in words))
+
+    def safe_before_success(self, nodes):
+        """Fixed sentences spoken before a promise can be recorded (the engine line and every quoted sentence of the
+        opening, identity and negotiate steps, e.g. confirmation.change_note) say no record* word, as safe_opening does
+        for the opening: "A recorded promise cannot be changed" -> "A promise cannot be changed". A first sentence the
+        brief requires word for word (opening.verbatim) is left as it is."""
+        op = self.s["opening"]
+        keep = op["first_sentence"] if op.get("verbatim") and op.get("first_sentence") else None
+
+        def fix(text):
+            if keep and keep in text:
+                return keep.join(fix(p) for p in text.split(keep))
+            return safe_pre_success(text)[0]
+
+        for k in SPOKEN_BEFORE_SUCCESS:
+            n = nodes.get(k)
+            if not n:
+                continue
+            if (n.get("on_enter") or {}).get("type") == "tts" and isinstance(n["on_enter"].get("text"), str):
+                n["on_enter"]["text"] = fix(n["on_enter"]["text"])
+            if isinstance(n.get("task_message"), str):
+                n["task_message"] = re.sub(r'"([^"]*)"', lambda m: '"%s"' % fix(m.group(1)), n["task_message"])
+
+    def add_never_say(self, nodes):
+        """Every conversation step repeats the never-say words; every step after verification (where an offer can
+        come up) also repeats the banned offers. The global prompt alone was not enough (STW-05)."""
+        words = self.never_say_line()
+        banned = self.banned_all()   # A20: "this brief" -> "your instructions"
+        offers = "Never offer %s." % join_or(dict.fromkeys(with_article(b) for b in banned)) if banned else ""
+        for k, n in nodes.items():
+            if n.get("node_type") != "conversation" or not isinstance(n.get("task_message"), str):
+                continue
+            pre = k in PRE_VERIFY_NODES or k.endswith(tuple("_" + p for p in PRE_VERIFY_NODES))  # e.g. human_hold_opening
+            # a step that already answers a request for a banned offer ("say you cannot offer it") keeps its own line
+            add = [words] + ([] if pre or "cannot offer" in n["task_message"] else [offers])
+            add = [a for a in add if a and a not in n["task_message"]]
+            if add:
+                n["task_message"] = n["task_message"].rstrip() + "\n" + "\n".join(add)
 
     def banned_words(self):
         return join_or([q(w) for w in self.s["opening"].get("banned_before_verify", [])])
@@ -2341,6 +2414,8 @@ HOW TO RUN THE CALL
         n["goodbye"] = goodbye_node()
         self.apply_latch()
         prune_unreachable(n, "setup")
+        self.safe_before_success(n)
+        self.add_never_say(n)
         wf = {
             "initial_node": "setup",
             "system_prompt": self.system_prompt(),

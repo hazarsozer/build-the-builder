@@ -1051,6 +1051,14 @@
       },
       "description": "Optional: openapi close_call outcomes the brief never uses."
     },
+    "never_say": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/str"
+      },
+      "uniqueItems": true,
+      "description": "Optional: words or phrases the brief forbids in every sentence of the call, in any form (plural, past tense), even when the customer says them first. One item per word or phrase, as the brief writes it. Not for words forbidden only before verification (opening.banned_before_verify) or for things never offered (negotiation.banned_offers)."
+    },
     "tool_fields": {
       "type": "object",
       "propertyNames": {

@@ -84,6 +84,12 @@ def _wrap(w, node, status, confirmed=False, recorded=False, now="2026-10-22T16:0
         v["rec1_status"] = "recorded" if recorded else ""
     exec(_code(w["nodes"][node]), {"vars": v})
     notes, cur = [], _route(w["nodes"][node], v) or w["nodes"][node]["passthrough_default_transition"]
+    if cur == "after_record":  # A18: a recorded promise first asks "anything else"; follow the "nothing else" reply
+        exec(_code(w["nodes"][cur]), {"vars": v})
+        assert _route(w["nodes"][cur], v) == "after_record_step"
+        cur = _route(w["nodes"]["after_record_step"], dict(v, ar_answer="nothing"))
+        exec(_code(w["nodes"][cur]), {"vars": v})
+        cur = _route(w["nodes"][cur], v) or w["nodes"][cur]["passthrough_default_transition"]
     while cur.startswith("note_"):
         notes.append((v["note%s_pid" % cur[-1]], v["note%s_reason" % cur[-1]]))
         cur = _route(w["nodes"][cur], v)
