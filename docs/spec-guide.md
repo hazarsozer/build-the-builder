@@ -139,6 +139,7 @@ conflicts.field) a bracket holds a list index (`bands[1].deadline.n`) or the `id
 - `outcomes[].reason` (required): string or null. close_call reason; null only for the outcomes the openapi close_call reason description exempts (for example promise and paid).
 - `outcomes[].event` (required): string. events[].id that produces this row.
 - `unused_outcomes` (optional): list of string. Optional: openapi close_call outcomes the brief never uses.
+- `never_say` (optional): list of string. Optional: words or phrases the brief forbids in every sentence of the call, in any form (plural, past tense), even when the customer says them first. One item per word or phrase, as the brief writes it. Not for words forbidden only before verification (opening.banned_before_verify) or for things never offered (negotiation.banned_offers).
 - `tool_fields` (optional): map of name -> object. Optional: request fields of an openapi tool that the compiler has no slot for, keyed "<tool>.<field>" (e.g. a required create_promise field beyond product_id, amount and date). Every such required field is sent; this says how to fill it.
 - `tool_fields.<name>.instruction` (optional): string. How the agent gets the value from the customer (when to ask, what to do when the answer fits no allowed value). Not said verbatim.
 - `tool_fields.<name>.default` (optional): string or number or boolean or null. Value sent when the customer gives none that fits (an openapi enum value when the field has an enum), or null.
